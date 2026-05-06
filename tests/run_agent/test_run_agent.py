@@ -1666,6 +1666,20 @@ class TestBuildApiKwargs:
 
         assert "chat_template_kwargs" not in kwargs.get("extra_body", {})
 
+    def test_custom_cloudflare_kimi_disables_thinking_when_reasoning_none(self, agent):
+        """Workers AI configured as a named custom provider also disables Kimi thinking."""
+        agent.provider = "custom"
+        agent.base_url = "https://api.cloudflare.com/client/v4/accounts/test/ai/v1"
+        agent._base_url_lower = agent.base_url.lower()
+        agent.model = "@cf/moonshotai/kimi-k2.6"
+        agent.reasoning_config = {"enabled": False}
+        messages = [{"role": "user", "content": "hi"}]
+
+        kwargs = agent._build_api_kwargs(messages)
+
+        assert kwargs["extra_body"]["think"] is False
+        assert kwargs["extra_body"]["chat_template_kwargs"] == {"thinking": False}
+
     def test_provider_preferences_injected(self, agent):
         agent.provider = "openrouter"
         agent.base_url = "https://openrouter.ai/api/v1"

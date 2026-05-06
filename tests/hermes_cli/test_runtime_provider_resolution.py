@@ -799,6 +799,7 @@ def test_named_custom_provider_same_url_uses_matching_key_env_and_api_mode(monke
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setenv("GPT_KEY", "gpt-secret")
     monkeypatch.setenv("CLAUDE_KEY", "claude-secret")
+
     monkeypatch.setattr(
         rp,
         "load_config",
@@ -839,6 +840,44 @@ def test_named_custom_provider_same_url_uses_matching_key_env_and_api_mode(monke
     assert resolved["api_mode"] == "anthropic_messages"
     assert resolved["requested_provider"] == "custom:claude"
     assert resolved["model"] == "claude-opus-4-8"
+
+
+def test_named_custom_provider_expands_env_vars_in_providers_dict(monkeypatch):
+    """Provider dict URLs may contain env placeholders such as Cloudflare account IDs."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("CF_TOKEN", "cf-secret")
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acct-123")
+
+    monkeypatch.setattr(
+        rp,
+        "load_config",
+        lambda: {
+            "providers": {
+                "workers-ai": {
+                    "api": "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/ai/v1",
+                    "key_env": "CF_TOKEN",
+                    "name": "Cloudflare Workers AI",
+                }
+            }
+        },
+    )
+    monkeypatch.setattr(
+        rp,
+        "resolve_provider",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError(
+                "resolve_provider should not be called for named custom providers"
+            )
+        ),
+    )
+
+    resolved = rp.resolve_runtime_provider(requested="workers-ai")
+
+    assert resolved["provider"] == "custom"
+    assert resolved["base_url"] == "https://api.cloudflare.com/client/v4/accounts/acct-123/ai/v1"
+    assert resolved["api_key"] == "cf-secret"
+    assert resolved["requested_provider"] == "workers-ai"
 
 
 def test_named_custom_provider_falls_back_to_openai_api_key(monkeypatch):

@@ -38,6 +38,10 @@ def _normalize_custom_provider_name(value: str) -> str:
     return value.strip().lower().replace(" ", "-")
 
 
+def _expand_config_value(value: str) -> str:
+    return os.path.expandvars(os.path.expanduser(str(value or "").strip()))
+
+
 def _loopback_hostname(host: str) -> bool:
     h = (host or "").lower().rstrip(".")
     return h in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
@@ -537,9 +541,10 @@ def _get_named_custom_provider(requested_provider: str) -> Optional[Dict[str, An
                 # Found match by provider key
                 base_url = entry.get("api") or entry.get("url") or entry.get("base_url") or ""
                 if base_url:
+                    base_url = _expand_config_value(base_url)
                     result = {
                         "name": entry.get("name", ep_name),
-                        "base_url": base_url.strip(),
+                        "base_url": base_url,
                         "api_key": resolved_api_key,
                         "model": entry.get("default_model", ""),
                     }
@@ -566,9 +571,10 @@ def _get_named_custom_provider(requested_provider: str) -> Optional[Dict[str, An
                     # Found match by display name
                     base_url = entry.get("api") or entry.get("url") or entry.get("base_url") or ""
                     if base_url:
+                        base_url = _expand_config_value(base_url)
                         result = {
                             "name": display_name,
-                            "base_url": base_url.strip(),
+                            "base_url": base_url,
                             "api_key": resolved_api_key,
                             "model": entry.get("default_model", ""),
                         }
@@ -611,7 +617,7 @@ def _get_named_custom_provider(requested_provider: str) -> Optional[Dict[str, An
             continue
         result = {
             "name": name.strip(),
-            "base_url": base_url.strip(),
+            "base_url": _expand_config_value(base_url),
             "api_key": str(entry.get("api_key", "") or "").strip(),
         }
         key_env = str(entry.get("key_env", "") or "").strip()
