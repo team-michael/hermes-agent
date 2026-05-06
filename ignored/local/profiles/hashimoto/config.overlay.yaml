@@ -60,6 +60,18 @@ skills:
 slack:
   allow_bots: all
   free_response_channels: C04KT7EH5RQ,C07LCLRS79T
+  message_subscriptions:
+  - name: amazon-q-monitoring
+    channels:
+    - C04KT7EH5RQ
+    - C07LCLRS79T
+    subtypes:
+    - bot_message
+    bot_names:
+    - Amazon Q
+    - Amazon Q Developer
+    reactions: true
+    final_reaction: processing_status
   channel_prompts:
     C04KT7EH5RQ: Monitoring alert received. Use the check skill to investigate and
       return a concise Korean analysis.
