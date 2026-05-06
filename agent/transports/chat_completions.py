@@ -412,6 +412,12 @@ class ChatCompletionsTransport(ProviderTransport):
             extra_body["thinking"] = {
                 "type": "enabled" if _kimi_thinking_enabled else "disabled",
             }
+            if not _kimi_thinking_enabled:
+                # Cloudflare Workers AI Kimi K2.6 follows the OpenAI-compatible
+                # `chat_template_kwargs.thinking=false` flag for disabling
+                # thinking output. Keep Kimi CLI's `thinking` flag above for
+                # other Kimi-compatible routes.
+                extra_body["chat_template_kwargs"] = {"thinking": False}
 
         # Reasoning. LM Studio is handled above via top-level reasoning_effort,
         # so skip emitting extra_body.reasoning for it.

@@ -590,6 +590,7 @@ class TestChatCompletionsKimi:
             max_tokens_param_fn=lambda n: {"max_tokens": n},
         )
         assert kw["extra_body"]["thinking"] == {"type": "disabled"}
+        assert kw["extra_body"]["chat_template_kwargs"] == {"thinking": False}
 
     def test_moonshot_tool_schemas_are_sanitized_by_model_name(self, transport):
         """Aggregator routes (Nous, OpenRouter) hit Moonshot by model name, not base URL."""

@@ -63,6 +63,47 @@ def agent_runtime_owns_post_tool_hook(agent: Any, function_name: str) -> bool:
     return bool(memory_manager and memory_manager.has_tool(function_name))
 
 
+def resolve_bedrock_region_from_base_url(agent, base_url: Optional[str] = None) -> str:
+    """Infer the Bedrock region from base_url or cached runtime state."""
+    candidate = base_url if base_url is not None else getattr(agent, "_anthropic_base_url", None)
+    candidate = candidate or getattr(agent, "base_url", "") or ""
+    match = re.search(r"bedrock-runtime\.([a-z0-9-]+)\.", str(candidate))
+    if match:
+        return match.group(1)
+    cached = getattr(agent, "_bedrock_region", None)
+    if isinstance(cached, str) and cached.strip():
+        return cached.strip()
+    return "us-east-1"
+
+
+def build_runtime_anthropic_client(
+    agent,
+    api_key: Optional[str],
+    base_url: Optional[str],
+    *,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+):
+    """Build the correct Anthropic-family client for the active provider."""
+    effective_provider = (provider if provider is not None else agent.provider) or ""
+    effective_model = model if model is not None else agent.model
+
+    if effective_provider == "bedrock":
+        from agent.anthropic_adapter import build_anthropic_bedrock_client
+
+        region = resolve_bedrock_region_from_base_url(agent, base_url)
+        agent._bedrock_region = region
+        return build_anthropic_bedrock_client(region)
+
+    from agent.anthropic_adapter import build_anthropic_client
+
+    return build_anthropic_client(
+        api_key or "",
+        base_url,
+        timeout=get_provider_request_timeout(effective_provider, effective_model),
+    )
+
+
 def convert_to_trajectory_format(agent, messages: List[Dict[str, Any]], user_query: str, completed: bool) -> List[Dict[str, Any]]:
     """
     Convert internal message format to trajectory format for saving.
@@ -774,12 +815,14 @@ def try_recover_primary_transport(
         agent.api_key = rt["api_key"]
 
         if agent.api_mode == "anthropic_messages":
-            from agent.anthropic_adapter import build_anthropic_client
             agent._anthropic_api_key = rt["anthropic_api_key"]
             agent._anthropic_base_url = rt["anthropic_base_url"]
-            agent._anthropic_client = build_anthropic_client(
-                rt["anthropic_api_key"], rt["anthropic_base_url"],
-                timeout=get_provider_request_timeout(agent.provider, agent.model),
+            agent._anthropic_client = build_runtime_anthropic_client(
+                agent,
+                rt["anthropic_api_key"],
+                rt["anthropic_base_url"],
+                provider=agent.provider,
+                model=agent.model,
             )
             agent._is_anthropic_oauth = rt["is_anthropic_oauth"]
             agent.client = None
@@ -938,12 +981,14 @@ def restore_primary_runtime(agent) -> bool:
 
         # ── Rebuild client for the primary provider ──
         if agent.api_mode == "anthropic_messages":
-            from agent.anthropic_adapter import build_anthropic_client
             agent._anthropic_api_key = rt["anthropic_api_key"]
             agent._anthropic_base_url = rt["anthropic_base_url"]
-            agent._anthropic_client = build_anthropic_client(
-                rt["anthropic_api_key"], rt["anthropic_base_url"],
-                timeout=get_provider_request_timeout(agent.provider, agent.model),
+            agent._anthropic_client = build_runtime_anthropic_client(
+                agent,
+                rt["anthropic_api_key"],
+                rt["anthropic_base_url"],
+                provider=agent.provider,
+                model=agent.model,
             )
             agent._is_anthropic_oauth = rt["is_anthropic_oauth"]
             agent.client = None
@@ -1445,7 +1490,6 @@ def switch_model(agent, new_model, new_provider, api_key='', base_url='', api_mo
         # ── Build new client ──
         if api_mode == "anthropic_messages":
             from agent.anthropic_adapter import (
-                build_anthropic_client,
                 resolve_anthropic_token,
                 _is_oauth_token,
             )
@@ -1473,9 +1517,12 @@ def switch_model(agent, new_model, new_provider, api_key='', base_url='', api_mo
             agent.api_key = effective_key
             agent._anthropic_api_key = effective_key
             agent._anthropic_base_url = base_url or getattr(agent, "_anthropic_base_url", None)
-            agent._anthropic_client = build_anthropic_client(
-                effective_key, agent._anthropic_base_url,
-                timeout=get_provider_request_timeout(agent.provider, agent.model),
+            agent._anthropic_client = build_runtime_anthropic_client(
+                agent,
+                effective_key,
+                agent._anthropic_base_url,
+                provider=new_provider,
+                model=new_model,
             )
             agent._is_anthropic_oauth = _is_oauth_token(effective_key) if (_is_native_anthropic and isinstance(effective_key, str)) else False
             agent.client = None

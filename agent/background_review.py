@@ -412,6 +412,8 @@ def _run_review_in_thread(
                 parent_session_id=agent.session_id,
                 enabled_toolsets=getattr(agent, "enabled_toolsets", None),
                 disabled_toolsets=getattr(agent, "disabled_toolsets", None),
+                acp_command=getattr(agent, "acp_command", None),
+                acp_args=list(getattr(agent, "acp_args", []) or []),
                 skip_memory=True,
             )
             review_agent._memory_write_origin = "background_review"

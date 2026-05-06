@@ -539,12 +539,28 @@ class TestAuxiliaryClientBedrockResolution:
         assert model is None
 
     def test_bedrock_uses_configured_region(self, monkeypatch):
-        """Bedrock client base_url should reflect AWS_REGION."""
+        """Bedrock client base_url should prefer config bedrock.region."""
         monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE")
         monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
         monkeypatch.setenv("AWS_REGION", "eu-central-1")
 
-        with patch("agent.anthropic_adapter.build_anthropic_bedrock_client",
+        with patch("hermes_cli.config.load_config", return_value={"bedrock": {"region": "us-east-1"}}), \
+             patch("agent.anthropic_adapter.build_anthropic_bedrock_client",
+                   return_value=MagicMock()):
+            from agent.auxiliary_client import resolve_provider_client
+            client, _ = resolve_provider_client("bedrock", None)
+
+        assert client is not None
+        assert "us-east-1" in client.base_url
+
+    def test_bedrock_uses_env_region_when_config_absent(self, monkeypatch):
+        """Bedrock auxiliary region should fall back to AWS_REGION."""
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+        monkeypatch.setenv("AWS_REGION", "eu-central-1")
+
+        with patch("hermes_cli.config.load_config", return_value={}), \
+             patch("agent.anthropic_adapter.build_anthropic_bedrock_client",
                    return_value=MagicMock()):
             from agent.auxiliary_client import resolve_provider_client
             client, _ = resolve_provider_client("bedrock", None)

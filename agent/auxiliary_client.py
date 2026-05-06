@@ -3950,7 +3950,13 @@ def resolve_provider_client(
                          "no AWS credentials found")
             return None, None
 
-        region = resolve_bedrock_region()
+        try:
+            from hermes_cli.config import load_config
+            _bedrock_cfg = load_config().get("bedrock", {})
+            region = str(_bedrock_cfg.get("region") or "").strip()
+        except Exception:
+            region = ""
+        region = region or resolve_bedrock_region()
         default_model = "anthropic.claude-haiku-4-5-20251001-v1:0"
         final_model = _normalize_resolved_model(model or default_model, provider)
         try:

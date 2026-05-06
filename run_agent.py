@@ -3747,7 +3747,7 @@ class AIAgent:
             return False
 
         try:
-            from agent.anthropic_adapter import resolve_anthropic_token, build_anthropic_client
+            from agent.anthropic_adapter import resolve_anthropic_token
 
             new_token = resolve_anthropic_token()
         except Exception as exc:
@@ -3766,10 +3766,14 @@ class AIAgent:
             pass
 
         try:
-            self._anthropic_client = build_anthropic_client(
+            from agent.agent_runtime_helpers import build_runtime_anthropic_client
+
+            self._anthropic_client = build_runtime_anthropic_client(
+                self,
                 new_token,
                 getattr(self, "_anthropic_base_url", None),
-                timeout=get_provider_request_timeout(self.provider, self.model),
+                provider=self.provider,
+                model=self.model,
             )
         except Exception as exc:
             logger.warning("Failed to rebuild Anthropic client after credential refresh: %s", exc)
@@ -3864,7 +3868,8 @@ class AIAgent:
         runtime_base = getattr(entry, "runtime_base_url", None) or getattr(entry, "base_url", None) or self.base_url
 
         if self.api_mode == "anthropic_messages":
-            from agent.anthropic_adapter import build_anthropic_client, _is_oauth_token
+            from agent.anthropic_adapter import _is_oauth_token
+            from agent.agent_runtime_helpers import build_runtime_anthropic_client
 
             try:
                 self._anthropic_client.close()
@@ -3873,9 +3878,12 @@ class AIAgent:
 
             self._anthropic_api_key = runtime_key
             self._anthropic_base_url = runtime_base
-            self._anthropic_client = build_anthropic_client(
-                runtime_key, runtime_base,
-                timeout=get_provider_request_timeout(self.provider, self.model),
+            self._anthropic_client = build_runtime_anthropic_client(
+                self,
+                runtime_key,
+                runtime_base,
+                provider=self.provider,
+                model=self.model,
             )
             self._is_anthropic_oauth = _is_oauth_token(runtime_key) if self.provider == "anthropic" else False
             self.api_key = runtime_key
