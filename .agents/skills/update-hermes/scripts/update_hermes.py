@@ -135,6 +135,65 @@ def remove_worktree(runner: Runner, repo: Path, worktree: Path) -> None:
     git(runner, repo, "worktree", "remove", str(worktree))
 
 
+def iter_profile_memory_files(memories_dir: Path):
+    if not memories_dir.exists():
+        return
+    for source in sorted(memories_dir.iterdir()):
+        if not source.is_file():
+            continue
+        if source.name.endswith(".lock") or source.suffix != ".md":
+            continue
+        yield source
+
+
+def copy_if_changed(source: Path, dest: Path, dry_run: bool) -> bool:
+    ensure_under_hermes(source)
+    ensure_under_hermes(dest)
+    if dest.exists() and dest.read_bytes() == source.read_bytes():
+        return False
+    print(f"memory sync: {source} -> {dest}")
+    if not dry_run:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, dest)
+    return True
+
+
+def sync_profile_memories_to_patch_worktree(runner: Runner, worktree: Path) -> None:
+    """Copy live profile memories into ignored/local and commit changes.
+
+    Only Markdown memory files are managed. Runtime lock files are deliberately
+    excluded.
+    """
+    local_profiles = worktree / "ignored" / "local" / "profiles"
+    if not local_profiles.exists():
+        return
+
+    changed: list[Path] = []
+    live_profiles_root = Path.home() / ".hermes" / "profiles"
+    for profile_dir in sorted(path for path in local_profiles.iterdir() if path.is_dir()):
+        live_memories = live_profiles_root / profile_dir.name / "memories"
+        repo_memories = profile_dir / "memories"
+        for source in iter_profile_memory_files(live_memories) or []:
+            dest = repo_memories / source.name
+            if copy_if_changed(source, dest, runner.dry_run):
+                changed.append(dest)
+
+    if not changed:
+        print("profile memories ok: no changes to commit")
+        return
+    if runner.dry_run:
+        print("dry-run: skipping profile memory commit")
+        return
+
+    rel_paths = [str(path.relative_to(worktree)) for path in changed]
+    git(runner, worktree, "add", "-f", *rel_paths)
+    diff = git(runner, worktree, "diff", "--cached", "--quiet", check=False)
+    if diff.returncode == 0:
+        print("profile memories ok: copied files match committed state")
+        return
+    git(runner, worktree, "commit", "-m", "chore(profiles): sync profile memories")
+
+
 def rebase_patch_branch(
     runner: Runner,
     repo: Path,
@@ -153,6 +212,8 @@ def rebase_patch_branch(
         print("Prefer origin/main for upstream Hermes changes, keep only local-only ignored/local assets.")
         print("After resolving, run `git rebase --continue` there, then rerun this script with --skip-update.")
         raise SystemExit(exc.returncode) from exc
+
+    sync_profile_memories_to_patch_worktree(runner, worktree)
 
     if push:
         git(runner, worktree, "push", "--force-with-lease", remote, f"{branch}:{branch}")

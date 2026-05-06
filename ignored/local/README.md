@@ -12,7 +12,10 @@ Tracked here:
 - `profiles/<name>/SOUL.md`: profile identity source copy.
 - `profiles/<name>/config.overlay.yaml`: safe config fragments to merge into
   live profile configs.
-- `scripts/apply-local-state.py`: reapply overlays and skill symlinks.
+- `profiles/<name>/memories/*.md`: profile memory Markdown files that should
+  survive updates. Runtime `.lock` files are intentionally excluded.
+- `scripts/apply-local-state.py`: reapply overlays, memories, and skill
+  symlinks.
 - `scripts/audit-local-state.py`: check for drift and accidental secrets.
 
 The repo-managed Andrej identity is a normal named profile at

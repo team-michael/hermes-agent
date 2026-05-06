@@ -3,6 +3,7 @@
 
 This script intentionally manages only safe, explicit assets:
 - config overlays
+- non-lock profile memory Markdown files
 - skill directory symlinks
 - optional SOUL.md symlinks
 
@@ -84,6 +85,39 @@ def apply_overlay(profile: str, dry_run: bool) -> None:
     shutil.copy2(config_path, backup)
     config_path.write_text(yaml.safe_dump(merged, sort_keys=False, allow_unicode=True))
     print(f"  backup: {backup}")
+
+
+def iter_memory_files(root: Path):
+    memories = root / "memories"
+    if not memories.exists():
+        return
+    for source in sorted(memories.iterdir()):
+        if not source.is_file():
+            continue
+        if source.name.endswith(".lock") or source.suffix != ".md":
+            continue
+        yield source
+
+
+def apply_memories(profile: str, dry_run: bool) -> None:
+    source_root = LOCAL_ROOT / "profiles" / profile
+    dest_root = profile_home(profile) / "memories"
+
+    for source in iter_memory_files(source_root) or []:
+        dest = dest_root / source.name
+        if dest.exists() and dest.read_bytes() == source.read_bytes():
+            print(f"memory ok: {profile}/{source.name}")
+            continue
+
+        print(f"memory update: {profile}/{source.name} <- {source.relative_to(REPO_ROOT)}")
+        if dry_run:
+            continue
+        dest_root.mkdir(parents=True, exist_ok=True)
+        if dest.exists():
+            backup = backup_path(dest)
+            shutil.copy2(dest, backup)
+            print(f"  backup: {backup}")
+        shutil.copy2(source, dest)
 
 
 def iter_skill_dirs(root: Path):
@@ -181,6 +215,7 @@ def main() -> int:
             print(f"skip {profile}: no repo-managed profile at ignored/local/profiles/{profile}")
             continue
         apply_overlay(profile, args.dry_run)
+        apply_memories(profile, args.dry_run)
         apply_skill_links(profile, args.dry_run, args.replace_existing)
         apply_soul(profile, args.dry_run, args.link_soul)
     return 0
