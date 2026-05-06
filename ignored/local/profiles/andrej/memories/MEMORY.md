@@ -8,7 +8,7 @@ For `team-michael/notifly-event` web-console work, new or changed user-facing me
 §
 For Slack image/attachment questions, do not infer from text-only thread context that media is inaccessible; when channel_id/thread_ts are available, retrieve the Slack thread/root via Web API, inspect `messages[0].files[]`/attachments, download authorized images, and use vision analysis.
 §
-Hermes local patches for this profile historically used branch `local/hermes-patches` with `update.local_patch_branch`; after `hermes update`, local patch changes may need to be checked out, rebased, or reapplied on top of updated main.
+Hermes local patches are now managed on local `main` and pushed to `team-michael/main`; `update.local_patch_branch` should be `main`, and `hermes update` should rebase local commits onto `origin/main`.
 §
 Git commit identity used in prior Notifly agent work: `Andrej Karpathy <team@greyboxhq.com>`.
 §

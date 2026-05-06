@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Update Hermes while preserving the local patch branch and profile state."""
+"""Update Hermes while preserving team-michael/main and profile state."""
 
 from __future__ import annotations
 
@@ -14,8 +14,7 @@ from typing import Sequence
 
 
 DEFAULT_REPO = Path.home() / ".hermes" / "hermes-agent"
-DEFAULT_WORKTREE_ROOT = Path.home() / ".hermes" / "worktrees"
-DEFAULT_PATCH_BRANCH = "local/hermes-patches"
+DEFAULT_PATCH_BRANCH = "main"
 DEFAULT_PATCH_REMOTE = "team-michael"
 DEFAULT_UPSTREAM = "origin/main"
 
@@ -67,7 +66,12 @@ def ensure_under_hermes(path: Path) -> None:
         fail(f"Refusing to manage path outside ~/.hermes: {resolved}")
 
 
-def git(runner: Runner, repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+def git(
+    runner: Runner,
+    repo: Path,
+    *args: str,
+    check: bool = True,
+) -> subprocess.CompletedProcess[str]:
     return runner.run(["git", *args], repo, check=check)
 
 
@@ -85,7 +89,10 @@ def require_clean_main(runner: Runner, repo: Path) -> None:
 
 
 def find_hermes(repo: Path) -> str:
-    for candidate in (repo / ".venv" / "bin" / "hermes", repo / "venv" / "bin" / "hermes"):
+    for candidate in (
+        repo / ".venv" / "bin" / "hermes",
+        repo / "venv" / "bin" / "hermes",
+    ):
         if candidate.exists():
             return str(candidate)
     found = shutil.which("hermes")
@@ -94,45 +101,21 @@ def find_hermes(repo: Path) -> str:
     fail("Could not find hermes executable in .venv, venv, or PATH.")
 
 
-def branch_exists(runner: Runner, repo: Path, branch: str) -> bool:
-    if runner.dry_run:
-        return True
-    result = runner.run(["git", "rev-parse", "--verify", "--quiet", branch], repo, check=False)
-    return result.returncode == 0
-
-
-def ensure_patch_branch(runner: Runner, repo: Path, branch: str, remote: str) -> None:
-    if branch_exists(runner, repo, branch):
-        return
+def sync_main_from_patch_remote(runner: Runner, repo: Path, branch: str, remote: str) -> None:
     remote_ref = f"{remote}/{branch}"
-    git(runner, repo, "branch", "--track", branch, remote_ref)
-
-
-def sync_patch_branch_from_remote(runner: Runner, repo: Path, branch: str, remote: str) -> None:
-    remote_ref = f"{remote}/{branch}"
-    if not branch_exists(runner, repo, branch):
-        ensure_patch_branch(runner, repo, branch, remote)
-        return
-    counts = git_output(runner, repo, "rev-list", "--left-right", "--count", f"{branch}...{remote_ref}")
+    counts = git_output(
+        runner,
+        repo,
+        "rev-list",
+        "--left-right",
+        "--count",
+        f"{branch}...{remote_ref}",
+    )
     left, right = (int(part) for part in counts.split())
     if left and right:
         fail(f"{branch} and {remote_ref} have diverged; inspect before updating.")
     if right:
-        git(runner, repo, "branch", "-f", branch, remote_ref)
-
-
-def make_worktree(runner: Runner, repo: Path, root: Path, branch: str) -> Path:
-    ensure_under_hermes(root)
-    worktree = root / f"update-hermes-{int(time.time())}"
-    if not runner.dry_run:
-        root.mkdir(parents=True, exist_ok=True)
-    git(runner, repo, "worktree", "add", str(worktree), branch)
-    return worktree
-
-
-def remove_worktree(runner: Runner, repo: Path, worktree: Path) -> None:
-    ensure_under_hermes(worktree)
-    git(runner, repo, "worktree", "remove", str(worktree))
+        git(runner, repo, "merge", "--ff-only", remote_ref)
 
 
 def iter_profile_memory_files(memories_dir: Path):
@@ -158,13 +141,13 @@ def copy_if_changed(source: Path, dest: Path, dry_run: bool) -> bool:
     return True
 
 
-def sync_profile_memories_to_patch_worktree(runner: Runner, worktree: Path) -> None:
+def sync_profile_memories_to_repo(runner: Runner, repo: Path) -> None:
     """Copy live profile memories into ignored/local and commit changes.
 
     Only Markdown memory files are managed. Runtime lock files are deliberately
     excluded.
     """
-    local_profiles = worktree / "ignored" / "local" / "profiles"
+    local_profiles = repo / "ignored" / "local" / "profiles"
     if not local_profiles.exists():
         return
 
@@ -185,44 +168,13 @@ def sync_profile_memories_to_patch_worktree(runner: Runner, worktree: Path) -> N
         print("dry-run: skipping profile memory commit")
         return
 
-    rel_paths = [str(path.relative_to(worktree)) for path in changed]
-    git(runner, worktree, "add", "-f", *rel_paths)
-    diff = git(runner, worktree, "diff", "--cached", "--quiet", check=False)
+    rel_paths = [str(path.relative_to(repo)) for path in changed]
+    git(runner, repo, "add", "-f", *rel_paths)
+    diff = git(runner, repo, "diff", "--cached", "--quiet", check=False)
     if diff.returncode == 0:
         print("profile memories ok: copied files match committed state")
         return
-    git(runner, worktree, "commit", "-m", "chore(profiles): sync profile memories")
-
-
-def rebase_patch_branch(
-    runner: Runner,
-    repo: Path,
-    worktree: Path,
-    upstream: str,
-    remote: str,
-    branch: str,
-    push: bool,
-) -> None:
-    try:
-        git(runner, worktree, "rebase", upstream)
-    except subprocess.CalledProcessError as exc:
-        print()
-        print("Patch branch rebase stopped with conflicts.")
-        print(f"Resolve conflicts in: {worktree}")
-        print("Prefer origin/main for upstream Hermes changes, keep only local-only ignored/local assets.")
-        print("After resolving, run `git rebase --continue` there, then rerun this script with --skip-update.")
-        raise SystemExit(exc.returncode) from exc
-
-    sync_profile_memories_to_patch_worktree(runner, worktree)
-
-    if push:
-        git(runner, worktree, "push", "--force-with-lease", remote, f"{branch}:{branch}")
-    else:
-        print("Skipping push because --no-push was set.")
-
-
-def materialize_local_state(runner: Runner, repo: Path, branch: str) -> None:
-    git(runner, repo, "restore", f"--source={branch}", "--worktree", "--", "ignored/local")
+    git(runner, repo, "commit", "-m", "chore(profiles): sync profile memories")
 
 
 def link_file(target: Path, source: Path, *, dry_run: bool = False) -> None:
@@ -236,7 +188,9 @@ def link_file(target: Path, source: Path, *, dry_run: bool = False) -> None:
         print(f"shared link ok: {target} -> {source}")
         return
     if target.exists() or target.is_symlink():
-        backup = target.with_name(f"{target.name}.bak-local-{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}")
+        backup = target.with_name(
+            f"{target.name}.bak-local-{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}"
+        )
         if target.is_symlink():
             if dry_run:
                 print(f"would unlink shared symlink: {target}")
@@ -284,10 +238,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--patch-branch", default=DEFAULT_PATCH_BRANCH)
     parser.add_argument("--patch-remote", default=DEFAULT_PATCH_REMOTE)
     parser.add_argument("--upstream", default=DEFAULT_UPSTREAM)
-    parser.add_argument("--worktree-root", type=Path, default=DEFAULT_WORKTREE_ROOT)
-    parser.add_argument("--skip-update", action="store_true", help="Skip `hermes update`; useful after resolving rebase conflicts.")
-    parser.add_argument("--no-push", action="store_true", help="Do not push the patch branch.")
-    parser.add_argument("--keep-worktree", action="store_true", help="Leave the temporary patch worktree after success.")
+    parser.add_argument(
+        "--skip-update",
+        action="store_true",
+        help="Skip `hermes update`; useful after resolving rebase conflicts manually.",
+    )
+    parser.add_argument("--no-push", action="store_true", help="Do not push team-michael/main.")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -296,7 +252,6 @@ def main() -> int:
     args = parse_args()
     repo = args.repo.expanduser().resolve()
     ensure_under_hermes(repo)
-    ensure_under_hermes(args.worktree_root.expanduser())
 
     runner = Runner(dry_run=args.dry_run)
     require_clean_main(runner, repo)
@@ -309,34 +264,44 @@ def main() -> int:
         args.patch_remote,
         f"{args.patch_branch}:refs/remotes/{args.patch_remote}/{args.patch_branch}",
     )
-    sync_patch_branch_from_remote(runner, repo, args.patch_branch, args.patch_remote)
+    sync_main_from_patch_remote(runner, repo, args.patch_branch, args.patch_remote)
 
     if not args.skip_update:
         hermes = find_hermes(repo)
-        runner.run([hermes, "update"], repo)
+        try:
+            runner.run([hermes, "update"], repo)
+        except subprocess.CalledProcessError as exc:
+            print()
+            print("Hermes update stopped before completion.")
+            print(
+                f"Keep the checkout on main, resolve by rebasing main onto {args.upstream}, "
+                "then rerun this script with --skip-update."
+            )
+            print(
+                "Prefer origin/main for upstream Hermes changes; keep only local-only "
+                "ignored/local assets and profile state."
+            )
+            raise SystemExit(exc.returncode) from exc
         require_clean_main(runner, repo)
         git(runner, repo, "fetch", "origin", "main")
     else:
         print("Skipping hermes update because --skip-update was set.")
 
-    worktree = make_worktree(runner, repo, args.worktree_root.expanduser(), args.patch_branch)
-    completed = False
-    try:
-        rebase_patch_branch(
+    sync_profile_memories_to_repo(runner, repo)
+    require_clean_main(runner, repo)
+
+    if args.no_push:
+        print("Skipping push because --no-push was set.")
+    else:
+        git(
             runner,
             repo,
-            worktree,
-            args.upstream,
+            "push",
+            "--force-with-lease",
             args.patch_remote,
-            args.patch_branch,
-            push=not args.no_push,
+            f"{args.patch_branch}:{args.patch_branch}",
         )
-        completed = True
-    finally:
-        if completed and not args.keep_worktree:
-            remove_worktree(runner, repo, worktree)
 
-    materialize_local_state(runner, repo, args.patch_branch)
     sync_local_state(runner, repo)
     require_clean_main(runner, repo)
     print("update-hermes completed")
