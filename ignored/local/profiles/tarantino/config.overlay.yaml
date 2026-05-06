@@ -25,6 +25,9 @@ terminal:
   env_passthrough:
     - GITHUB_TOKEN
 compression:
-  threshold: 0.2
+  threshold: 0.5
+auxiliary:
+  compression:
+    context_length: 1000000
 update:
   local_patch_branch: local/hermes-patches
