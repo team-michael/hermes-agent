@@ -125,6 +125,7 @@ Resolve scope in this order:
 4. For Postgres table names, infer project from the `table_$project_id` suffix and then map that project.
 5. For log lines containing both `Project Id` and `Campaign Id`, treat the pair as the primary campaign scope. Current alarm-window pairs outrank 7d/30d historical signatures.
    - Also treat log-style `campaign_id: <id>, project_id: <id>` and `project_id: <id>, campaign_id: <id>` as primary project/campaign pairs.
+   - Also treat compact ECS log lines such as `campaignId: UL1T00` (with or without accompanying `projectId`) as primary scope evidence when they appear in the current alarm-window stream.
    - Never combine a standalone campaign ID with an unrelated sharded table suffix from another log line. IDs from `relation "<table>_<project_id>" does not exist` are table references, not campaign ownership evidence, unless that table error is the actual current trigger and no stronger project/campaign pair exists.
 6. For DB alerts, Performance Insights SQL statements are scope evidence: `event_intermediate_counts_$project_id`, `users_$project_id`, `delivery_result_$project_id`, `message_events_$project_id`, etc. mean the project is known and must not be reported as unknown.
 7. For campaign/user_journey scope, first check whether the SQL/table family can carry `campaign_id`, `resource_type`, or `user_journey_id`. If yes, run a read-only aggregate around the alarm/PI window to find the top campaign or user-journey contributor. If campaign evidence exists, stop there and do not also report user journey. If not available because the query is parameterized or the table family has no campaign/user_journey column, say that specific reason.
@@ -169,6 +170,8 @@ Use:
 - `terminal("python - <<'PY' ... PY")`
 - explicit `boto3.Session(...)` from env vars
 
+When the helper skips Logs Insights despite a clear metric filter (e.g., `filter_pattern` is present but `logs.skipped` says "no stable filter terms inferred"), fall back to the bounded manual trace in `references/ecs-log-manual-trace.md`.
+
 ### Safe defaults
 - AWS: read-only
 - Postgres: read-only
@@ -193,6 +196,15 @@ Or with a file:
 ```bash
 python "${HERMES_HOME:-$HOME/.hermes}/skills/software-development/check/scripts/collect_notifly_alert_context.py" \
   --text-file /tmp/alert.txt
+```
+
+If the helper fails to parse the alarm name from free-form text (`detected.alarm_name` is null), pass it explicitly:
+
+```bash
+python "${HERMES_HOME:-$HOME/.hermes}/skills/software-development/check/scripts/collect_notifly_alert_context.py" \
+  --text 'segment-publisher slow eic query' \
+  --alarm-name '/aws/ecs/notifly-services-prod/segment-publisher slow eic query' \
+  --region ap-northeast-2
 ```
 
 The script does the single-pass first investigation:
@@ -300,15 +312,18 @@ Flow:
 3. Logs Insights for the primary metric filter pattern and daily counts
 4. inspect `logs.current_alarm_window`, `logs.current_top_signatures`, and `logs.current_trigger_contexts` before writing the final answer; root cause must be based on the error that caused the latest `ALARM` transition, not a historical 7d/30d top signature, alarm name, or broad service name
 5. if the current alarm-window context shows DB errors, duplicate keys, deadlocks, dependency timeouts, or route/controller frames, treat those as the primary cause and map them to project/table/code context
-6. if alert volume changed, inspect:
+6. **Helper fallback**: if the helper skips Logs Insights (`logs.skipped`) despite a clear metric filter, use the bounded manual trace in `references/ecs-log-manual-trace.md` rather than running broad `filter-log-events` across the whole log group.
+7. if alert volume changed, inspect:
    - metric filter drift
    - alarm config drift
    - SNS subscriber drift
    - CloudTrail `PutMetricFilter` / `PutMetricAlarm` / `Subscribe`
-7. trace exact code path in `notifly-event`
-8. if user asks when it started, find earliest retained log and correlate to PR/commit
+8. trace exact code path in `notifly-event`
+9. if user asks when it started, find earliest retained log and correlate to PR/commit
 
 Do not claim a metric filter is matching unrelated messages unless the helper's primary filter terms and current alarm-window contexts prove it. Related metric filters, historical top signatures, and broad alarm words are only supporting context.
+
+**Pitfall — metric-filter name vs. actual trigger**: an alarm may be named after a historic cause (e.g., `slow eic query`) while the current trigger is a different, coarser log pattern (e.g., `[WARN] Processing took longer than expected`). When the same log group already carries a purpose-built metric filter in a custom namespace (e.g., `Custom/segment-publisher` → `SegmentPublisher.ExecutionTimeOverThreshold`), the `ConsoleErrors` copy is likely redundant or stale. Always inspect the exact log line that breached the threshold and the full set of metric filters on the log group before letting the alarm name dictate the root cause. See `references/segment-publisher-slow-eic-query-noise.md` for a concrete example.
 
 ### C. Console error log-level triage / bulk Amazon Q review
 
@@ -440,6 +455,11 @@ Examples:
 - inspect schema/index shape for a known table family
 - verify shard table existence for a discovered `project_id`
 - compare recent 7d/30d event or error counts
+
+**Pitfall — sharded campaign lookup**: Notifly campaigns are stored in 1,400+ sharded Postgres tables (`campaigns_<project_id_hash>`). Scanning all tables to map a campaign ID to its owning project is impractical and may hit command-length limits. Prefer:
+- DynamoDB `event_list_*` tables for recent campaign-project relationships.
+- Athena `notifly_analytics.notifly_campaign_events` for historical mapping.
+- Accepting "project unknown for campaign" in the final answer when neither source is available.
 
 Never mutate data.
 
