@@ -30,6 +30,7 @@ class Runner:
         *,
         check: bool = True,
         capture: bool = False,
+        env: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         printable = " ".join(str(part) for part in cmd)
         print(f"+ ({cwd}) {printable}")
@@ -41,6 +42,7 @@ class Runner:
             check=check,
             text=True,
             capture_output=capture,
+            env=env,
         )
 
     def output(self, cmd: Sequence[str | os.PathLike[str]], cwd: Path) -> str:
@@ -269,7 +271,15 @@ def main() -> int:
     if not args.skip_update:
         hermes = find_hermes(repo)
         try:
-            runner.run([hermes, "update"], repo)
+            update_env = {
+                **os.environ,
+                "HERMES_UPDATE_LOCAL_PATCH_BRANCH": args.patch_branch,
+            }
+            print(
+                "Using HERMES_UPDATE_LOCAL_PATCH_BRANCH="
+                f"{args.patch_branch} for hermes update."
+            )
+            runner.run([hermes, "update"], repo, env=update_env)
         except subprocess.CalledProcessError as exc:
             print()
             print("Hermes update stopped before completion.")
