@@ -109,6 +109,11 @@ def should_send_media_as_audio(platform, ext: str, is_voice: bool = False) -> bo
     return True
 
 
+_PROCESSING_STATUS_DIRECTIVE_RE = re.compile(
+    r"\[\[\s*hermes:processing_status\s*=\s*[A-Za-z0-9_-]+\s*\]\]"
+)
+
+
 def utf16_len(s: str) -> int:
     """Count UTF-16 code units in *s*.
 
@@ -961,14 +966,14 @@ class MessageEvent:
     # from ``text`` so the sender-prefix logic in run.py can operate on the
     # trigger message alone, then prepend this context afterward.
     channel_context: Optional[str] = None
-    
+
     # Internal flag — set for synthetic events (e.g. background process
     # completion notifications) that must bypass user authorization checks.
     internal: bool = False
 
     # Timestamps
     timestamp: datetime = field(default_factory=datetime.now)
-    
+
     def is_command(self) -> bool:
         """Check if this is a command message (e.g., /new, /reset)."""
         return self.text.startswith("/")
@@ -2852,11 +2857,11 @@ class BasePlatformAdapter(ABC):
             from hermes_cli.commands import should_bypass_active_session
 
             if should_bypass_active_session(cmd):
-                # /stop, /new, /reset must cancel the in-flight adapter task
+                # /stop, /new, /reset, /mute must cancel the in-flight adapter task
                 # and preserve ordering of queued follow-ups.  Route those
                 # through the dedicated handoff path that serializes
                 # cancellation + runner response + pending drain.
-                if cmd in {"stop", "new", "reset"}:
+                if cmd in ("stop", "new", "reset", "mute"):
                     try:
                         await self._dispatch_active_session_command(event, session_key, cmd)
                     except Exception as e:
@@ -3109,6 +3114,12 @@ class BasePlatformAdapter(ABC):
                 # by skills that produce large/lossless images (e.g. info-graph)
                 # where Telegram's sendPhoto recompression destroys legibility.
                 force_document_attachments = "[[as_document]]" in response
+
+                # Platform adapters may inspect the raw response for
+                # machine-readable status directives while the posted message
+                # should remain clean for chat users.
+                setattr(event, "_hermes_response_text", response)
+                response = _PROCESSING_STATUS_DIRECTIVE_RE.sub("", response).strip()
 
                 # Extract MEDIA:<path> tags (from TTS tool) before other processing
                 media_files, response = self.extract_media(response)

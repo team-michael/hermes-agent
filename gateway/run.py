@@ -6130,6 +6130,12 @@ class GatewayRunner:
                 logger.info("STOP for session %s — agent interrupted, session lock released", _quick_key)
                 return EphemeralReply(t("gateway.stop.stopped"))
 
+            if _cmd_def_inner and _cmd_def_inner.name == "mute":
+                return await self._handle_mute_command(event)
+
+            if _cmd_def_inner and _cmd_def_inner.name == "unmute":
+                return await self._handle_unmute_command(event)
+
             # /reset and /new must bypass the running-agent guard so they
             # actually dispatch as commands instead of being queued as user
             # text (which would be fed back to the agent with the same
@@ -6552,6 +6558,12 @@ class GatewayRunner:
         
         if canonical == "stop":
             return await self._handle_stop_command(event)
+
+        if canonical == "mute":
+            return await self._handle_mute_command(event)
+
+        if canonical == "unmute":
+            return await self._handle_unmute_command(event)
         
         if canonical == "reasoning":
             return await self._handle_reasoning_command(event)
@@ -8904,6 +8916,88 @@ class GatewayRunner:
             "  /platform pause <name> — stop retrying a failing platform\n"
             "  /platform resume <name> — re-queue a paused platform"
         )
+
+    def _resolve_slack_thread_command_target(
+        self,
+        event: MessageEvent,
+        command_name: str,
+    ) -> tuple[SessionSource | None, str | None]:
+        """Resolve the Slack thread targeted by /mute or /unmute."""
+        source = event.source
+        if source.platform != Platform.SLACK:
+            return None, f"`/{command_name}` is only supported for Slack threads."
+
+        channel_id = source.chat_id
+        thread_ts = source.thread_id or ""
+        raw = getattr(event, "raw_message", None)
+        if isinstance(raw, dict):
+            channel_id = channel_id or str(raw.get("channel_id") or raw.get("channel") or "")
+            thread_ts = thread_ts or str(raw.get("thread_ts") or raw.get("message_ts") or "")
+            container = raw.get("container")
+            if isinstance(container, dict):
+                thread_ts = thread_ts or str(
+                    container.get("thread_ts") or container.get("message_ts") or ""
+                )
+
+        args = event.get_command_args().strip()
+        if not thread_ts and args:
+            thread_ts = args.split()[0].strip()
+
+        if not channel_id or not thread_ts:
+            return (
+                None,
+                f"Usage: `/{command_name} <thread_ts>` (Slack did not provide a thread context).",
+            )
+
+        return (
+            SessionSource(
+                platform=Platform.SLACK,
+                chat_id=channel_id,
+                chat_type="dm" if channel_id.startswith("D") else "group",
+                user_id=source.user_id,
+                user_name=source.user_name,
+                thread_id=thread_ts,
+            ),
+            None,
+        )
+
+    async def _handle_mute_command(self, event: MessageEvent) -> str:
+        """Handle /mute command - stop responding in a Slack thread."""
+        target_source, error = self._resolve_slack_thread_command_target(event, "mute")
+        if error:
+            return error
+        assert target_source is not None
+
+        adapter = self.adapters.get(Platform.SLACK)
+        if not adapter or not hasattr(adapter, "mute_thread"):
+            return "Slack adapter is not available."
+
+        changed = adapter.mute_thread(target_source.chat_id, target_source.thread_id or "")
+        target_key = self._session_key_for_source(target_source)
+        if target_key in self._running_agents:
+            await self._interrupt_and_clear_session(
+                target_key,
+                target_source,
+                interrupt_reason=_INTERRUPT_REASON_STOP,
+                invalidation_reason="mute_command",
+            )
+        state = "Muted" if changed else "Already muted"
+        return f"🔇 {state}. Hermes will ignore this Slack thread until `/unmute`."
+
+    async def _handle_unmute_command(self, event: MessageEvent) -> str:
+        """Handle /unmute command - resume responding in a Slack thread."""
+        target_source, error = self._resolve_slack_thread_command_target(event, "unmute")
+        if error:
+            return error
+        assert target_source is not None
+
+        adapter = self.adapters.get(Platform.SLACK)
+        if not adapter or not hasattr(adapter, "unmute_thread"):
+            return "Slack adapter is not available."
+
+        changed = adapter.unmute_thread(target_source.chat_id, target_source.thread_id or "")
+        state = "Unmuted" if changed else "Was not muted"
+        return f"🔊 {state}. Hermes can respond in this Slack thread again."
 
     async def _handle_restart_command(self, event: MessageEvent) -> Union[str, EphemeralReply]:
         """Handle /restart command - drain active work, then restart the gateway."""

@@ -642,8 +642,47 @@ def test_allowed_channels_env_var_blocks_channel(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Tests: config bridging for allowed_channels
+# Tests: config bridging for Slack config
 # ---------------------------------------------------------------------------
+
+def test_config_bridges_slack_message_subscriptions(monkeypatch, tmp_path):
+    from gateway.config import load_gateway_config
+
+    hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir()
+    (hermes_home / "config.yaml").write_text(
+        "slack:\n"
+        "  allow_bots: filtered\n"
+        "  message_subscriptions:\n"
+        "    - name: amazon-q\n"
+        "      channels:\n"
+        "        - C04KT7EH5RQ\n"
+        "      bot_ids:\n"
+        "        - B04KVM217J8\n"
+        "      user_ids:\n"
+        "        - U04KQ8Z6BM3\n"
+        "      app_ids:\n"
+        "        - A6L22LZNH\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    monkeypatch.delenv("SLACK_ALLOW_BOTS", raising=False)
+    monkeypatch.delenv("SLACK_MESSAGE_SUBSCRIPTIONS", raising=False)
+
+    config = load_gateway_config()
+
+    slack_extra = config.platforms[Platform.SLACK].extra
+    assert slack_extra.get("allow_bots") == "filtered"
+    assert slack_extra["message_subscriptions"][0]["bot_ids"] == ["B04KVM217J8"]
+
+    import json
+    import os as _os
+
+    assert _os.environ["SLACK_ALLOW_BOTS"] == "filtered"
+    bridged = json.loads(_os.environ["SLACK_MESSAGE_SUBSCRIPTIONS"])
+    assert bridged[0]["channels"] == ["C04KT7EH5RQ"]
+
 
 def test_config_bridges_slack_allowed_channels(monkeypatch, tmp_path):
     from gateway.config import load_gateway_config

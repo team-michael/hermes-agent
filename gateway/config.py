@@ -821,8 +821,12 @@ def load_gateway_config() -> GatewayConfig:
                     bridged["reply_in_thread"] = platform_cfg["reply_in_thread"]
                 if "require_mention" in platform_cfg:
                     bridged["require_mention"] = platform_cfg["require_mention"]
+                if "allow_bots" in platform_cfg:
+                    bridged["allow_bots"] = platform_cfg["allow_bots"]
                 if "free_response_channels" in platform_cfg:
                     bridged["free_response_channels"] = platform_cfg["free_response_channels"]
+                if plat == Platform.SLACK and "message_subscriptions" in platform_cfg:
+                    bridged["message_subscriptions"] = platform_cfg["message_subscriptions"]
                 if "mention_patterns" in platform_cfg:
                     bridged["mention_patterns"] = platform_cfg["mention_patterns"]
                 if "dm_policy" in platform_cfg:
@@ -906,6 +910,10 @@ def load_gateway_config() -> GatewayConfig:
                     if isinstance(ac, list):
                         ac = ",".join(str(v) for v in ac)
                     os.environ["SLACK_ALLOWED_CHANNELS"] = str(ac)
+                if "message_subscriptions" in slack_cfg and not os.getenv("SLACK_MESSAGE_SUBSCRIPTIONS"):
+                    os.environ["SLACK_MESSAGE_SUBSCRIPTIONS"] = json.dumps(
+                        slack_cfg["message_subscriptions"]
+                    )
 
             # Discord settings → env vars (env vars take precedence)
             discord_cfg = yaml_cfg.get("discord", {})
