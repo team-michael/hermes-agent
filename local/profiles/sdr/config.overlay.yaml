@@ -1,5 +1,6 @@
 skills:
   external_dirs:
+    - /home/ubuntu/.hermes/hermes-agent/local/profiles/sdr/skills
     - /home/ubuntu/.hermes/hermes-agent/local/skills
 display:
   interim_assistant_messages: false
