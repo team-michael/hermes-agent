@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+"""Small GitHub REST helper for Hermes terminal sessions.
+
+This avoids repeated `curl | python` command shapes while still using the
+profile-loaded GITHUB_TOKEN/GH_TOKEN environment variable.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+
+def build_url(path: str) -> str:
+    if path.startswith("https://api.github.com/"):
+        return path
+    if path.startswith("http://") or path.startswith("https://"):
+        raise SystemExit("Only https://api.github.com URLs are supported")
+    return "https://api.github.com/" + path.lstrip("/")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Fetch GitHub REST JSON safely.")
+    parser.add_argument("path", help="GitHub API path, e.g. repos/org/repo/pulls?state=open")
+    parser.add_argument("--method", default="GET", help="HTTP method, default GET")
+    parser.add_argument("--jq", help="Optional jq filter to apply to the JSON response")
+    parser.add_argument("--raw", action="store_true", help="Print raw response body")
+    args = parser.parse_args()
+
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "hermes-github-api",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    request = urllib.request.Request(build_url(args.path), headers=headers, method=args.method.upper())
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            body = response.read()
+    except urllib.error.HTTPError as exc:
+        sys.stderr.write(f"GitHub API HTTP {exc.code}\n")
+        sys.stderr.write(exc.read().decode("utf-8", errors="replace"))
+        return 1
+    except urllib.error.URLError as exc:
+        sys.stderr.write(f"GitHub API request failed: {exc.reason}\n")
+        return 1
+
+    if args.raw:
+        sys.stdout.buffer.write(body)
+        if not body.endswith(b"\n"):
+            sys.stdout.write("\n")
+        return 0
+
+    try:
+        json.loads(body)
+    except json.JSONDecodeError as exc:
+        sys.stderr.write(f"GitHub API returned non-JSON response: {exc}\n")
+        sys.stdout.buffer.write(body)
+        return 1
+
+    if args.jq:
+        jq = shutil.which("jq")
+        if not jq:
+            sys.stderr.write("jq is required for --jq but was not found on PATH\n")
+            return 1
+        proc = subprocess.run([jq, args.jq], input=body, capture_output=True)
+        sys.stdout.buffer.write(proc.stdout)
+        sys.stderr.buffer.write(proc.stderr)
+        return proc.returncode
+
+    parsed = json.loads(body)
+    json.dump(parsed, sys.stdout, ensure_ascii=False, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
