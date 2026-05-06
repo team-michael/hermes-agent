@@ -8306,26 +8306,61 @@ def _cmd_update_impl(args, gateway_mode: bool):
                 text=True,
             )
             if pull_result.returncode != 0:
-                # ff-only failed — local and remote have diverged (e.g. upstream
-                # force-pushed or rebase).  Since local changes are already
-                # stashed, reset to match the remote exactly.
-                print(
-                    "  ⚠ Fast-forward not possible (history diverged), resetting to match remote..."
-                )
-                reset_result = subprocess.run(
-                    git_cmd + ["reset", "--hard", f"origin/{branch}"],
-                    cwd=PROJECT_ROOT,
-                    capture_output=True,
-                    text=True,
-                )
-                if reset_result.returncode != 0:
-                    print(f"✗ Failed to reset to origin/{branch}.")
-                    if reset_result.stderr.strip():
-                        print(f"  {reset_result.stderr.strip()}")
+                if configured_patch_branch == branch:
+                    # The local patch branch can intentionally be main in forked
+                    # checkouts. In that mode, preserving local commits means
+                    # rebasing them onto upstream instead of resetting them away.
                     print(
-                        f"  Try manually: git fetch origin && git reset --hard origin/{branch}"
+                        "  ⚠ Fast-forward not possible; rebasing local "
+                        f"{branch} patches onto origin/{branch}..."
                     )
-                    sys.exit(1)
+                    rebase_result = subprocess.run(
+                        git_cmd + ["rebase", f"origin/{branch}"],
+                        cwd=PROJECT_ROOT,
+                        capture_output=True,
+                        text=True,
+                    )
+                    if rebase_result.returncode != 0:
+                        print(
+                            f"✗ Failed to rebase local patch branch '{branch}' onto origin/{branch}."
+                        )
+                        if rebase_result.stdout.strip():
+                            print(rebase_result.stdout.strip())
+                        if rebase_result.stderr.strip():
+                            print(rebase_result.stderr.strip())
+                        abort = subprocess.run(
+                            git_cmd + ["rebase", "--abort"],
+                            cwd=PROJECT_ROOT,
+                            capture_output=True,
+                            text=True,
+                        )
+                        if abort.returncode == 0:
+                            print(
+                                "  Rebase was aborted; branch restored to its pre-update state."
+                            )
+                        print(f"  Resolve manually with: git rebase origin/{branch}")
+                        sys.exit(1)
+                else:
+                    # ff-only failed — local and remote have diverged (e.g. upstream
+                    # force-pushed or rebase).  Since local changes are already
+                    # stashed, reset to match the remote exactly.
+                    print(
+                        "  ⚠ Fast-forward not possible (history diverged), resetting to match remote..."
+                    )
+                    reset_result = subprocess.run(
+                        git_cmd + ["reset", "--hard", f"origin/{branch}"],
+                        cwd=PROJECT_ROOT,
+                        capture_output=True,
+                        text=True,
+                    )
+                    if reset_result.returncode != 0:
+                        print(f"✗ Failed to reset to origin/{branch}.")
+                        if reset_result.stderr.strip():
+                            print(f"  {reset_result.stderr.strip()}")
+                        print(
+                            "  Try manually: git fetch origin && git reset --hard origin/main"
+                        )
+                        sys.exit(1)
 
             # Post-pull syntax guard: validate critical-path files actually
             # parse before declaring the update successful. If a bad commit
@@ -8367,7 +8402,6 @@ def _cmd_update_impl(args, gateway_mode: bool):
                     print("  Could not capture pre-pull SHA — recover manually with:")
                     print(f"    cd {PROJECT_ROOT} && git reflog && git reset --hard <prev-sha>")
                 sys.exit(1)
-
             update_succeeded = True
         finally:
             if auto_stash_ref is not None:

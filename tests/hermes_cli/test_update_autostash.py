@@ -529,6 +529,70 @@ def test_cmd_update_falls_back_to_reset_when_ff_only_fails(monkeypatch, tmp_path
     assert "Fast-forward not possible" in out
 
 
+def test_cmd_update_rebases_main_when_configured_patch_branch_is_main(
+    monkeypatch, tmp_path, capsys
+):
+    """A checkout that uses main as its local patch branch preserves local commits."""
+    _setup_update_mocks(monkeypatch, tmp_path)
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/uv" if name == "uv" else None)
+    monkeypatch.setenv("HERMES_UPDATE_LOCAL_PATCH_BRANCH", "main")
+
+    side_effect, recorded = _make_update_side_effect(ff_only_fails=True)
+    monkeypatch.setattr(hermes_main.subprocess, "run", side_effect)
+
+    hermes_main.cmd_update(SimpleNamespace())
+
+    reset_calls = [c for c in recorded if "reset" in c and "--hard" in c]
+    rebase_calls = [c for c in recorded if "rebase" in c and "origin/main" in c]
+    assert reset_calls == []
+    assert rebase_calls == [["git", "rebase", "origin/main"]]
+
+    out = capsys.readouterr().out
+    assert "rebasing local main patches onto origin/main" in out
+
+
+def test_cmd_update_exits_when_configured_main_rebase_fails(
+    monkeypatch, tmp_path, capsys
+):
+    _setup_update_mocks(monkeypatch, tmp_path)
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/uv" if name == "uv" else None)
+    monkeypatch.setenv("HERMES_UPDATE_LOCAL_PATCH_BRANCH", "main")
+
+    recorded = []
+
+    def fake_run(cmd, **kwargs):
+        recorded.append(cmd)
+        if cmd == ["git", "fetch", "origin"]:
+            return SimpleNamespace(stdout="", stderr="", returncode=0)
+        if cmd == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:
+            return SimpleNamespace(stdout="main\n", stderr="", returncode=0)
+        if cmd == ["git", "rev-list", "HEAD..origin/main", "--count"]:
+            return SimpleNamespace(stdout="1\n", stderr="", returncode=0)
+        if cmd == ["git", "pull", "--ff-only", "origin", "main"]:
+            return SimpleNamespace(
+                stdout="",
+                stderr="fatal: Not possible to fast-forward, aborting.\n",
+                returncode=128,
+            )
+        if cmd == ["git", "rebase", "origin/main"]:
+            return SimpleNamespace(stdout="", stderr="conflict!\n", returncode=1)
+        if cmd == ["git", "rebase", "--abort"]:
+            return SimpleNamespace(stdout="", stderr="", returncode=0)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(hermes_main.subprocess, "run", fake_run)
+
+    with pytest.raises(SystemExit, match="1"):
+        hermes_main.cmd_update(SimpleNamespace())
+
+    reset_calls = [c for c in recorded if "reset" in c and "--hard" in c]
+    assert reset_calls == []
+
+    out = capsys.readouterr().out
+    assert "Failed to rebase local patch branch 'main' onto origin/main" in out
+    assert "Resolve manually with: git rebase origin/main" in out
+
+
 def test_cmd_update_no_reset_when_ff_only_succeeds(monkeypatch, tmp_path):
     """When --ff-only succeeds, no reset is attempted."""
     _setup_update_mocks(monkeypatch, tmp_path)

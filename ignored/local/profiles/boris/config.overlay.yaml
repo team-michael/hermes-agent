@@ -60,7 +60,7 @@ known_plugin_toolsets:
   slack:
   - spotify
 update:
-  local_patch_branch: local/hermes-patches
+  local_patch_branch: main
 skills:
   external_dirs:
   - /home/ubuntu/.hermes/hermes-agent/ignored/local/profiles/boris/skills
