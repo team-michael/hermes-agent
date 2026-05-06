@@ -79,6 +79,13 @@ def _make_real_adapter(subscription):
     return adapter
 
 
+def _make_free_response_adapter(extra):
+    adapter = SlackAdapter(PlatformConfig(enabled=True, extra=extra))
+    adapter._bot_user_id = "U_HASHIMOTO"
+    adapter.handle_message = AsyncMock()
+    return adapter
+
+
 def _amazon_q_event(channel=CHANNEL_ID, *, bot_id=BOT_ID, user_id=USER_ID, app_id=APP_ID):
     return {
         "type": "message",
@@ -185,6 +192,49 @@ async def test_filtered_subscription_message_bypasses_mention_and_dispatches():
     assert msg_event.channel_prompt == "Investigate this CloudWatch alert."
     assert "1710000000.000100" in adapter._reacting_message_ids
     assert adapter._subscription_reaction_configs[f"{CHANNEL_ID}:1710000000.000100"]["name"] == "amazon-q"
+
+
+@pytest.mark.asyncio
+async def test_free_response_channel_can_process_bot_message_with_auto_skill():
+    adapter = _make_free_response_adapter(
+        {
+            "allow_bots": "all",
+            "free_response_channels": CHANNEL_ID,
+            "channel_prompts": {
+                CHANNEL_ID: "Monitoring alert received. Use the check skill.",
+            },
+            "channel_skill_bindings": [
+                {"id": CHANNEL_ID, "skills": ["check"]},
+            ],
+        }
+    )
+
+    await adapter._handle_slack_message(_amazon_q_event())
+
+    adapter.handle_message.assert_awaited_once()
+    msg_event = adapter.handle_message.await_args.args[0]
+    assert msg_event.source.chat_id == CHANNEL_ID
+    assert msg_event.source.thread_id == "1710000000.000100"
+    assert msg_event.channel_prompt == "Monitoring alert received. Use the check skill."
+    assert msg_event.auto_skill == ["check"]
+
+
+@pytest.mark.asyncio
+async def test_allow_bots_all_still_ignores_known_own_bot_message_ts():
+    adapter = _make_free_response_adapter(
+        {
+            "allow_bots": "all",
+            "free_response_channels": CHANNEL_ID,
+            "channel_skill_bindings": [
+                {"id": CHANNEL_ID, "skills": ["check"]},
+            ],
+        }
+    )
+    adapter._bot_message_ts.add("1710000000.000100")
+
+    await adapter._handle_slack_message(_amazon_q_event())
+
+    adapter.handle_message.assert_not_awaited()
 
 
 @pytest.mark.asyncio

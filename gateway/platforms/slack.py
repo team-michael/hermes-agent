@@ -2683,7 +2683,9 @@ class SlackAdapter(BasePlatformAdapter):
         message_subscription = None
         if event.get("bot_id") or event.get("subtype") == "bot_message":
             # Always ignore our own messages to prevent echo loops.
-            if self._is_own_bot_message(event, team_id=team_id):
+            if self._is_own_bot_message(event, team_id=team_id) or (
+                ts and ts in self._bot_message_ts
+            ):
                 return
 
             message_subscription = self._matching_slack_message_subscription(event)
