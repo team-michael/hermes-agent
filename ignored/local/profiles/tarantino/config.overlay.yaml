@@ -64,11 +64,6 @@ platform_toolsets:
   - tts
   - vision
   - web
-known_plugin_toolsets:
-  cli:
-  - spotify
-  slack:
-  - spotify
 update:
   local_patch_branch: main
 skills:
