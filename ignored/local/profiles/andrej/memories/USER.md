@@ -1,0 +1,1 @@
+For Notifly GitHub PR work, the user prefers PRs to be assigned to `clix-so-bot`; after creating or updating a PR, review comments and GitHub check results should be checked, while Cloudflare Preview Worker Deploy can be treated as non-blocking unless explicitly needed.

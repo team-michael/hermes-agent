@@ -96,6 +96,32 @@ def audit_profile_config(profile: str) -> list[str]:
     return issues
 
 
+def iter_memory_files(root: Path):
+    memories = root / "memories"
+    if not memories.exists():
+        return
+    for source in sorted(memories.iterdir()):
+        if not source.is_file():
+            continue
+        if source.name.endswith(".lock") or source.suffix != ".md":
+            continue
+        yield source
+
+
+def audit_profile_memories(profile: str) -> list[str]:
+    issues: list[str] = []
+    repo_profile = LOCAL_ROOT / "profiles" / profile
+    live_memories = profile_home(profile) / "memories"
+    for source in iter_memory_files(repo_profile) or []:
+        live = live_memories / source.name
+        if not live.exists():
+            issues.append(f"{profile}: missing memory file {live}")
+            continue
+        if live.read_bytes() != source.read_bytes():
+            issues.append(f"{profile}: memory drift in {live}")
+    return issues
+
+
 def audit_skill_links(profile: str) -> list[str]:
     issues: list[str] = []
     home = profile_home(profile)
@@ -122,6 +148,7 @@ def main() -> int:
     issues.extend(audit_unsafe_files())
     for profile in profiles:
         issues.extend(audit_profile_config(profile))
+        issues.extend(audit_profile_memories(profile))
         issues.extend(audit_skill_links(profile))
 
     if issues:

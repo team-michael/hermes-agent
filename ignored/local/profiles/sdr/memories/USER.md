@@ -1,0 +1,1 @@
+User prefers Notifly SDR/account research to be result-focused and concise, organized around conclusion, key evidence, contact status, sales angle, next action, and limitations rather than long process logs.
