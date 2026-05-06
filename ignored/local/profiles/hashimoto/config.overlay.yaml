@@ -1,7 +1,10 @@
-skills:
-  external_dirs:
-    - /home/ubuntu/.hermes/hermes-agent/ignored/local/profiles/hashimoto/skills
-    - /home/ubuntu/.hermes/hermes-agent/ignored/local/skills
+agent:
+  reasoning_effort: xhigh
+  service_tier: fast
+terminal:
+  env_passthrough:
+  - GITHUB_TOKEN
+  - SLACK_BOT_TOKEN
 display:
   interim_assistant_messages: false
   platforms:
@@ -9,8 +12,67 @@ display:
       streaming: false
       tool_progress: 'off'
   tool_progress: 'off'
-terminal:
-  env_passthrough:
-    - GITHUB_TOKEN
+approvals:
+  mode: 'off'
+session_reset:
+  mode: none
+platform_toolsets:
+  cli:
+  - browser
+  - clarify
+  - code_execution
+  - cronjob
+  - delegation
+  - file
+  - image_gen
+  - memory
+  - messaging
+  - session_search
+  - skills
+  - terminal
+  - todo
+  - tts
+  - vision
+  - web
+  slack:
+  - browser
+  - clarify
+  - code_execution
+  - cronjob
+  - delegation
+  - file
+  - image_gen
+  - memory
+  - messaging
+  - session_search
+  - skills
+  - terminal
+  - todo
+  - tts
+  - vision
+  - web
+known_plugin_toolsets:
+  cli:
+  - spotify
+  slack:
+  - spotify
 update:
   local_patch_branch: local/hermes-patches
+skills:
+  external_dirs:
+  - /home/ubuntu/.hermes/hermes-agent/ignored/local/profiles/hashimoto/skills
+  - /home/ubuntu/.hermes/hermes-agent/ignored/local/skills
+slack:
+  free_response_channels: C04KT7EH5RQ,C07LCLRS79T
+  channel_prompts:
+    C04KT7EH5RQ: Monitoring alert received. Use the check skill to investigate and
+      return a concise Korean analysis.
+    C07LCLRS79T: Monitoring alert received. Use the check skill to investigate and
+      return a concise Korean analysis.
+  channel_skill_bindings:
+  - id: C04KT7EH5RQ
+    skills:
+    - check
+  - id: C07LCLRS79T
+    skills:
+    - check
