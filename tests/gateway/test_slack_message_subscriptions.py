@@ -204,7 +204,8 @@ async def test_filtered_nonmatching_bot_message_is_ignored():
 
 
 @pytest.mark.asyncio
-async def test_resolved_marker_adds_success_reaction():
+async def test_resolved_marker_adds_success_reaction(monkeypatch):
+    monkeypatch.delenv("SLACK_SUCCESS_REACTION", raising=False)
     adapter = _make_adapter()
     adapter._reactions_enabled = MagicMock(return_value=True)
     adapter._remove_reaction = AsyncMock(return_value=True)
@@ -221,6 +222,27 @@ async def test_resolved_marker_adds_success_reaction():
 
     adapter._remove_reaction.assert_awaited_once_with(CHANNEL_ID, "1710000000.000100", "eyes")
     adapter._add_reaction.assert_awaited_once_with(CHANNEL_ID, "1710000000.000100", "white_check_mark")
+
+
+@pytest.mark.asyncio
+async def test_resolved_marker_uses_success_reaction_env_override(monkeypatch):
+    monkeypatch.setenv("SLACK_SUCCESS_REACTION", "smiley_cat")
+    adapter = _make_adapter()
+    adapter._reactions_enabled = MagicMock(return_value=True)
+    adapter._remove_reaction = AsyncMock(return_value=True)
+    adapter._add_reaction = AsyncMock(return_value=True)
+    adapter._reacting_message_ids.add("1710000000.000100")
+    adapter._subscription_reaction_configs[f"{CHANNEL_ID}:1710000000.000100"] = {
+        "final_reaction": "resolved_marker"
+    }
+    event = MessageEvent(text="alert", message_id="1710000000.000100")
+    event.source = adapter.build_source(chat_id=CHANNEL_ID, chat_type="group")
+    event._hermes_response_text = "일시적인 spike입니다. [[hermes:processing_status=no_action]]"
+
+    await adapter.on_processing_complete(event, ProcessingOutcome.SUCCESS)
+
+    adapter._remove_reaction.assert_awaited_once_with(CHANNEL_ID, "1710000000.000100", "eyes")
+    adapter._add_reaction.assert_awaited_once_with(CHANNEL_ID, "1710000000.000100", "smiley_cat")
 
 
 @pytest.mark.asyncio
