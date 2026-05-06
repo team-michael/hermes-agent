@@ -1,7 +1,7 @@
 ---
 name: check
 description: Investigate Notifly Slack/Amazon Q/CloudWatch alerts from live data sources using Hermes profile/global .env-backed AWS, GitHub, Postgres, DynamoDB, and Athena credentials. Start from pasted alert text or Slack subscription context, recover alarm/log context, and produce one concise Korean final answer.
-version: 1.2.1
+version: 1.2.2
 author: Hermes Agent
 license: MIT
 metadata:
@@ -206,7 +206,7 @@ The script does the single-pass first investigation:
 - collect current alarm-window CloudWatch log contexts from the latest `ALARM` transition, then trigger-centered contexts from the exact log stream/time window
 - summarize HTTP 4xx/5xx metrics when inferable
 - summarize SQS/DLQ context when queue names/dimensions are present
-- summarize Lambda config/event sources/runtime metrics when function names/dimensions are present
+- summarize Lambda config/event sources/runtime metrics when function names/dimensions are present. **Pitfall**: alarm name prefixes may contain priority tiers or other suffixes that do not match actual Lambda function names (e.g., `ScheduledBatchDelivery-P2-...` maps to `scheduled-batch-delivery`); when the collector fails with `ResourceNotFoundException`, fall back to manual name resolution. See `references/lambda-name-mapping-gaps.md`.
 - map project IDs via DynamoDB `project`
 - map or explicitly rule out project/campaign/user_journey scope
 - inspect RDS topology if the alarm is RDS-shaped
@@ -217,6 +217,20 @@ Do not write custom Logs Insights syntax in the LLM loop unless the helper faile
 If a manual Logs Insights query is unavoidable, keep it based on the helper's fixed query shape and return only aggregate counts or sanitized samples.
 
 ### Helper answerability gate
+
+If the helper returns `can_answer_root_cause: true`, produce the final answer
+from the helper output immediately. Do not run manual AWS, source-search, or
+CloudWatch Logs follow-up calls unless `missing_required_context` contains a
+blocking item whose absence makes the fixed final format impossible.
+
+For service-wide or infra-wide metric alarms with no project/campaign/user
+journey evidence, do not search raw logs just to find a project. Use
+`scope_attribution.required_final_field` and state that the scope is service
+wide and campaign/user journey is unknown.
+
+Never run broad `aws logs filter-log-events` or raw log-dump commands in the
+LLM loop. If a log query is genuinely required, add or use a bounded helper
+collector that returns grouped counts and sanitized samples only.
 
 After the helper returns, inspect these fields before composing the final answer:
 - `can_answer_root_cause`
@@ -370,6 +384,26 @@ Flow:
 4. trace repo call sites and redis client config
 5. correlate to PR/commit that changed cache behavior or redis config
 6. separate direct root cause from later traffic amplifier
+
+### G. Lambda latency / error / throttle alarm
+
+Pattern examples:
+- `*-FCMLatencyP99`, `*-LatencyP99`
+- `*-Errors`, `*-Throttles`
+- Metric namespace `Notifly/ScheduledBatchDelivery`, `AWS/Lambda`
+
+Flow:
+1. alarm metadata + exact threshold and metric statistic (p99, Average, Sum)
+2. alarm history and recurrence pattern
+3. CloudWatch metric datapoints that breached, from the custom namespace if available
+4. **resolve the real Lambda function name**: alarm prefixes may include priority tiers (e.g., `-P2`) that are not part of the actual function name; see `references/lambda-name-mapping-gaps.md`
+5. Lambda configuration (`MemorySize`, `Timeout`, `LastModified`) from the **actual** function name
+6. `AWS/Lambda` Duration/Errors/Throttles metrics for the real function
+7. log group `/aws/lambda/<actual_name>` for ERROR lines or trigger context
+8. correlate `LastModified` deploy time to the alarm window; recurring alarms that spike right after a deploy are not purely baseline
+9. determine scope: these are usually service-wide unless log payloads carry `project_id`/`campaign_id`; do not force a project scope when none exists
+
+Pitfall: do not assume the alarm name prefix equals the Lambda function name. When the helper Lambda collector fails with `ResourceNotFoundException`, manually list Lambdas and match by base service name, then verify `LastModified`.
 
 ## DynamoDB project mapping rule
 

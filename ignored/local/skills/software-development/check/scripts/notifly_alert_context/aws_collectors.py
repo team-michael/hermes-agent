@@ -182,6 +182,7 @@ def summarize_alarm(alarm: Dict[str, Any]) -> Dict[str, Any]:
     keys = [
         'AlarmName', 'StateValue', 'StateReason', 'StateUpdatedTimestamp', 'Namespace',
         'MetricName', 'Threshold', 'ComparisonOperator', 'EvaluationPeriods',
+        'ExtendedStatistic',
         'DatapointsToAlarm', 'Period', 'Statistic', 'TreatMissingData', 'Dimensions'
     ]
     out = {k: alarm.get(k) for k in keys if k in alarm}

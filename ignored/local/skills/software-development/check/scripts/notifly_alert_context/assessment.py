@@ -26,6 +26,20 @@ def rds_pi_has_top_sql(pi_data: Any) -> bool:
             return True
     return False
 
+def lambda_context_has_signal(lambda_context: Any) -> bool:
+    if not isinstance(lambda_context, dict):
+        return False
+    for fn in lambda_context.get('functions') or []:
+        if not isinstance(fn, dict):
+            continue
+        if fn.get('configuration') and not fn.get('configuration_error'):
+            return True
+        for metric in fn.get('metrics') or []:
+            summary = metric.get('summary') if isinstance(metric, dict) else None
+            if isinstance(summary, dict) and (summary.get('datapoint_count') or 0) > 0:
+                return True
+    return False
+
 def log_context_has_actionable_detail(contexts: Sequence[Dict[str, Any]]) -> bool:
     actionable = re.compile(
         r'(?i)\b(detail|code|routine|constraint|where|sqlstate|deadlock|duplicate|timeout|'
@@ -282,8 +296,18 @@ def assess_helper_context(data: Dict[str, Any]) -> Dict[str, Any]:
             ['lambda'],
             'Lambda alerts need function/runtime/source context.',
         )
-    elif lambda_shaped and isinstance(lambda_context, dict):
+    elif lambda_shaped and isinstance(lambda_context, dict) and lambda_context_has_signal(lambda_context):
         root_cause_evidence.append('lambda_runtime_metrics')
+    elif lambda_shaped:
+        append_missing(missing, 'lambda_context', 'Lambda context was inferred but no matching function configuration or runtime datapoints were found.')
+        append_followup(
+            followups,
+            'verify_lambda_identity',
+            'AWS Lambda/CloudWatch',
+            'Verify that the detected name is a real Lambda FunctionName, log group, or alarm dimension before doing Lambda-specific follow-up.',
+            ['detected.lambda_names', 'lambda'],
+            'Do not treat service alarm names as Lambda function names.',
+        )
 
     project_ids = detected.get('project_ids') or []
     projects = data.get('project_mappings') or []
@@ -384,7 +408,7 @@ def compact_output(data: Dict[str, Any]) -> Dict[str, Any]:
             'metric': {
                 'namespace': alarm.get('Namespace'),
                 'name': alarm.get('MetricName'),
-                'statistic': alarm.get('Statistic'),
+                'statistic': alarm.get('Statistic') or alarm.get('ExtendedStatistic'),
                 'period': alarm.get('Period'),
                 'threshold': alarm.get('Threshold'),
                 'comparison': alarm.get('ComparisonOperator'),
