@@ -2751,9 +2751,11 @@ class AIAgent:
             self.api_key = effective_key
             self._anthropic_api_key = effective_key
             self._anthropic_base_url = base_url or getattr(self, "_anthropic_base_url", None)
-            self._anthropic_client = build_anthropic_client(
-                effective_key, self._anthropic_base_url,
-                timeout=get_provider_request_timeout(self.provider, self.model),
+            self._anthropic_client = self._build_runtime_anthropic_client(
+                effective_key,
+                self._anthropic_base_url,
+                provider=new_provider,
+                model=new_model,
             )
             self._is_anthropic_oauth = _is_oauth_token(effective_key) if _is_native_anthropic else False
             self.client = None
@@ -4395,6 +4397,8 @@ class AIAgent:
                         api_mode=_parent_api_mode,
                         base_url=_parent_runtime.get("base_url") or None,
                         api_key=_parent_runtime.get("api_key") or None,
+                        acp_command=getattr(self, "acp_command", None),
+                        acp_args=list(getattr(self, "acp_args", []) or []),
                         credential_pool=getattr(self, "_credential_pool", None),
                         parent_session_id=self.session_id,
                     )
@@ -5094,6 +5098,7 @@ class AIAgent:
         str(error) for everything else.
         """
         raw = str(error)
+        error_type = type(error).__name__
 
         if (
             isinstance(error, ValueError)
@@ -5126,10 +5131,13 @@ class AIAgent:
                 prefix = f"HTTP {status_code}: " if status_code else ""
                 return f"{prefix}{msg[:300]}"
 
-        # Fallback: truncate the raw string but give more room than 200 chars
+        # Fallback: truncate the raw string but give more room than 200 chars.
+        # Some client-side exceptions (e.g. bare AssertionError) stringify to
+        # an empty string, which made Slack show a blank failure summary.
         status_code = getattr(error, "status_code", None)
         prefix = f"HTTP {status_code}: " if status_code else ""
-        return f"{prefix}{raw[:500]}"
+        summary = raw[:500] if raw else error_type
+        return f"{prefix}{summary}"
 
     def _mask_api_key_for_logs(self, key: Optional[str]) -> Optional[str]:
         if not key:
@@ -7477,6 +7485,47 @@ class AIAgent:
         logger.info("Copilot credentials refreshed from %s", token_source)
         return True
 
+    def _resolve_bedrock_region_from_base_url(self, base_url: Optional[str] = None) -> str:
+        """Infer the Bedrock region from base_url or cached runtime state."""
+        import re as _re
+
+        candidate = base_url if base_url is not None else getattr(self, "_anthropic_base_url", None)
+        candidate = candidate or getattr(self, "base_url", "") or ""
+        match = _re.search(r"bedrock-runtime\.([a-z0-9-]+)\.", str(candidate))
+        if match:
+            return match.group(1)
+        cached = getattr(self, "_bedrock_region", None)
+        if isinstance(cached, str) and cached.strip():
+            return cached.strip()
+        return "us-east-1"
+
+    def _build_runtime_anthropic_client(
+        self,
+        api_key: Optional[str],
+        base_url: Optional[str],
+        *,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+    ):
+        """Build the correct Anthropic-family client for the active provider."""
+        effective_provider = (provider if provider is not None else self.provider) or ""
+        effective_model = model if model is not None else self.model
+
+        if effective_provider == "bedrock":
+            from agent.anthropic_adapter import build_anthropic_bedrock_client
+
+            region = self._resolve_bedrock_region_from_base_url(base_url)
+            self._bedrock_region = region
+            return build_anthropic_bedrock_client(region)
+
+        from agent.anthropic_adapter import build_anthropic_client
+
+        return build_anthropic_client(
+            api_key or "",
+            base_url,
+            timeout=get_provider_request_timeout(effective_provider, effective_model),
+        )
+
     def _try_refresh_anthropic_client_credentials(self) -> bool:
         if self.api_mode != "anthropic_messages" or not hasattr(self, "_anthropic_api_key"):
             return False
@@ -7491,7 +7540,7 @@ class AIAgent:
             return False
 
         try:
-            from agent.anthropic_adapter import resolve_anthropic_token, build_anthropic_client
+            from agent.anthropic_adapter import resolve_anthropic_token
 
             new_token = resolve_anthropic_token()
         except Exception as exc:
@@ -7510,10 +7559,11 @@ class AIAgent:
             pass
 
         try:
-            self._anthropic_client = build_anthropic_client(
+            self._anthropic_client = self._build_runtime_anthropic_client(
                 new_token,
                 getattr(self, "_anthropic_base_url", None),
-                timeout=get_provider_request_timeout(self.provider, self.model),
+                provider=self.provider,
+                model=self.model,
             )
         except Exception as exc:
             logger.warning("Failed to rebuild Anthropic client after credential refresh: %s", exc)
@@ -7576,7 +7626,7 @@ class AIAgent:
         runtime_base = getattr(entry, "runtime_base_url", None) or getattr(entry, "base_url", None) or self.base_url
 
         if self.api_mode == "anthropic_messages":
-            from agent.anthropic_adapter import build_anthropic_client, _is_oauth_token
+            from agent.anthropic_adapter import _is_oauth_token
 
             try:
                 self._anthropic_client.close()
@@ -7585,9 +7635,11 @@ class AIAgent:
 
             self._anthropic_api_key = runtime_key
             self._anthropic_base_url = runtime_base
-            self._anthropic_client = build_anthropic_client(
-                runtime_key, runtime_base,
-                timeout=get_provider_request_timeout(self.provider, self.model),
+            self._anthropic_client = self._build_runtime_anthropic_client(
+                runtime_key,
+                runtime_base,
+                provider=self.provider,
+                model=self.model,
             )
             self._is_anthropic_oauth = _is_oauth_token(runtime_key) if self.provider == "anthropic" else False
             self.api_key = runtime_key
@@ -9123,13 +9175,16 @@ class AIAgent:
 
             if fb_api_mode == "anthropic_messages":
                 # Build native Anthropic client instead of using OpenAI client
-                from agent.anthropic_adapter import build_anthropic_client, resolve_anthropic_token, _is_oauth_token
+                from agent.anthropic_adapter import resolve_anthropic_token, _is_oauth_token
                 effective_key = (fb_client.api_key or resolve_anthropic_token() or "") if fb_provider == "anthropic" else (fb_client.api_key or "")
                 self.api_key = effective_key
                 self._anthropic_api_key = effective_key
                 self._anthropic_base_url = fb_base_url
-                self._anthropic_client = build_anthropic_client(
-                    effective_key, self._anthropic_base_url, timeout=_fb_timeout,
+                self._anthropic_client = self._build_runtime_anthropic_client(
+                    effective_key,
+                    self._anthropic_base_url,
+                    provider=fb_provider,
+                    model=fb_model,
                 )
                 self._is_anthropic_oauth = _is_oauth_token(effective_key) if fb_provider == "anthropic" else False
                 self.client = None
@@ -9257,12 +9312,13 @@ class AIAgent:
 
             # ── Rebuild client for the primary provider ──
             if self.api_mode == "anthropic_messages":
-                from agent.anthropic_adapter import build_anthropic_client
                 self._anthropic_api_key = rt["anthropic_api_key"]
                 self._anthropic_base_url = rt["anthropic_base_url"]
-                self._anthropic_client = build_anthropic_client(
-                    rt["anthropic_api_key"], rt["anthropic_base_url"],
-                    timeout=get_provider_request_timeout(self.provider, self.model),
+                self._anthropic_client = self._build_runtime_anthropic_client(
+                    rt["anthropic_api_key"],
+                    rt["anthropic_base_url"],
+                    provider=rt["provider"],
+                    model=rt["model"],
                 )
                 self._is_anthropic_oauth = rt["is_anthropic_oauth"]
                 self.client = None
@@ -9356,12 +9412,13 @@ class AIAgent:
             self.api_key = rt["api_key"]
 
             if self.api_mode == "anthropic_messages":
-                from agent.anthropic_adapter import build_anthropic_client
                 self._anthropic_api_key = rt["anthropic_api_key"]
                 self._anthropic_base_url = rt["anthropic_base_url"]
-                self._anthropic_client = build_anthropic_client(
-                    rt["anthropic_api_key"], rt["anthropic_base_url"],
-                    timeout=get_provider_request_timeout(self.provider, self.model),
+                self._anthropic_client = self._build_runtime_anthropic_client(
+                    rt["anthropic_api_key"],
+                    rt["anthropic_base_url"],
+                    provider=rt["provider"],
+                    model=rt["model"],
                 )
                 self._is_anthropic_oauth = rt["is_anthropic_oauth"]
                 self.client = None
