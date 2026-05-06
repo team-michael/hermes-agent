@@ -12,6 +12,7 @@ It never copies .env, auth.json, sessions, logs, state DBs, or caches.
 from __future__ import annotations
 
 import argparse
+import copy
 import os
 import shutil
 import time
@@ -21,8 +22,8 @@ from typing import Any
 import yaml
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-LOCAL_ROOT = REPO_ROOT / "local"
+LOCAL_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = LOCAL_ROOT.parents[1]
 DEFAULT_HERMES_ROOT = Path(os.environ.get("HERMES_ROOT", Path.home() / ".hermes"))
 
 
@@ -71,7 +72,7 @@ def apply_overlay(profile: str, dry_run: bool) -> None:
 
     current = load_yaml(config_path)
     overlay = load_yaml(overlay_path)
-    merged = deep_merge(dict(current), overlay)
+    merged = deep_merge(copy.deepcopy(current), overlay)
     if merged == current:
         print(f"config ok: {profile}")
         return
@@ -177,7 +178,7 @@ def main() -> int:
     profiles = args.profiles or discover_profiles()
     for profile in profiles:
         if not (LOCAL_ROOT / "profiles" / profile).is_dir():
-            print(f"skip {profile}: no repo-managed profile at local/profiles/{profile}")
+            print(f"skip {profile}: no repo-managed profile at ignored/local/profiles/{profile}")
             continue
         apply_overlay(profile, args.dry_run)
         apply_skill_links(profile, args.dry_run, args.replace_existing)

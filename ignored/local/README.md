@@ -1,7 +1,9 @@
 # Local Hermes Maintenance
 
 This directory contains local, team-managed Hermes assets that should survive
-`hermes update` through the `local/hermes-patches` branch.
+`hermes update` through the `local/hermes-patches` branch. It is stored at
+`ignored/local/` so the main branch ignores it through the existing
+`ignored/` rule, while the local patch branch force-tracks it.
 
 Tracked here:
 

@@ -154,8 +154,8 @@ Also run a syntax check when touching helper modules:
 
 ```bash
 python3 -m py_compile \
-  local/skills/software-development/check/scripts/collect_notifly_alert_context.py \
-  local/skills/software-development/check/scripts/notifly_alert_context/*.py \
+  ignored/local/skills/software-development/check/scripts/collect_notifly_alert_context.py \
+  ignored/local/skills/software-development/check/scripts/notifly_alert_context/*.py \
   tests/local_skills/test_check_helper_context.py
 ```
 
