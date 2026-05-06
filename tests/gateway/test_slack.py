@@ -2327,8 +2327,9 @@ class TestReactions:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_reactions_in_message_flow(self, adapter):
+    async def test_reactions_in_message_flow(self, adapter, monkeypatch):
         """Reactions should be bracketed around actual processing via hooks."""
+        monkeypatch.delenv("SLACK_SUCCESS_REACTION", raising=False)
         adapter._app.client.reactions_add = AsyncMock()
         adapter._app.client.reactions_remove = AsyncMock()
         adapter._app.client.users_info = AsyncMock(
@@ -2385,8 +2386,39 @@ class TestReactions:
         assert "1234567890.000001" not in adapter._reacting_message_ids
 
     @pytest.mark.asyncio
+    async def test_reactions_success_outcome_uses_env_override(self, adapter, monkeypatch):
+        """SLACK_SUCCESS_REACTION should override the default success reaction."""
+        monkeypatch.setenv("SLACK_SUCCESS_REACTION", "smiley_cat")
+        adapter._app.client.reactions_add = AsyncMock()
+        adapter._app.client.reactions_remove = AsyncMock()
+
+        from gateway.platforms.base import MessageEvent, MessageType, SessionSource, ProcessingOutcome
+        from gateway.config import Platform
+        source = SessionSource(
+            platform=Platform.SLACK,
+            chat_id="C123",
+            chat_type="dm",
+            user_id="U_USER",
+        )
+        adapter._reacting_message_ids.add("1234567890.000005")
+        msg_event = MessageEvent(
+            text="hello",
+            message_type=MessageType.TEXT,
+            source=source,
+            message_id="1234567890.000005",
+        )
+        await adapter.on_processing_complete(msg_event, ProcessingOutcome.SUCCESS)
+
+        add_calls = adapter._app.client.reactions_add.call_args_list
+        remove_calls = adapter._app.client.reactions_remove.call_args_list
+        assert len(add_calls) == 1
+        assert add_calls[0].kwargs["name"] == "smiley_cat"
+        assert len(remove_calls) == 1
+        assert remove_calls[0].kwargs["name"] == "eyes"
+
+    @pytest.mark.asyncio
     async def test_reactions_failure_outcome(self, adapter):
-        """Failed processing should add :x: instead of :white_check_mark:."""
+        """Failed processing should add :x: instead of the success reaction."""
         adapter._app.client.reactions_add = AsyncMock()
         adapter._app.client.reactions_remove = AsyncMock()
 

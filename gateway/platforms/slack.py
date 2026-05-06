@@ -1731,6 +1731,10 @@ class SlackAdapter(BasePlatformAdapter):
         """Check if message reactions are enabled via config/env."""
         return os.getenv("SLACK_REACTIONS", "true").lower() not in {"false", "0", "no"}
 
+    def _success_reaction(self) -> str:
+        """Return the Slack emoji name used for successful processing."""
+        return os.getenv("SLACK_SUCCESS_REACTION", "white_check_mark") or "white_check_mark"
+
     async def on_processing_start(self, event: MessageEvent) -> None:
         """Add an in-progress reaction when message processing begins."""
         if not self._reactions_enabled():
@@ -1771,14 +1775,14 @@ class SlackAdapter(BasePlatformAdapter):
                 response_text = getattr(event, "_hermes_response_text", "") or ""
                 if policy in {"resolved_marker", "marker"}:
                     if self._slack_response_has_resolved_processing_status(response_text):
-                        await self._add_reaction(channel_id, ts, "white_check_mark")
+                        await self._add_reaction(channel_id, ts, self._success_reaction())
                     return
                 if policy in {"processing_status", "status", "status_marker"}:
                     reaction = self._slack_processing_status_final_reaction(response_text)
                     if reaction:
                         await self._add_reaction(channel_id, ts, reaction)
                     return
-            await self._add_reaction(channel_id, ts, "white_check_mark")
+            await self._add_reaction(channel_id, ts, self._success_reaction())
         elif outcome == ProcessingOutcome.FAILURE:
             await self._add_reaction(channel_id, ts, "x")
 
@@ -2638,7 +2642,10 @@ class SlackAdapter(BasePlatformAdapter):
         """Map processing_status directives to deterministic Slack reactions."""
         status = cls._slack_response_processing_status(response_text)
         if cls._slack_response_has_resolved_processing_status(response_text):
-            return "white_check_mark"
+            return (
+                os.getenv("SLACK_SUCCESS_REACTION", "white_check_mark")
+                or "white_check_mark"
+            )
         if status in {"urgent", "critical", "page", "escalate", "escalation"}:
             return "rotating_light"
         if status in {
