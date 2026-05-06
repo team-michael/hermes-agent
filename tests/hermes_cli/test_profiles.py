@@ -158,6 +158,18 @@ class TestCreateProfile:
                         "plans", "workspace", "cron"]:
             assert (profile_dir / subdir).is_dir(), f"Missing subdir: {subdir}"
 
+    def test_new_profile_defaults_approvals_off(self, profile_env):
+        import yaml
+
+        profile_dir = create_profile("coder", no_alias=True)
+        config = yaml.safe_load((profile_dir / "config.yaml").read_text())
+
+        assert config["approvals"] == {
+            "mode": "off",
+            "timeout": 60,
+            "cron_mode": "deny",
+        }
+
     def test_duplicate_raises_file_exists(self, profile_env):
         create_profile("coder", no_alias=True)
         with pytest.raises(FileExistsError):
@@ -172,16 +184,20 @@ class TestCreateProfile:
             create_profile("INVALID!", no_alias=True)
 
     def test_clone_config_copies_files(self, profile_env):
+        import yaml
+
         tmp_path = profile_env
         default_home = tmp_path / ".hermes"
         # Create source config files in default profile
-        (default_home / "config.yaml").write_text("model: test")
+        (default_home / "config.yaml").write_text("model: test\napprovals:\n  mode: manual\n")
         (default_home / ".env").write_text("KEY=val")
         (default_home / "SOUL.md").write_text("Be helpful.")
 
         profile_dir = create_profile("coder", clone_config=True, no_alias=True)
 
-        assert (profile_dir / "config.yaml").read_text() == "model: test"
+        config = yaml.safe_load((profile_dir / "config.yaml").read_text())
+        assert config["model"] == "test"
+        assert config["approvals"]["mode"] == "off"
         assert (profile_dir / ".env").read_text() == "KEY=val"
         assert (profile_dir / "SOUL.md").read_text() == "Be helpful."
 
@@ -203,6 +219,8 @@ class TestCreateProfile:
         ).read_text() == "---\nname: installed-skill\n---\n"
 
     def test_clone_all_copies_entire_tree(self, profile_env):
+        import yaml
+
         tmp_path = profile_env
         default_home = tmp_path / ".hermes"
         # Populate default with some content
@@ -218,7 +236,9 @@ class TestCreateProfile:
 
         # Content should be copied
         assert (profile_dir / "memories" / "note.md").read_text() == "remember this"
-        assert (profile_dir / "config.yaml").read_text() == "model: gpt-4"
+        config = yaml.safe_load((profile_dir / "config.yaml").read_text())
+        assert config["model"] == "gpt-4"
+        assert config["approvals"]["mode"] == "off"
         # Runtime files should be stripped
         assert not (profile_dir / "gateway.pid").exists()
         assert not (profile_dir / "gateway_state.json").exists()
@@ -300,10 +320,13 @@ class TestCreateProfile:
         assert (profile_dir / "logs" / "gateway.log").read_text() == "log"
 
     def test_clone_config_missing_files_skipped(self, profile_env):
+        import yaml
+
         """Clone config gracefully skips files that don't exist in source."""
         profile_dir = create_profile("coder", clone_config=True, no_alias=True)
-        # No error; optional files just not copied
-        assert not (profile_dir / "config.yaml").exists()
+        # No error; optional source config is replaced by the profile defaults.
+        config = yaml.safe_load((profile_dir / "config.yaml").read_text())
+        assert config["approvals"]["mode"] == "off"
         assert not (profile_dir / ".env").exists()
         # SOUL.md is always seeded with the default even when clone source lacks it
         assert (profile_dir / "SOUL.md").exists()

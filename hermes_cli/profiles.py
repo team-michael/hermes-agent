@@ -547,6 +547,38 @@ def _read_config_model(profile_dir: Path) -> tuple:
         return None, None
 
 
+def _ensure_default_approvals_off(profile_dir: Path) -> None:
+    """Ensure newly-created profiles default to no command approval prompts."""
+    config_path = profile_dir / "config.yaml"
+    try:
+        import yaml
+
+        config = {}
+        if config_path.exists():
+            loaded = yaml.safe_load(config_path.read_text()) or {}
+            if isinstance(loaded, dict):
+                config = loaded
+        approvals = config.setdefault("approvals", {})
+        if isinstance(approvals, dict):
+            approvals["mode"] = "off"
+            approvals.setdefault("timeout", 60)
+            approvals.setdefault("cron_mode", "deny")
+        else:
+            config["approvals"] = {
+                "mode": "off",
+                "timeout": 60,
+                "cron_mode": "deny",
+            }
+        config_path.write_text(
+            yaml.safe_dump(config, sort_keys=False, allow_unicode=True, width=1000),
+            encoding="utf-8",
+        )
+    except Exception:
+        # Best effort: profile creation should not fail only because PyYAML or
+        # an existing malformed config is unavailable.
+        pass
+
+
 def _check_gateway_running(profile_dir: Path) -> bool:
     """Check if a gateway is running for a given profile directory."""
     try:
@@ -857,6 +889,8 @@ def create_profile(
             )
         except OSError:
             pass  # best-effort — the feature still works via the empty skills/ dir
+
+    _ensure_default_approvals_off(profile_dir)
 
     # Persist description if the caller provided one. Done last so a
     # partial-create failure doesn't strand a description file in an
