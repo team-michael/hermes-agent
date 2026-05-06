@@ -50,6 +50,7 @@ from gateway.platforms.base import (
     safe_url_for_log,
     cache_document_from_bytes,
 )
+from utils import atomic_json_write
 
 
 logger = logging.getLogger(__name__)
@@ -74,6 +75,8 @@ class _ThreadContextCache:
     fetched_at: float = field(default_factory=time.monotonic)
     message_count: int = 0
     parent_text: str = ""  # Raw text of the thread parent (for reply_to_text injection)
+    media_urls: list[str] = field(default_factory=list)
+    media_types: list[str] = field(default_factory=list)
 
 
 def check_slack_requirements() -> bool:
@@ -344,6 +347,8 @@ class SlackAdapter(BasePlatformAdapter):
         # respond to ALL subsequent messages in that thread automatically.
         self._mentioned_threads: set = set()
         self._MENTIONED_THREADS_MAX = 5000
+        self._muted_threads_path = self._default_muted_threads_path()
+        self._muted_threads: set[str] = self._load_muted_threads()
         # Assistant thread metadata keyed by (channel_id, thread_ts). Slack's
         # AI Assistant lifecycle events can arrive before/alongside message
         # events, and they carry the user/thread identity needed for stable
@@ -355,6 +360,9 @@ class SlackAdapter(BasePlatformAdapter):
         self._THREAD_CACHE_TTL = 60.0
         # Track message IDs that should get reaction lifecycle (DMs / @mentions).
         self._reacting_message_ids: set = set()
+        # Per-message subscription metadata for conditional final
+        # reactions. Keyed as "<channel_id>:<message_ts>".
+        self._subscription_reaction_configs: Dict[str, Dict[str, Any]] = {}
         # Track active assistant thread status indicators so stop_typing can
         # clear them (chat_id → thread_ts).
         self._active_status_threads: Dict[str, str] = {}
@@ -370,6 +378,84 @@ class SlackAdapter(BasePlatformAdapter):
         self._socket_watchdog_task: Optional[asyncio.Task] = None
         self._socket_reconnect_lock = asyncio.Lock()
         self._socket_watchdog_interval_s = 15.0
+
+    @staticmethod
+    def _default_muted_threads_path():
+        from hermes_constants import get_hermes_home
+        return get_hermes_home() / "slack_muted_threads.json"
+
+    @staticmethod
+    def _thread_mute_key(channel_id: str, thread_ts: str) -> str:
+        return f"{channel_id}:{thread_ts}"
+
+    def _load_muted_threads(self) -> set[str]:
+        try:
+            if not self._muted_threads_path.exists():
+                return set()
+            raw = json.loads(self._muted_threads_path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                raw = raw.get("threads", [])
+            if not isinstance(raw, list):
+                return set()
+            return {str(item) for item in raw if str(item).strip()}
+        except Exception as exc:
+            logger.warning("[Slack] Failed to load muted thread state: %s", exc)
+            return set()
+
+    def _save_muted_threads(self) -> None:
+        try:
+            atomic_json_write(
+                self._muted_threads_path,
+                {"threads": sorted(self._muted_threads)},
+            )
+        except Exception as exc:
+            logger.warning("[Slack] Failed to save muted thread state: %s", exc)
+
+    def mute_thread(self, channel_id: str, thread_ts: str) -> bool:
+        key = self._thread_mute_key(channel_id, thread_ts)
+        already_muted = key in self._muted_threads
+        self._muted_threads.add(key)
+        self._save_muted_threads()
+        return not already_muted
+
+    def unmute_thread(self, channel_id: str, thread_ts: str) -> bool:
+        key = self._thread_mute_key(channel_id, thread_ts)
+        was_muted = key in self._muted_threads
+        self._muted_threads.discard(key)
+        self._save_muted_threads()
+        return was_muted
+
+    def is_thread_muted(self, channel_id: str, thread_ts: str) -> bool:
+        return self._thread_mute_key(channel_id, thread_ts) in self._muted_threads
+
+    @staticmethod
+    def _slash_command_thread_ts(command: dict) -> str:
+        """Best-effort thread timestamp extraction from Slack slash payloads."""
+        for key in ("thread_ts", "message_ts"):
+            value = command.get(key)
+            if value:
+                return str(value)
+        container = command.get("container")
+        if isinstance(container, dict):
+            for key in ("thread_ts", "message_ts"):
+                value = container.get(key)
+                if value:
+                    return str(value)
+        return ""
+
+    @staticmethod
+    def _inline_command_name(text: str) -> str:
+        """Return the inline slash command name from a Slack message."""
+        stripped = (text or "").strip()
+        if not stripped:
+            return ""
+
+        stripped = re.sub(r"^(?:<@[^>]+>\s*)+", "", stripped).strip()
+        if not stripped.startswith("/"):
+            return ""
+
+        command = stripped[1:].split(None, 1)[0].strip().lower()
+        return command.split("@", 1)[0]
 
     def _start_socket_mode_handler(self) -> None:
         """Start the Slack Socket Mode background task."""
@@ -1669,8 +1755,29 @@ class SlackAdapter(BasePlatformAdapter):
         channel_id = getattr(event.source, "chat_id", None)
         if not channel_id:
             return
+        subscription_cfgs = getattr(self, "_subscription_reaction_configs", None) or {}
+        subscription_cfg = subscription_cfgs.pop(self._slack_reaction_key(channel_id, ts), None)
         await self._remove_reaction(channel_id, ts, "eyes")
         if outcome == ProcessingOutcome.SUCCESS:
+            if subscription_cfg:
+                policy = str(
+                    subscription_cfg.get("final_reaction")
+                    or subscription_cfg.get("success_reaction")
+                    or subscription_cfg.get("reaction_policy")
+                    or "success"
+                ).strip().lower()
+                if policy in {"none", "never", "manual", "ack_only", "start_only"}:
+                    return
+                response_text = getattr(event, "_hermes_response_text", "") or ""
+                if policy in {"resolved_marker", "marker"}:
+                    if self._slack_response_has_resolved_processing_status(response_text):
+                        await self._add_reaction(channel_id, ts, "white_check_mark")
+                    return
+                if policy in {"processing_status", "status", "status_marker"}:
+                    reaction = self._slack_processing_status_final_reaction(response_text)
+                    if reaction:
+                        await self._add_reaction(channel_id, ts, reaction)
+                    return
             await self._add_reaction(channel_id, ts, "white_check_mark")
         elif outcome == ProcessingOutcome.FAILURE:
             await self._add_reaction(channel_id, ts, "x")
@@ -2097,6 +2204,454 @@ class SlackAdapter(BasePlatformAdapter):
                 exc_info=True,
             )
 
+    def _get_bot_user_id(self, team_id: str = "") -> str:
+        """Return the Hermes bot user ID for a workspace, if known."""
+        return self._team_bot_user_ids.get(team_id, self._bot_user_id) or ""
+
+    def _is_own_bot_message(self, msg: dict, team_id: str = "") -> bool:
+        """Return True when a Slack message was authored by Hermes itself."""
+        bot_uid = self._get_bot_user_id(team_id)
+        return bool(bot_uid and msg.get("user") == bot_uid)
+
+    def _extract_rich_text_elements(self, elements: list) -> list[str]:
+        """Flatten Slack rich_text elements into plain text fragments."""
+        parts: list[str] = []
+        for element in elements or []:
+            if not isinstance(element, dict):
+                continue
+            el_type = element.get("type")
+            if el_type == "text":
+                text = element.get("text", "")
+                if text:
+                    parts.append(text)
+            elif el_type == "link":
+                text = element.get("text") or element.get("url", "")
+                if text:
+                    parts.append(text)
+            elif el_type == "emoji":
+                name = element.get("name", "")
+                if name:
+                    parts.append(f":{name}:")
+            elif el_type == "user":
+                user_id = element.get("user_id", "")
+                if user_id:
+                    parts.append(f"<@{user_id}>")
+            elif el_type == "channel":
+                channel_id = element.get("channel_id", "")
+                if channel_id:
+                    parts.append(f"<#{channel_id}>")
+            else:
+                parts.extend(self._extract_rich_text_elements(element.get("elements", []) or []))
+        return parts
+
+    def _extract_text_object_parts(self, obj: Any) -> list[str]:
+        """Extract text fragments from a Slack text object or compatible dict."""
+        if isinstance(obj, str):
+            return [obj]
+        if not isinstance(obj, dict):
+            return []
+
+        obj_type = obj.get("type")
+        if obj_type in {"plain_text", "mrkdwn"}:
+            text = obj.get("text", "")
+            return [text] if text else []
+        if obj_type == "rich_text":
+            return self._extract_rich_text_elements(obj.get("elements", []) or [])
+
+        text = obj.get("text", "")
+        if isinstance(text, str) and text:
+            return [text]
+        return []
+
+    def _extract_slack_blocks_text_parts(self, blocks: list) -> list[str]:
+        """Extract text fragments from common Slack Block Kit block types."""
+        parts: list[str] = []
+        for block in blocks or []:
+            if not isinstance(block, dict):
+                continue
+            block_type = block.get("type")
+            if block_type in {"section", "header"}:
+                parts.extend(self._extract_text_object_parts(block.get("text")))
+                for field in block.get("fields", []) or []:
+                    parts.extend(self._extract_text_object_parts(field))
+                accessory = block.get("accessory") or {}
+                alt_text = accessory.get("alt_text", "")
+                if alt_text:
+                    parts.append(alt_text)
+            elif block_type == "context":
+                for element in block.get("elements", []) or []:
+                    parts.extend(self._extract_text_object_parts(element))
+                    if isinstance(element, dict):
+                        alt_text = element.get("alt_text", "")
+                        if alt_text:
+                            parts.append(alt_text)
+            elif block_type == "image":
+                parts.extend(self._extract_text_object_parts(block.get("title")))
+                alt_text = block.get("alt_text", "")
+                if alt_text:
+                    parts.append(alt_text)
+            elif block_type == "rich_text":
+                parts.extend(self._extract_rich_text_elements(block.get("elements", []) or []))
+        return parts
+
+    def _extract_slack_message_text(self, msg: dict) -> str:
+        """Flatten a Slack message into text, including attachments and blocks."""
+        parts: list[str] = []
+
+        text = (msg.get("text") or "").strip()
+        if text:
+            parts.append(text)
+
+        for attachment in msg.get("attachments", []) or []:
+            if not isinstance(attachment, dict):
+                continue
+            for key in ("pretext", "title", "text", "footer", "fallback"):
+                value = (attachment.get(key) or "").strip()
+                if value:
+                    parts.append(value)
+            for field in attachment.get("fields", []) or []:
+                if not isinstance(field, dict):
+                    continue
+                title = (field.get("title") or "").strip()
+                value = (field.get("value") or "").strip()
+                if title and value:
+                    parts.append(f"{title}: {value}")
+                elif value:
+                    parts.append(value)
+
+        parts.extend(self._extract_slack_blocks_text_parts(msg.get("blocks", []) or []))
+
+        seen = set()
+        cleaned: list[str] = []
+        for part in parts:
+            part = re.sub(r"\s+", " ", str(part)).strip()
+            if part and part not in seen:
+                seen.add(part)
+                cleaned.append(part)
+        return "\n".join(cleaned).strip()
+
+    def _normalize_slack_context_text(self, text: str) -> str:
+        """Clean Slack mrkdwn-ish text for compact thread-context injection."""
+        if not text:
+            return ""
+        text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+        text = re.sub(r"<([^|>]+)\|([^>]+)>", r"\2", text)
+        text = re.sub(r"[`*_~]", "", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+
+    def _slack_image_extension(self, mimetype: str) -> str:
+        """Return a safe image extension for a Slack MIME type."""
+        ext = "." + (mimetype or "image/jpeg").split("/")[-1].split(";")[0]
+        if ext not in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
+            ext = ".jpg"
+        return ext
+
+    async def _cache_thread_context_files(
+        self,
+        msg: dict,
+        *,
+        team_id: str = "",
+    ) -> tuple[list[str], list[str], list[str]]:
+        """Cache Slack files from fetched thread context and return labels/media.
+
+        Thread-context messages arrive via conversations.replies, not the
+        triggering event payload. If their files are only rendered into text,
+        the gateway's vision enrichment never sees them. This bridges image
+        files into MessageEvent.media_urls while also leaving a textual marker
+        in the context so the model knows which prior message had an image.
+        """
+        labels: list[str] = []
+        media_urls: list[str] = []
+        media_types: list[str] = []
+
+        for file_info in msg.get("files", []) or []:
+            if not isinstance(file_info, dict):
+                continue
+
+            mimetype = file_info.get("mimetype", "") or "unknown"
+            name = (
+                file_info.get("name")
+                or file_info.get("title")
+                or file_info.get("id")
+                or "image"
+            )
+            name = str(name).strip() or "image"
+            url = file_info.get("url_private_download") or file_info.get("url_private", "")
+
+            if not mimetype.startswith("image/"):
+                continue
+
+            labels.append(f"[attached image: {name}]")
+            if not url:
+                continue
+
+            try:
+                cached = await self._download_slack_file(
+                    url,
+                    self._slack_image_extension(mimetype),
+                    team_id=team_id,
+                )
+                media_urls.append(cached)
+                media_types.append(mimetype)
+            except Exception as e:  # pragma: no cover - defensive logging
+                logger.warning(
+                    "[Slack] Failed to cache thread-context image from %s: %s",
+                    safe_url_for_log(url),
+                    e,
+                    exc_info=True,
+                )
+
+        return labels, media_urls, media_types
+
+    async def _resolve_message_author_name(self, msg: dict, chat_id: str = "") -> str:
+        """Resolve a message author label for human and bot-authored messages."""
+        user_id = msg.get("user", "")
+        if user_id:
+            return await self._resolve_user_name(user_id, chat_id=chat_id)
+
+        bot_profile = msg.get("bot_profile") or {}
+        for candidate in (
+            bot_profile.get("name"),
+            msg.get("username"),
+            msg.get("bot_id"),
+        ):
+            if candidate:
+                return str(candidate)
+        return "unknown"
+
+    # ----- Message subscriptions -----
+
+    @staticmethod
+    def _slack_reaction_key(channel_id: str, ts: str) -> str:
+        return f"{channel_id}:{ts}"
+
+    @staticmethod
+    def _slack_config_values(raw: Any) -> set:
+        """Normalize a scalar/list/csv config value to a non-empty string set."""
+        if raw is None:
+            return set()
+        if isinstance(raw, (list, tuple, set)):
+            return {str(part).strip() for part in raw if str(part).strip()}
+        if isinstance(raw, str):
+            stripped = raw.strip()
+            if not stripped:
+                return set()
+            return {part.strip() for part in stripped.split(",") if part.strip()}
+        return {str(raw).strip()} if str(raw).strip() else set()
+
+    def _slack_message_subscriptions(self) -> list[Dict[str, Any]]:
+        """Return normalized Slack message subscriptions from config/env.
+
+        Config shape:
+
+            slack:
+              message_subscriptions:
+                - channels: [C123]
+                  bot_ids: [B123]
+                  user_ids: [U123]
+                  app_ids: [A123]
+                  bot_names: ["Amazon Q Developer"]
+        """
+        raw = self.config.extra.get("message_subscriptions")
+        if raw is None:
+            raw = os.getenv("SLACK_MESSAGE_SUBSCRIPTIONS", "")
+        if isinstance(raw, str):
+            stripped = raw.strip()
+            if not stripped:
+                return []
+            try:
+                raw = json.loads(stripped)
+            except json.JSONDecodeError:
+                logger.warning("[Slack] Ignoring invalid Slack message subscription JSON")
+                return []
+        if isinstance(raw, dict):
+            raw = [raw]
+        if not isinstance(raw, list):
+            return []
+        return [item for item in raw if isinstance(item, dict)]
+
+    @staticmethod
+    def _slack_event_bot_identity(event: dict) -> Dict[str, str]:
+        bot_profile = event.get("bot_profile") or {}
+        return {
+            "channel": str(event.get("channel", "") or ""),
+            "bot_id": str(event.get("bot_id") or bot_profile.get("id") or ""),
+            "user_id": str(event.get("user") or bot_profile.get("user_id") or ""),
+            "app_id": str(event.get("app_id") or bot_profile.get("app_id") or ""),
+            "bot_name": str(
+                event.get("username")
+                or bot_profile.get("name")
+                or bot_profile.get("real_name")
+                or ""
+            ),
+        }
+
+    def _matching_slack_message_subscription(self, event: dict) -> Optional[Dict[str, Any]]:
+        """Return the first configured message subscription matching this event."""
+        identity = self._slack_event_bot_identity(event)
+        if not identity["channel"]:
+            return None
+
+        for subscription in self._slack_message_subscriptions():
+            channels = self._slack_config_values(
+                subscription.get("channels")
+                or subscription.get("channel_ids")
+                or subscription.get("channel")
+            )
+            if not channels or identity["channel"] not in channels:
+                continue
+
+            subtypes = self._slack_config_values(subscription.get("subtypes") or subscription.get("subtype"))
+            event_subtype = str(event.get("subtype") or "")
+            if not event_subtype and identity["bot_id"]:
+                event_subtype = "bot_message"
+            if subtypes and event_subtype not in subtypes:
+                continue
+
+            filters = (
+                ("bot_id", subscription.get("bot_id") or subscription.get("bot_ids")),
+                ("user_id", subscription.get("user_id") or subscription.get("user_ids")),
+                ("app_id", subscription.get("app_id") or subscription.get("app_ids")),
+                (
+                    "bot_name",
+                    subscription.get("bot_name")
+                    or subscription.get("bot_names")
+                    or subscription.get("username"),
+                ),
+            )
+            has_identity_filter = False
+            matched = True
+            for key, raw_values in filters:
+                values = self._slack_config_values(raw_values)
+                if not values:
+                    continue
+                has_identity_filter = True
+                if identity[key] not in values:
+                    matched = False
+                    break
+            if matched and has_identity_filter:
+                return subscription
+        return None
+
+    @staticmethod
+    def _slack_subscription_bypasses_mention(subscription: Optional[Dict[str, Any]]) -> bool:
+        if not subscription:
+            return False
+        raw = subscription.get("bypass_mention", True)
+        if isinstance(raw, str):
+            return raw.strip().lower() not in ("false", "0", "no", "off")
+        return bool(raw)
+
+    @staticmethod
+    def _slack_subscription_reactions_enabled(subscription: Optional[Dict[str, Any]]) -> bool:
+        if not subscription:
+            return False
+        raw = subscription.get("reactions", True)
+        if isinstance(raw, str):
+            return raw.strip().lower() not in ("false", "0", "no", "off")
+        return bool(raw)
+
+    @staticmethod
+    def _slack_subscription_includes_context(subscription: Optional[Dict[str, Any]]) -> bool:
+        if not subscription:
+            return False
+        raw = subscription.get("include_context", True)
+        if isinstance(raw, str):
+            return raw.strip().lower() not in ("false", "0", "no", "off")
+        return bool(raw)
+
+    @staticmethod
+    def _slack_subscription_prompt(subscription: Optional[Dict[str, Any]]) -> str:
+        if not subscription:
+            return ""
+        return str(subscription.get("prompt") or subscription.get("channel_prompt") or "").strip()
+
+    def _prepend_slack_subscription_context(
+        self,
+        text: str,
+        event: dict,
+        subscription: Optional[Dict[str, Any]],
+    ) -> str:
+        if not self._slack_subscription_includes_context(subscription):
+            return text
+        identity = self._slack_event_bot_identity(event)
+        context = [
+            "[Slack subscription context]",
+            f"channel_id: {identity['channel']}",
+            f"message_ts: {event.get('ts', '')}",
+            f"thread_ts: {event.get('thread_ts') or event.get('ts', '')}",
+            f"bot_id: {identity['bot_id']}",
+            f"user_id: {identity['user_id']}",
+            f"app_id: {identity['app_id']}",
+            f"bot_name: {identity['bot_name']}",
+        ]
+        sub_name = subscription.get("name") if subscription else ""
+        if sub_name:
+            context.append(f"subscription: {sub_name}")
+        return "\n".join(context) + "\n\n" + text
+
+    @staticmethod
+    def _slack_response_processing_status(response_text: str) -> Optional[str]:
+        """Return the final machine-readable processing status, if present."""
+        if not response_text:
+            return None
+        statuses = re.findall(
+            r"\[\[\s*hermes:processing_status\s*=\s*([A-Za-z0-9_-]+)\s*\]\]",
+            response_text,
+            flags=re.IGNORECASE,
+        )
+        statuses.extend(
+            re.findall(
+                r"\bPROCESSING_STATUS\s*[:=]\s*([A-Za-z0-9_-]+)\b",
+                response_text,
+                flags=re.IGNORECASE,
+            )
+        )
+        if not statuses:
+            return None
+        return statuses[-1].lower()
+
+    @classmethod
+    def _slack_response_has_resolved_processing_status(cls, response_text: str) -> bool:
+        """Return True when the agent marked the work as resolved/no-action."""
+        status = cls._slack_response_processing_status(response_text)
+        resolved = {
+            "resolved",
+            "no_action",
+            "no-action",
+            "false_positive",
+            "false-positive",
+            "falsey",
+            "falsy",
+            "spike",
+            "transient_spike",
+            "transient-spike",
+            "monitor",
+            "monitor_only",
+            "monitor-only",
+        }
+        return status in resolved
+
+    @classmethod
+    def _slack_processing_status_final_reaction(cls, response_text: str) -> str:
+        """Map processing_status directives to deterministic Slack reactions."""
+        status = cls._slack_response_processing_status(response_text)
+        if cls._slack_response_has_resolved_processing_status(response_text):
+            return "white_check_mark"
+        if status in {"urgent", "critical", "page", "escalate", "escalation"}:
+            return "rotating_light"
+        if status in {
+            "needs_fix",
+            "needs-fix",
+            "action_required",
+            "action-required",
+            "fix_required",
+            "fix-required",
+        }:
+            return "warning"
+        return "warning"
+
     async def _handle_assistant_thread_lifecycle_event(self, event: dict) -> None:
         """Handle Slack Assistant lifecycle events that carry user/thread identity."""
         metadata = self._extract_assistant_thread_metadata(event)
@@ -2109,26 +2664,39 @@ class SlackAdapter(BasePlatformAdapter):
         event_ts = event.get("ts", "")
         if event_ts and self._dedup.is_duplicate(event_ts):
             return
+        channel_id = event.get("channel", "")
+        ts = event_ts
+        team_id = event.get("team") or event.get("team_id", "")
 
         # Bot message filtering (SLACK_ALLOW_BOTS / config allow_bots):
         #   "none"     — ignore all bot messages (default, backward-compatible)
         #   "mentions" — accept bot messages only when they @mention us
         #   "all"      — accept all bot messages (except our own)
+        #   "filtered" — accept only configured message_subscriptions
+        message_subscription = None
         if event.get("bot_id") or event.get("subtype") == "bot_message":
+            # Always ignore our own messages to prevent echo loops.
+            if self._is_own_bot_message(event, team_id=team_id):
+                return
+
+            message_subscription = self._matching_slack_message_subscription(event)
             allow_bots = self.config.extra.get("allow_bots", "")
             if not allow_bots:
                 allow_bots = os.getenv("SLACK_ALLOW_BOTS", "none")
             allow_bots = str(allow_bots).lower().strip()
-            if allow_bots == "none":
+            if message_subscription:
+                pass
+            elif allow_bots == "none":
                 return
             elif allow_bots == "mentions":
-                text_check = event.get("text", "")
+                text_check = self._extract_slack_message_text(event) or event.get("text", "")
                 if self._bot_user_id and f"<@{self._bot_user_id}>" not in text_check:
                     return
-            # "all" falls through to process the message
-            # Always ignore our own messages to prevent echo loops
-            msg_user = event.get("user", "")
-            if msg_user and self._bot_user_id and msg_user == self._bot_user_id:
+            elif allow_bots == "all":
+                pass
+            elif allow_bots in ("filtered", "subscriptions"):
+                return
+            else:
                 return
 
         # Ignore message edits and deletions
@@ -2253,8 +2821,6 @@ class SlackAdapter(BasePlatformAdapter):
                     len(att_parts),
                 )
 
-        channel_id = event.get("channel", "")
-        ts = event.get("ts", "")
         assistant_meta = self._lookup_assistant_thread_metadata(
             event,
             channel_id=channel_id,
@@ -2264,8 +2830,7 @@ class SlackAdapter(BasePlatformAdapter):
         if not channel_id:
             channel_id = assistant_meta.get("channel_id", "")
         team_id = (
-            event.get("team")
-            or event.get("team_id")
+            team_id
             or assistant_meta.get("team_id", "")
         )
 
@@ -2324,6 +2889,14 @@ class SlackAdapter(BasePlatformAdapter):
                 # further changes.
                 thread_ts = None
 
+        if (
+            thread_ts
+            and self.is_thread_muted(channel_id, thread_ts)
+            and self._inline_command_name(text) != "unmute"
+        ):
+            logger.debug("[Slack] Ignoring message in muted thread %s:%s", channel_id, thread_ts)
+            return
+
         # In channels, respond if:
         #   0. Channel is in free_response_channels, OR require_mention is
         #      disabled — always process regardless of mention.
@@ -2346,7 +2919,12 @@ class SlackAdapter(BasePlatformAdapter):
                 )
                 return
 
-            if channel_id in self._slack_free_response_channels():
+            if (
+                message_subscription
+                and self._slack_subscription_bypasses_mention(message_subscription)
+            ):
+                pass  # Explicit subscription — process without @mention
+            elif channel_id in self._slack_free_response_channels():
                 pass  # Free-response channel — always process
             elif not self._slack_require_mention():
                 pass  # Mention requirement disabled globally for Slack
@@ -2390,6 +2968,8 @@ class SlackAdapter(BasePlatformAdapter):
 
         # When entering a thread for the first time (no existing session),
         # fetch thread context so the agent understands the conversation.
+        media_urls: list[str] = []
+        media_types: list[str] = []
         if is_thread_reply and not self._has_active_session_for_thread(
             channel_id=channel_id,
             thread_ts=event_thread_ts,
@@ -2403,6 +2983,13 @@ class SlackAdapter(BasePlatformAdapter):
             )
             if thread_context:
                 text = thread_context + text
+            cached_thread = self._thread_context_cache.get(f"{channel_id}:{event_thread_ts}:{team_id}")
+            if cached_thread:
+                media_urls.extend(cached_thread.media_urls)
+                media_types.extend(cached_thread.media_types)
+
+        if message_subscription:
+            text = self._prepend_slack_subscription_context(text, event, message_subscription)
 
         # Determine message type
         msg_type = MessageType.TEXT
@@ -2410,8 +2997,6 @@ class SlackAdapter(BasePlatformAdapter):
             msg_type = MessageType.COMMAND
 
         # Handle file attachments
-        media_urls = []
-        media_types = []
         attachment_notices: List[str] = []
         files = event.get("files", [])
         for f in files:
@@ -2461,9 +3046,7 @@ class SlackAdapter(BasePlatformAdapter):
             url = f.get("url_private_download") or f.get("url_private", "")
             if mimetype.startswith("image/") and url:
                 try:
-                    ext = "." + mimetype.split("/")[-1].split(";")[0]
-                    if ext not in {".jpg", ".jpeg", ".png", ".gif", ".webp"}:
-                        ext = ".jpg"
+                    ext = self._slack_image_extension(mimetype)
                     # Slack private URLs require the bot token as auth header
                     cached = await self._download_slack_file(url, ext, team_id=team_id)
                     media_urls.append(cached)
@@ -2630,6 +3213,9 @@ class SlackAdapter(BasePlatformAdapter):
             channel_id,
             None,
         )
+        _subscription_prompt = self._slack_subscription_prompt(message_subscription)
+        if _subscription_prompt:
+            _channel_prompt = ((_channel_prompt or "") + "\n\n" + _subscription_prompt).strip()
 
         # Extract reply context if this message is a thread reply.
         # Mirrors the Telegram/Discord implementations so that gateway.run
@@ -2665,11 +3251,24 @@ class SlackAdapter(BasePlatformAdapter):
         )
 
         # Only react when bot is directly addressed (DM or @mention).
-        # In listen-all channels (require_mention=false), reacting to every
-        # casual message would be noisy.
-        _should_react = (is_dm or is_mentioned) and self._reactions_enabled()
+        # Message subscriptions opt into reactions even though they bypass
+        # mention gating; listen-all channels still avoid reaction noise.
+        _should_react = (
+            is_dm
+            or is_mentioned
+            or (
+                message_subscription
+                and self._slack_subscription_reactions_enabled(message_subscription)
+            )
+        ) and self._reactions_enabled()
         if _should_react:
             self._reacting_message_ids.add(ts)
+            if message_subscription:
+                subscription_cfgs = getattr(self, "_subscription_reaction_configs", None)
+                if subscription_cfgs is None:
+                    subscription_cfgs = {}
+                    self._subscription_reaction_configs = subscription_cfgs
+                subscription_cfgs[self._slack_reaction_key(channel_id, ts)] = message_subscription
 
         await self.handle_message(msg_event)
 
@@ -3178,9 +3777,11 @@ class SlackAdapter(BasePlatformAdapter):
             if not messages:
                 return ""
 
-            bot_uid = self._team_bot_user_ids.get(team_id, self._bot_user_id)
+            bot_uid = self._get_bot_user_id(team_id)
             context_parts = []
             parent_text = ""
+            context_media_urls: list[str] = []
+            context_media_types: list[str] = []
             for msg in messages:
                 msg_ts = msg.get("ts", "")
                 # Exclude the current triggering message — it will be delivered
@@ -3211,20 +3812,27 @@ class SlackAdapter(BasePlatformAdapter):
                 ):
                     continue
 
-                msg_text = msg.get("text", "").strip()
+                msg_text = self._extract_slack_message_text(msg)
+                file_labels, file_media_urls, file_media_types = await self._cache_thread_context_files(
+                    msg,
+                    team_id=team_id,
+                )
+                if file_labels:
+                    msg_text = "\n".join(part for part in [msg_text, *file_labels] if part).strip()
+                context_media_urls.extend(file_media_urls)
+                context_media_types.extend(file_media_types)
                 if not msg_text:
                     continue
 
                 # Strip bot mentions from context messages
                 if bot_uid:
                     msg_text = msg_text.replace(f"<@{bot_uid}>", "").strip()
+                msg_text = self._normalize_slack_context_text(msg_text)
+                if not msg_text:
+                    continue
 
                 prefix = "[thread parent] " if is_parent else ""
-                display_user = msg_user or "unknown"
-                # Prefer the bot's own name when the message is a bot post.
-                if is_bot and not display_user:
-                    display_user = msg.get("username") or "bot"
-                name = await self._resolve_user_name(display_user, chat_id=channel_id)
+                name = await self._resolve_message_author_name(msg, chat_id=channel_id)
                 context_parts.append(f"{prefix}{name}: {msg_text}")
                 if is_parent:
                     parent_text = msg_text
@@ -3242,6 +3850,8 @@ class SlackAdapter(BasePlatformAdapter):
                 fetched_at=now,
                 message_count=len(context_parts),
                 parent_text=parent_text,
+                media_urls=context_media_urls,
+                media_types=context_media_types,
             )
             return content
 
@@ -3312,6 +3922,7 @@ class SlackAdapter(BasePlatformAdapter):
         user_id = command.get("user_id", "")
         channel_id = command.get("channel_id", "")
         team_id = command.get("team_id", "")
+        thread_ts = self._slash_command_thread_ts(command)
 
         # Track which workspace owns this channel
         if team_id and channel_id:
@@ -3354,6 +3965,7 @@ class SlackAdapter(BasePlatformAdapter):
             chat_id=channel_id,
             chat_type="dm" if is_dm else "group",
             user_id=user_id,
+            thread_id=thread_ts or None,
         )
 
         event = MessageEvent(
@@ -3437,7 +4049,21 @@ class SlackAdapter(BasePlatformAdapter):
             )
 
             session_store._ensure_loaded()
-            return session_key in session_store._entries
+            entry = session_store._entries.get(session_key)
+            if entry is None:
+                return False
+
+            # ``suspended=True`` means SessionStore will auto-reset this key on
+            # the next real message (e.g. after crash-recovery startup or
+            # /stop). Treating it as "active" here suppresses
+            # _fetch_thread_context(), so the follow-up turn starts a fresh
+            # session without the earlier thread history. Only a literal True
+            # counts — many tests use MagicMock session entries and absent
+            # attributes should behave like a normal active session.
+            if getattr(entry, "suspended", False) is True:
+                return False
+
+            return True
         except Exception:
             return False
 

@@ -22,6 +22,8 @@ from gateway.platforms.base import (
     MessageType,
     is_host_excluded_by_no_proxy,
 )
+from gateway.run import GatewayRunner
+from gateway.session import SessionSource, build_session_key
 
 
 # ---------------------------------------------------------------------------
@@ -2575,6 +2577,107 @@ class TestThreadReplyHandling:
         assert msg_event.text == "Follow-up question"
 
     @pytest.mark.asyncio
+    async def test_suspended_thread_session_refetches_thread_context(
+        self, adapter_with_session_store, mock_session_store
+    ):
+        """A suspended session will auto-reset on the next turn, so Slack must
+        refetch thread context instead of treating the thread as already warm."""
+        session_key = "agent:main:slack:group:C123:123.000:U_USER"
+        suspended_entry = MagicMock()
+        suspended_entry.suspended = True
+        suspended_entry.resume_pending = False
+        mock_session_store._entries = {session_key: suspended_entry}
+        adapter_with_session_store._fetch_thread_context = AsyncMock(
+            return_value="[Thread context — prior messages in this thread (not yet in conversation history):]\nAlice: Earlier detail\n[End of thread context]\n\n"
+        )
+
+        event = {
+            "text": "<@U_BOT> follow-up question",
+            "user": "U_USER",
+            "channel": "C123",
+            "ts": "123.456",
+            "thread_ts": "123.000",
+            "channel_type": "channel",
+            "team": "T_TEAM",
+        }
+        await adapter_with_session_store._handle_slack_message(event)
+
+        adapter_with_session_store._fetch_thread_context.assert_awaited_once()
+        msg_event = adapter_with_session_store.handle_message.call_args[0][0]
+        assert msg_event.text.startswith("[Thread context — prior messages")
+        assert msg_event.text.endswith("follow-up question")
+
+    @pytest.mark.asyncio
+    async def test_thread_parent_image_is_forwarded_as_context_media(
+        self, adapter_with_session_store, mock_session_store
+    ):
+        """Images attached to the thread parent should be available to vision.
+
+        Slack's conversations.replies includes parent message file metadata, but
+        the triggering reply event itself has no files. The adapter must bridge
+        those parent files into the MessageEvent media fields so gateway.run can
+        auto-analyze them before the LLM sees the turn.
+        """
+        mock_session_store._entries = {}
+        adapter_with_session_store._user_name_cache["U_PARENT"] = "Soomin Lee"
+        adapter_with_session_store._user_name_cache["U_USER"] = "Minkyu Cho"
+        adapter_with_session_store._app.client.conversations_replies = AsyncMock(return_value={
+            "messages": [
+                {
+                    "text": "GFSA",
+                    "user": "U_PARENT",
+                    "channel": "C123",
+                    "ts": "123.000",
+                    "files": [
+                        {
+                            "id": "F_PARENT_IMAGE",
+                            "name": "brand-photo.jpg",
+                            "mimetype": "image/jpeg",
+                            "url_private_download": "https://files.slack.com/files-pri/T123-F_PARENT_IMAGE/download/brand-photo.jpg",
+                        }
+                    ],
+                },
+                {
+                    "text": "<@U_BOT> which picture is best?",
+                    "user": "U_USER",
+                    "channel": "C123",
+                    "ts": "123.456",
+                    "thread_ts": "123.000",
+                },
+            ]
+        })
+
+        with patch.object(
+            adapter_with_session_store,
+            "_download_slack_file",
+            new_callable=AsyncMock,
+        ) as download:
+            download.return_value = "/tmp/cached-thread-parent.jpg"
+            event = {
+                "text": "<@U_BOT> which picture is best?",
+                "user": "U_USER",
+                "channel": "C123",
+                "ts": "123.456",
+                "thread_ts": "123.000",
+                "channel_type": "channel",
+                "team": "T_TEAM",
+            }
+
+            await adapter_with_session_store._handle_slack_message(event)
+
+        msg_event = adapter_with_session_store.handle_message.call_args[0][0]
+        assert msg_event.text.startswith("[Thread context — prior messages")
+        assert "[thread parent] Soomin Lee: GFSA" in msg_event.text
+        assert "attached image: brand-photo.jpg" in msg_event.text
+        assert msg_event.media_urls == ["/tmp/cached-thread-parent.jpg"]
+        assert msg_event.media_types == ["image/jpeg"]
+        download.assert_awaited_once_with(
+            "https://files.slack.com/files-pri/T123-F_PARENT_IMAGE/download/brand-photo.jpg",
+            ".jpeg",
+            team_id="T_TEAM",
+        )
+
+    @pytest.mark.asyncio
     async def test_thread_reply_with_mention_strips_bot_id(
         self, adapter_with_session_store, mock_session_store
     ):
@@ -2944,6 +3047,118 @@ class TestSlashCommands:
         await adapter._handle_slash_command(command)
         msg = adapter.handle_message.call_args[0][0]
         assert msg.text == "what's the weather today?"
+
+    @pytest.mark.asyncio
+    async def test_mute_command_preserves_thread_context(self, adapter):
+        command = {
+            "text": "mute",
+            "user_id": "U1",
+            "channel_id": "C1",
+            "thread_ts": "123.000",
+        }
+        await adapter._handle_slash_command(command)
+        msg = adapter.handle_message.call_args[0][0]
+        assert msg.text == "/mute"
+        assert msg.source.thread_id == "123.000"
+        assert msg.source.chat_type == "group"
+
+
+class TestThreadMute:
+    """Test Slack thread mute behavior."""
+
+    def test_mute_state_persists(self, adapter, tmp_path):
+        adapter._muted_threads_path = tmp_path / "slack_muted_threads.json"
+        adapter._muted_threads = set()
+
+        assert adapter.mute_thread("C1", "123.000") is True
+        assert adapter.is_thread_muted("C1", "123.000")
+
+        restored = SlackAdapter(PlatformConfig(enabled=True, token="xoxb-fake-token"))
+        restored._muted_threads_path = adapter._muted_threads_path
+        restored._muted_threads = restored._load_muted_threads()
+        assert restored.is_thread_muted("C1", "123.000")
+
+        assert restored.unmute_thread("C1", "123.000") is True
+        assert not restored.is_thread_muted("C1", "123.000")
+
+    @pytest.mark.asyncio
+    async def test_muted_thread_is_ignored_even_when_mentioned(self, adapter, tmp_path):
+        adapter._muted_threads_path = tmp_path / "slack_muted_threads.json"
+        adapter._muted_threads = set()
+        adapter.mute_thread("C1", "123.000")
+
+        event = {
+            "channel": "C1",
+            "channel_type": "channel",
+            "user": "U1",
+            "text": "<@U_BOT> please respond",
+            "ts": "123.456",
+            "thread_ts": "123.000",
+        }
+        await adapter._handle_slack_message(event)
+
+        adapter.handle_message.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unmute_command_reaches_muted_thread_when_mentioned(self, adapter, tmp_path):
+        adapter._muted_threads_path = tmp_path / "slack_muted_threads.json"
+        adapter._muted_threads = set()
+        adapter.mute_thread("C1", "123.000")
+        adapter._user_name_cache["U1"] = "User One"
+        adapter._fetch_thread_context = AsyncMock(return_value="")
+
+        event = {
+            "channel": "C1",
+            "channel_type": "channel",
+            "user": "U1",
+            "text": "<@U_BOT> /unmute",
+            "ts": "123.456",
+            "thread_ts": "123.000",
+        }
+        await adapter._handle_slack_message(event)
+
+        adapter.handle_message.assert_awaited_once()
+        msg = adapter.handle_message.call_args[0][0]
+        assert msg.text == "/unmute"
+        assert msg.message_type == MessageType.COMMAND
+        assert msg.source.thread_id == "123.000"
+
+    @pytest.mark.asyncio
+    async def test_gateway_mute_and_unmute_commands(self, adapter, tmp_path):
+        adapter._muted_threads_path = tmp_path / "slack_muted_threads.json"
+        adapter._muted_threads = set()
+        runner = object.__new__(GatewayRunner)
+        runner.adapters = {Platform.SLACK: adapter}
+        runner._running_agents = {}
+        runner._session_key_for_source = lambda source: build_session_key(source)
+
+        source = SessionSource(
+            platform=Platform.SLACK,
+            chat_id="C1",
+            chat_type="group",
+            user_id="U1",
+            thread_id="123.000",
+        )
+        mute_event = MessageEvent(
+            text="/mute",
+            message_type=MessageType.COMMAND,
+            source=source,
+            raw_message={},
+        )
+        unmute_event = MessageEvent(
+            text="/unmute",
+            message_type=MessageType.COMMAND,
+            source=source,
+            raw_message={},
+        )
+
+        mute_result = await runner._handle_mute_command(mute_event)
+        assert "Muted" in mute_result
+        assert adapter.is_thread_muted("C1", "123.000")
+
+        unmute_result = await runner._handle_unmute_command(unmute_event)
+        assert "Unmuted" in unmute_result
+        assert not adapter.is_thread_muted("C1", "123.000")
 
 
 # ---------------------------------------------------------------------------

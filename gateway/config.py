@@ -945,8 +945,12 @@ def load_gateway_config() -> GatewayConfig:
                     bridged["group_allowed_chats"] = platform_cfg["group_allowed_chats"]
                 if plat == Platform.TELEGRAM and "allowed_topics" in platform_cfg:
                     bridged["allowed_topics"] = platform_cfg["allowed_topics"]
+                if "allow_bots" in platform_cfg:
+                    bridged["allow_bots"] = platform_cfg["allow_bots"]
                 if "free_response_channels" in platform_cfg:
                     bridged["free_response_channels"] = platform_cfg["free_response_channels"]
+                if plat == Platform.SLACK and "message_subscriptions" in platform_cfg:
+                    bridged["message_subscriptions"] = platform_cfg["message_subscriptions"]
                 if "mention_patterns" in platform_cfg:
                     bridged["mention_patterns"] = platform_cfg["mention_patterns"]
                 if "exclusive_bot_mentions" in platform_cfg:
@@ -1048,6 +1052,10 @@ def load_gateway_config() -> GatewayConfig:
                     if isinstance(ac, list):
                         ac = ",".join(str(v) for v in ac)
                     os.environ["SLACK_ALLOWED_CHANNELS"] = str(ac)
+                if "message_subscriptions" in slack_cfg and not os.getenv("SLACK_MESSAGE_SUBSCRIPTIONS"):
+                    os.environ["SLACK_MESSAGE_SUBSCRIPTIONS"] = json.dumps(
+                        slack_cfg["message_subscriptions"]
+                    )
 
             # Bridge top-level require_mention to Telegram when the telegram: section
             # does not already provide one.  Users often write "require_mention: true"

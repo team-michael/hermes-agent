@@ -385,7 +385,77 @@ class TestSlackThreadContext:
         assert "<@U_BOT>" not in context
 
     @pytest.mark.asyncio
-    async def test_skips_bot_messages(self):
+    async def test_includes_external_bot_parent_attachment_text(self):
+        adapter = _make_adapter()
+        mock_client = adapter._team_clients["T1"]
+        mock_client.conversations_replies = AsyncMock(return_value={
+            "messages": [
+                {
+                    "ts": "1000.0",
+                    "user": "U_CHATBOT",
+                    "bot_id": "B_EXT",
+                    "subtype": "bot_message",
+                    "text": "",
+                    "attachments": [
+                        {
+                            "title": "CloudWatch Alarm",
+                            "text": "prod-api error rate breached",
+                            "fields": [
+                                {"title": "Alarm", "value": "prod-api-5xx"},
+                            ],
+                        }
+                    ],
+                },
+                {"ts": "1000.2", "user": "U1", "text": "Current"},
+            ]
+        })
+        adapter._user_name_cache = {"U1": "Alice", "U_CHATBOT": "AWS Chatbot"}
+
+        context = await adapter._fetch_thread_context(
+            channel_id="C1", thread_ts="1000.0", current_ts="1000.2", team_id="T1"
+        )
+
+        assert "[thread parent] AWS Chatbot: CloudWatch Alarm" in context
+        assert "prod-api error rate breached" in context
+        assert "Alarm: prod-api-5xx" in context
+
+    @pytest.mark.asyncio
+    async def test_includes_external_bot_parent_block_text(self):
+        adapter = _make_adapter()
+        mock_client = adapter._team_clients["T1"]
+        mock_client.conversations_replies = AsyncMock(return_value={
+            "messages": [
+                {
+                    "ts": "1000.0",
+                    "user": "U_CHATBOT",
+                    "bot_id": "B_EXT",
+                    "subtype": "bot_message",
+                    "text": "",
+                    "blocks": [
+                        {
+                            "type": "header",
+                            "text": {"type": "plain_text", "text": "Amazon Q Alert"},
+                        },
+                        {
+                            "type": "section",
+                            "text": {"type": "mrkdwn", "text": "*Error:* Lambda timeout"},
+                        },
+                    ],
+                },
+                {"ts": "1000.2", "user": "U1", "text": "Current"},
+            ]
+        })
+        adapter._user_name_cache = {"U1": "Alice", "U_CHATBOT": "Amazon Q"}
+
+        context = await adapter._fetch_thread_context(
+            channel_id="C1", thread_ts="1000.0", current_ts="1000.2", team_id="T1"
+        )
+
+        assert "[thread parent] Amazon Q: Amazon Q Alert" in context
+        assert "Error: Lambda timeout" in context
+
+    @pytest.mark.asyncio
+    async def test_skips_own_bot_messages(self):
         """Self-bot child replies are skipped to avoid circular context,
         but non-self bots (e.g. cron posts, third-party integrations) are kept.
 
