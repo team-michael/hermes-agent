@@ -18,7 +18,7 @@ Default behavior:
 1. Verify the current repo is on `main` and clean.
 2. Fetch `origin/main` and `team-michael/main`.
 3. Fast-forward local `main` from `team-michael/main` when needed; stop if they diverged.
-4. Run `hermes update` from the `main` checkout. With `update.local_patch_branch: main`, Hermes rebases local commits onto `origin/main` instead of resetting them away.
+4. Run `hermes update` from the `main` checkout with `HERMES_UPDATE_LOCAL_PATCH_BRANCH=main` set explicitly. This guarantees Hermes rebases local commits onto `origin/main` instead of resetting them away, even if the root/default config does not define `update.local_patch_branch`.
 5. Copy current live profile `memories/*.md` files into `ignored/local` and commit them when they changed. Do not copy `.lock` files.
 6. Push local `main` to `team-michael/main` with `--force-with-lease`.
 7. Run `ignored/local/scripts/apply-local-state.py --replace-existing --link-soul` with no profile arguments, so newly added repo-managed profiles are included automatically.
