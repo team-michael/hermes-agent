@@ -55,8 +55,14 @@ def build_scope_attribution(
 
     namespace = alarm.get('Namespace') if isinstance(alarm, dict) else None
     metric_name = alarm.get('MetricName') if isinstance(alarm, dict) else None
+    namespace_service_indicators: List[str] = []
+    if namespace:
+        parts = [part for part in str(namespace).split('/') if part]
+        if len(parts) >= 2 and parts[0].lower() != 'aws':
+            namespace_service_indicators.append(parts[1])
     service_indicators = unique([
         *(detected.get('service_names') or []),
+        *namespace_service_indicators,
         *alarm_dimension_value(alarm, ['FunctionName', 'ServiceName', 'ClusterName']),
     ])
     infra_indicators = unique([
@@ -66,7 +72,10 @@ def build_scope_attribution(
 
     common_scope = []
     if service_indicators:
-        common_scope.append('서비스 공통')
+        service_label = ', '.join(service_indicators[:3])
+        if len(service_indicators) > 3:
+            service_label += f' 외 {len(service_indicators) - 3}개'
+        common_scope.append(f'서비스 공통({service_label})')
     if infra_indicators or (namespace and any(token in str(namespace).lower() for token in ['rds', 'sqs', 'elasticache', 'lambda'])):
         common_scope.append('인프라 공통')
     common_scope = unique(common_scope)

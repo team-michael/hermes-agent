@@ -188,7 +188,8 @@ def detect_lambda_names(text: str, log_groups: Sequence[str], alarm: Optional[Di
         names.extend(alarm_dimension_value(alarm, ['FunctionName']))
     patterns = [
         r'\b([a-z0-9][a-z0-9-]{2,})\s+lambda\s+(?:error|errors|latency|timeout)\b',
-        r'\b([a-z0-9][a-z0-9-]{2,})-(?:P\d-)?(?:FCM)?LatencyP\d+\b',
+        r'\blambda\s+(?:function(?:name)?|name)\b\s*[:=#]\s*[`"\']?([A-Za-z0-9-_]{3,80})',
+        r'\bfunction(?:name)?\b\s*[:=#]\s*[`"\']?([A-Za-z0-9-_]{3,80})',
     ]
     for pattern in patterns:
         names.extend(re.findall(pattern, text or '', flags=re.I))

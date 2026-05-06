@@ -5,18 +5,16 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
-CHECK_SCRIPTS = (
-    Path(__file__).resolve().parents[2]
-    / 'local'
-    / 'skills'
-    / 'software-development'
-    / 'check'
-    / 'scripts'
-)
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CHECK_SKILL_ROOT = REPO_ROOT / 'ignored' / 'local' / 'skills' / 'software-development' / 'check'
+if not CHECK_SKILL_ROOT.exists():
+    CHECK_SKILL_ROOT = REPO_ROOT / 'local' / 'skills' / 'software-development' / 'check'
+CHECK_SCRIPTS = CHECK_SKILL_ROOT / 'scripts'
 sys.path.insert(0, str(CHECK_SCRIPTS))
 
 from notifly_alert_context.detect import (  # noqa: E402
     detect_project_campaign_pairs,
+    detect_lambda_names,
     detect_project_ids,
     detect_sharded_table_refs,
 )
@@ -27,7 +25,10 @@ from notifly_alert_context.collectors import (  # noqa: E402
     collector_keys,
     run_collectors,
 )
-from notifly_alert_context.assessment import log_context_has_actionable_detail  # noqa: E402
+from notifly_alert_context.assessment import (  # noqa: E402
+    assess_helper_context,
+    log_context_has_actionable_detail,
+)
 from notifly_alert_context.aws_collectors import collect_alarm_history  # noqa: E402
 from notifly_alert_context.logs import (  # noqa: E402
     centered_log_context_lines,
@@ -65,6 +66,88 @@ def test_project_ids_ignore_sharded_table_suffixes():
             'table_pattern': 'delivery_result_<project_id>',
         }
     ]
+
+
+def test_latency_alarm_name_is_not_inferred_as_lambda_name():
+    text = 'CloudWatch Alarm | ScheduledBatchDelivery-P2-FCMLatencyP99 | ap-northeast-2'
+
+    assert detect_lambda_names(text, [], {'Namespace': 'Notifly/ScheduledBatchDelivery', 'Dimensions': []}) == []
+
+
+def test_custom_namespace_metric_alarm_gets_service_wide_scope():
+    detected = {
+        'service_names': [],
+        'queue_names': [],
+        'project_campaign_pairs': [],
+        'campaign_ids': [],
+        'user_journey_ids': [],
+        'user_journey_refs': [],
+        'project_ids': [],
+    }
+    alarm = {
+        'AlarmName': 'ScheduledBatchDelivery-P2-FCMLatencyP99',
+        'Namespace': 'Notifly/ScheduledBatchDelivery',
+        'MetricName': 'FCMSendLatency',
+        'Dimensions': [
+            {'Name': 'outcome', 'Value': 'success'},
+            {'Name': 'channel', 'Value': 'push-notification'},
+        ],
+    }
+
+    scope = build_scope_attribution(detected, alarm, [])
+
+    assert scope['service_indicators'] == ['ScheduledBatchDelivery']
+    assert '서비스 공통(ScheduledBatchDelivery)' in scope['required_final_field']
+
+
+def test_assessment_does_not_request_scope_followup_for_service_wide_metric_alarm():
+    data = {
+        'detected': {
+            'alarm_name': 'ScheduledBatchDelivery-P2-FCMLatencyP99',
+            'project_ids': [],
+            'queue_names': [],
+            'lambda_names': [],
+            'service_names': [],
+            'keywords': [],
+        },
+        'alarm_summary': {
+            'AlarmName': 'ScheduledBatchDelivery-P2-FCMLatencyP99',
+            'Namespace': 'Notifly/ScheduledBatchDelivery',
+            'MetricName': 'FCMSendLatency',
+            'ExtendedStatistic': 'p99',
+            'Threshold': 3000,
+            'Period': 300,
+            'Dimensions': [
+                {'Name': 'outcome', 'Value': 'success'},
+                {'Name': 'channel', 'Value': 'push-notification'},
+            ],
+        },
+        'alarm_history': {
+            'latest_alarm_transition': {'timestamp': '2026-05-06T11:10:50+00:00'},
+        },
+        'metric_datapoints': {'datapoint_count': 10, 'max': 6873.2},
+        'scope_attribution': build_scope_attribution(
+            {
+                'service_names': [],
+                'queue_names': [],
+                'project_campaign_pairs': [],
+                'campaign_ids': [],
+                'user_journey_ids': [],
+                'user_journey_refs': [],
+            },
+            {
+                'Namespace': 'Notifly/ScheduledBatchDelivery',
+                'MetricName': 'FCMSendLatency',
+                'Dimensions': [],
+            },
+            [],
+        ),
+    }
+
+    assessment = assess_helper_context(data)
+
+    assert assessment['can_answer_root_cause'] is True
+    assert 'scope_basis' not in {item['key'] for item in assessment['missing_required_context']}
 
 
 def test_current_error_details_preserve_raw_scope_pairs_after_sanitized_context():
