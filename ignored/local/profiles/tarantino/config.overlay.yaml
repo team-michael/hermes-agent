@@ -3,17 +3,21 @@ model:
   provider: bedrock
   base_url: https://bedrock-runtime.us-east-1.amazonaws.com
   context_length: 1000000
+fallback_providers:
+- provider: custom
+  model: gpt-5.5
+  base_url: https://api.openai.com/v1
+  context_length: 1050000
+auxiliary:
+  compression:
+    context_length: 1000000
 agent:
   reasoning_effort: xhigh
-fallback_providers:
-  - provider: custom
-    model: gpt-5.5
-    base_url: https://api.openai.com/v1
-    context_length: 1050000
-skills:
-  external_dirs:
-    - /home/ubuntu/.hermes/hermes-agent/ignored/local/profiles/tarantino/skills
-    - /home/ubuntu/.hermes/hermes-agent/ignored/local/skills
+  service_tier: fast
+terminal:
+  env_passthrough:
+  - GITHUB_TOKEN
+  - SLACK_BOT_TOKEN
 display:
   interim_assistant_messages: false
   platforms:
@@ -21,13 +25,53 @@ display:
       streaming: false
       tool_progress: 'off'
   tool_progress: 'off'
-terminal:
-  env_passthrough:
-    - GITHUB_TOKEN
-compression:
-  threshold: 0.5
-auxiliary:
-  compression:
-    context_length: 1000000
+approvals:
+  mode: 'off'
+session_reset:
+  mode: none
+platform_toolsets:
+  cli:
+  - browser
+  - clarify
+  - code_execution
+  - cronjob
+  - delegation
+  - file
+  - image_gen
+  - memory
+  - messaging
+  - session_search
+  - skills
+  - terminal
+  - todo
+  - tts
+  - vision
+  - web
+  slack:
+  - browser
+  - clarify
+  - code_execution
+  - cronjob
+  - delegation
+  - file
+  - image_gen
+  - memory
+  - messaging
+  - session_search
+  - skills
+  - terminal
+  - todo
+  - tts
+  - vision
+  - web
+known_plugin_toolsets:
+  cli:
+  - spotify
+  slack:
+  - spotify
 update:
   local_patch_branch: local/hermes-patches
+skills:
+  external_dirs:
+  - /home/ubuntu/.hermes/hermes-agent/ignored/local/profiles/tarantino/skills
+  - /home/ubuntu/.hermes/hermes-agent/ignored/local/skills
