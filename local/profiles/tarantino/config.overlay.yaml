@@ -1,0 +1,28 @@
+model:
+  default: us.anthropic.claude-opus-4-7
+  provider: bedrock
+  base_url: https://bedrock-runtime.us-east-1.amazonaws.com
+  context_length: 1000000
+agent:
+  reasoning_effort: xhigh
+fallback_providers:
+  - provider: custom
+    model: gpt-5.5
+    base_url: https://api.openai.com/v1
+    context_length: 1050000
+skills:
+  external_dirs:
+    - /home/ubuntu/.hermes/hermes-agent/local/profiles/tarantino/skills
+    - /home/ubuntu/.hermes/hermes-agent/local/skills
+display:
+  interim_assistant_messages: false
+  platforms:
+    slack:
+      streaming: false
+      tool_progress: 'off'
+  tool_progress: 'off'
+terminal:
+  env_passthrough:
+    - GITHUB_TOKEN
+update:
+  local_patch_branch: local/hermes-patches

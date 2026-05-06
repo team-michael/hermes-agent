@@ -1,0 +1,427 @@
+---
+name: check
+description: Investigate Notifly Slack/Amazon Q/CloudWatch alerts from live data sources using Hermes profile/global .env-backed AWS, GitHub, Postgres, DynamoDB, and Athena credentials. Start from pasted alert text or Slack subscription context, recover alarm/log context, and produce one concise Korean final answer.
+version: 1.2.1
+author: Hermes Agent
+license: MIT
+metadata:
+  hermes:
+    tags: [notifly, alerts, cloudwatch, aws, dynamodb, github, postgres, slack, investigation]
+---
+
+# Notifly Alert Check
+
+Use this when the user pastes or a Slack message subscription delivers:
+- a Slack thread root from Amazon Q / AWS Chatbot
+- a CloudWatch alarm name
+- a CloudWatch Logs URL or log group
+- a Redis / SQS / RDS / segment-publisher error snippet
+
+and wants the **same live investigation pattern** used in prior Notifly sessions.
+
+This skill is **not** about replaying old Hermes session archives.
+It is about using **live data sources** via credentials in the current Hermes profile `.env`, then global `~/.hermes/.env`.
+
+## Automated Slack alert contract
+
+When this skill is invoked by a Slack `message_subscriptions` prompt, operate silently until the investigation is complete.
+
+Final response rules:
+- Post exactly one final message; no acknowledgement or progress messages.
+- Do not call `send_message` for Slack subscription alerts. Return the final answer as the assistant's final response so the gateway posts it back to the originating Slack thread.
+- Never use bare `slack` or `slack:<channel_id>` as a fallback target for subscription alert results; that posts to the channel main timeline and breaks alert threading.
+- Korean only. Use the fixed concise list format below; alert context completeness has priority over length.
+- Helper/script timestamps remain UTC/ISO internally. In the final Slack/user-facing message only, convert every timestamp to KST (`YYYY-MM-DD HH:mm KST` or `M/D HH:mm KST`). Do not expose UTC as the primary time.
+- If needed, slightly exceed the target length or bullet count to include the mandatory context. Do not omit important context just to satisfy the short format.
+- Prioritize the fixed labels, mandatory scope attribution, alert metric/threshold context, DB instance/query context when DB-shaped, strongest evidence, 30d/7d/1d/10m trend, customer impact, and immediate action decision.
+- Never abbreviate stable identifiers in the final Korean answer. Do not use ellipses for project IDs, product/project names, campaign IDs, user journey IDs, table names, constraint names, file paths, function names, alarm names, or log groups. If space is tight, remove prose first and keep identifiers complete.
+- If a helper sample line already contains `...`, do not copy that truncated sample into the final answer. Use structured full fields such as `logs.current_error_details[].project_ids`, `table_names`, `table_refs`, `projects`, and `scope_attribution` instead.
+- For log-derived alarms, the strongest evidence is the current alarm-window error detail, not the alarm name or frequency. If `logs.current_error_details` exists, the final Korean answer must describe the concrete triggering error from that field before discussing 7d/30d frequency or threshold sensitivity.
+- Always include one compact Korean scope field that names the related project/product and exactly one of campaign or user journey. Campaign and user journey are mutually exclusive: if campaign evidence exists, do not also print an unknown user-journey value; if neither can be tied to the alert after reasonable checks, explicitly say in Korean that campaign/user journey is unknown. If the alert is service/infra-wide, say so in Korean.
+- Campaigns are project-scoped. Never list campaign IDs as a standalone flat list when a project can be known. Prefer `project/campaign` pairs such as `fitpet/Zxj6Nx`; if only a campaign ID is known, say in Korean that the project is unknown for that campaign.
+- For DB-shaped alerts, always include one compact Korean DB field naming the concrete DB instance/role and top SQL family/query fingerprint. If unavailable, say in Korean that the instance or query is unknown with the shortest reason.
+- For `needs_fix` or `urgent`, the implementation target must be concrete somewhere in the fixed labels: file/module/function, SQL/index/table family, or Terraform path/resource. Avoid generic advice like "threshold review" unless paired with the exact Terraform alarm/config location to change.
+- If immediate action is not required, do not print `액션 아이템:`; put the concrete non-urgent target briefly in `즉시 조치 필요 여부: 추적 필요 ...`.
+- If the exact code or Terraform location is not found, write the most specific next lookup target instead of a generic action target.
+- Mention `@engineers` only for urgent issues requiring immediate engineering response.
+- End with exactly one hidden directive: `[[hermes:processing_status=no_action]]`, `[[hermes:processing_status=needs_fix]]`, or `[[hermes:processing_status=urgent]]`.
+
+Final answer format:
+- Use short Markdown bullet lines, not paragraph prose.
+- Each visible line must start with `- <label>`.
+- Use five visible bullets by default; add the sixth `액션 아이템:` bullet only when immediate action is needed.
+- Use exactly these Korean labels, in this order:
+  - `원인:` alarm-triggering system-level cause plus code-level cause. Include both in one compact line; if one is unknown, say why briefly.
+  - `범위:` project/product plus exactly one of campaign or user journey. Campaign and user journey are mutually exclusive.
+  - `빈도:` recent `30일 / 7일 / 1일 / 10분` occurrence counts. Prefer alert transition counts from `history.alarm_count_30d`, `history.alarm_count_7d`, `history.alarm_count_1d`, and `history.alarm_count_10m`; use log-event counts only when alert history is unavailable or the user explicitly asks for log volume. If any window is unavailable, mark only that window as `확인 불가(<short reason>)`.
+  - `고객 영향도:` concrete customer-facing impact, data loss/delay/failure/noise status, and whether users/customers were likely affected.
+  - `즉시 조치 필요 여부:` `필요`, `불필요`, or `추적 필요` plus the shortest reason.
+  - `액션 아이템:` include this line only when immediate action is needed. Name the exact owner-facing implementation or infrastructure target.
+- Do not add separate `판단`, `근거`, `조치`, `현재 상태`, or narrative summary labels.
+- Keep each label to one line unless a single line would hide mandatory identifiers.
+
+Status selection:
+- `no_action`: false positive, already recovered transient spike, known issue within the recent baseline, expected business rejection, noisy metric filter, or any case where no immediate owner action is required. Use this even when the final answer includes a later improvement suggestion, if the current alert is benign or already understood.
+- `needs_fix`: non-urgent but actionable engineering work should be tracked now because the signal is new, worsening, outside baseline, causing real failed work, repeated customer impact, data-loss risk, runaway cost/load, or materially harmful alert noise. Do not use `needs_fix` merely because a code/config/threshold improvement is possible someday.
+- `urgent`: immediate customer impact, data loss risk, sustained outage, runaway cost/load, or failed critical dependency.
+
+Known-issue rule:
+- If the alert matches a known recurring pattern, is already recovered or within baseline, and does not require immediate mitigation, choose `no_action` so Slack gets the checkmark reaction.
+- Escalate from `no_action` to `needs_fix` only when the recurrence is increasing, the root cause is not understood, the alert creates real operational burden that should be scheduled now, or there is evidence of failed customer-facing work.
+- If `history.rapid_recurrence.status` is `rapid` or there are two or more ALARM transitions within 10 minutes, investigate more deeply before deciding. Do not dismiss it as routine solely because 7d/30d history is recurring; cite the rapid recurrence and use `needs_fix` unless current load, impact, and dominant source are clearly benign.
+
+## Live data sources
+
+Backed by env credentials already present in this environment:
+- AWS: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`
+- GitHub: `GITHUB_TOKEN`
+- Postgres: `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`
+- DynamoDB `project` table via AWS creds
+- Athena via AWS creds when log/query history is in Athena
+
+## Core pattern learned from prior sessions
+
+The recurring investigation flow is:
+
+1. **Start from the pasted alert text or Slack channel ID**
+   - extract alarm name, region, log group, service name, queue name, project IDs, error phrases
+   - if the user gives a Slack channel ID and asks about Amazon Q / AWS Chatbot messages, use `chatbot.describe_slack_channel_configurations` in `us-west-2` to map `SlackChannelId -> SnsTopicArns`; then inspect CloudWatch alarms whose `AlarmActions`/`OKActions` include those SNS topics. This reconstructs recent Amazon Q alert messages without needing Slack history access.
+
+2. **Use AWS first, not guesswork**
+   - `describe_alarms`
+   - `describe_alarm_history`
+   - CloudWatch metric datapoints
+   - Logs Insights / metric filters
+   - RDS / Performance Insights / SQS / SNS / CloudTrail as needed
+
+3. **If a project_id appears, always map it to product**
+   - DynamoDB `project` table
+   - return `project_id + product_id + project.name`
+   - Postgres tables follow `table_$project_id`; use this naming convention when checking campaign/user_journey evidence.
+
+4. **If the user asks when the issue started or which change caused it**
+   - find earliest retained log evidence first
+   - then correlate to local git history / GitHub PRs with `GITHUB_TOKEN`
+
+5. **If the alert is DB-shaped**
+   - separate alarm sensitivity from actual workload
+   - identify writer vs reader
+   - identify the exact DB instance and role
+   - identify the SQL family/query fingerprint from Performance Insights or DB logs, not just the metric name
+
+6. **If the alert is log-shaped**
+   - inspect metric filter breadth first
+   - inspect notification routing drift (SNS subscribers / CloudTrail) if alert volume changed
+
+## Mandatory scope attribution
+
+Every investigation must identify which project and which single campaign or user journey the alert is related to, or explicitly say why that scope is not available.
+
+Resolve scope in this order:
+1. Use IDs present in the alert text, alarm dimensions, log signatures, payload samples, table names, or helper output (`project_id`, `campaign_id`, `user_journey_id`, schedule IDs, journey session IDs).
+2. Map every `project_id` through DynamoDB `project` and report the product/name mapping, not just the raw ID.
+   - If mapping fails or the item is missing, report the full `project_id` and the exact failure reason from `projects[].mapping_failure_reason` or `scope_attribution.project_mapping_failures`.
+3. For campaign or user_journey IDs, use read-only DynamoDB/Postgres/Athena lookups to map names and owning project/product when available.
+4. For Postgres table names, infer project from the `table_$project_id` suffix and then map that project.
+5. For log lines containing both `Project Id` and `Campaign Id`, treat the pair as the primary campaign scope. Current alarm-window pairs outrank 7d/30d historical signatures.
+   - Also treat log-style `campaign_id: <id>, project_id: <id>` and `project_id: <id>, campaign_id: <id>` as primary project/campaign pairs.
+   - Never combine a standalone campaign ID with an unrelated sharded table suffix from another log line. IDs from `relation "<table>_<project_id>" does not exist` are table references, not campaign ownership evidence, unless that table error is the actual current trigger and no stronger project/campaign pair exists.
+6. For DB alerts, Performance Insights SQL statements are scope evidence: `event_intermediate_counts_$project_id`, `users_$project_id`, `delivery_result_$project_id`, `message_events_$project_id`, etc. mean the project is known and must not be reported as unknown.
+7. For campaign/user_journey scope, first check whether the SQL/table family can carry `campaign_id`, `resource_type`, or `user_journey_id`. If yes, run a read-only aggregate around the alarm/PI window to find the top campaign or user-journey contributor. If campaign evidence exists, stop there and do not also report user journey. If not available because the query is parameterized or the table family has no campaign/user_journey column, say that specific reason.
+8. For service-wide, Lambda/ECS, RDS, SQS, Redis, or broad metric-filter alerts with no per-project evidence, state in Korean that the project and campaign/user journey are unknown, and add a Korean service-wide or infra-wide marker when that is the correct scope.
+
+Do not omit scope to stay under the target length. Compress wording first; if still necessary, exceed the target length.
+
+## Important tool discipline
+
+### One-pass first
+For automated Slack alerts, run the helper first and treat its compact JSON as the primary evidence bundle.
+Do not manually repeat helper-covered steps unless the helper explicitly reports missing data or an error.
+
+The helper is expected to collect in one terminal call:
+- answerability fields: `can_answer_root_cause`, `missing_required_context`, and `required_followups`
+- CloudWatch alarm metadata and alarm history
+- 7d/30d alarm transition counts
+- metric filter configuration
+- vetted Logs Insights 7d/30d counts
+- top 5 sanitized log signatures with at most 3 sample lines each
+- current-alarm-window signatures, trigger-centered sanitized log contexts, and compact concrete error details (`logs.current_top_signatures`, `logs.current_trigger_contexts`, `logs.current_error_details`) for log-derived alarms
+- HTTP 4xx/5xx metric context when the alarm namespace/dimensions support it
+- SQS/DLQ queue attributes, redrive source hints, and safe queue metrics when relevant
+- Lambda configuration, event sources, async destination/retry config, and error/throttle/duration metrics when relevant
+- RDS topology when relevant
+- RDS Performance Insights top SQL by instance when relevant
+- RDS current alarm focus-window project attribution (`rds_performance_insights.detected_scope_ids.current_top_projects_by_load`) when relevant
+- project IDs inferred from RDS Performance Insights sharded table suffixes before SQL sanitization
+- project mapping from DynamoDB when `project_id` is present
+- project plus campaign-or-user_journey attribution, including explicit Korean unknown values when no specific scope is supported
+- project-campaign pairs from logs (`logs.current_project_campaign_pairs`) when the current alarm-window payload contains both IDs
+- campaign/user-journey narrowing hints from log payload IDs and campaign-capable table families
+- related implementation and Terraform source locations with only 30-50 nearby lines for the top matches
+
+Helper collectors must be selected from CloudWatch alarm metadata, metric namespace/name, dimensions, metric filters, and log group shape. Do not add service-name-specific branches for individual ECS services or alarm names; add generic namespace/metric/dimension collectors instead.
+When a reusable collection step is needed, add it as a bounded collector in `scripts/notifly_alert_context/collectors.py` and keep pattern constants in `scripts/notifly_alert_context/config.py` so new monitoring patterns do not require CLI orchestration changes.
+
+### Prefer `terminal` + Python for AWS
+Do not rely on `execute_code` for AWS calls when credentials may only exist in shell env.
+
+Use:
+- `terminal("python - <<'PY' ... PY")`
+- explicit `boto3.Session(...)` from env vars
+
+### Safe defaults
+- AWS: read-only
+- Postgres: read-only
+- never print secrets or full sensitive payloads
+- avoid dumping raw `Received event:` logs if they contain sender credentials
+- never print raw CloudWatch log dumps; use signature counts and sanitized samples only
+- never paste full `_aws` metric JSON, access logs, or full event payloads into the conversation
+- for source search, avoid broad file reads and AGENTS/SOUL/session context; read only the relevant function/file area when the helper result is insufficient
+- when the action is alarm/threshold/routing/config related, search Terraform under `infra/terraform` and name the exact resource/path when found
+
+## Fast path helper
+
+Use the helper script first when the user gives pasted alert text. Its default output is compact JSON designed to keep the prompt small:
+
+```bash
+python "${HERMES_HOME:-$HOME/.hermes}/skills/software-development/check/scripts/collect_notifly_alert_context.py" \
+  --text 'Amazon Q: CloudWatch Alarm | notifly-db-prod-cluster CPUUtilization too high | ap-northeast-2 | Account: 702197142747'
+```
+
+Or with a file:
+
+```bash
+python "${HERMES_HOME:-$HOME/.hermes}/skills/software-development/check/scripts/collect_notifly_alert_context.py" \
+  --text-file /tmp/alert.txt
+```
+
+The script does the single-pass first investigation:
+- parse alert text
+- query live CloudWatch alarm metadata/history
+- summarize 7d and 30d alarm history
+- fetch CloudWatch metric datapoints
+- detect log groups / project IDs
+- inspect metric filters
+- run fixed Logs Insights query templates for counts and top signatures
+- collect current alarm-window CloudWatch log contexts from the latest `ALARM` transition, then trigger-centered contexts from the exact log stream/time window
+- summarize HTTP 4xx/5xx metrics when inferable
+- summarize SQS/DLQ context when queue names/dimensions are present
+- summarize Lambda config/event sources/runtime metrics when function names/dimensions are present
+- map project IDs via DynamoDB `project`
+- map or explicitly rule out project/campaign/user_journey scope
+- inspect RDS topology if the alarm is RDS-shaped
+- query Performance Insights for top SQL grouped by DB instance when the alarm is RDS-shaped
+- search local repo for exact error/alarm strings and return only compact implementation/Terraform context
+
+Do not write custom Logs Insights syntax in the LLM loop unless the helper failed and the missing question cannot be answered otherwise.
+If a manual Logs Insights query is unavoidable, keep it based on the helper's fixed query shape and return only aggregate counts or sanitized samples.
+
+### Helper answerability gate
+
+After the helper returns, inspect these fields before composing the final answer:
+- `can_answer_root_cause`
+- `missing_required_context`
+- `required_followups`
+
+If `can_answer_root_cause` is `false`, do not finalize from the first helper output unless every listed follow-up is impossible, unsafe, or lacks credentials. Execute read-only `required_followups` in priority order, keeping the output compact, and use the new evidence in the final answer.
+
+If `missing_required_context` is non-empty but `can_answer_root_cause` is `true`, answer the root cause from the available evidence but still fill safe follow-ups that affect mandatory final fields such as project/campaign/user journey, DB instance/query, or concrete code/Terraform action.
+
+If a follow-up cannot be completed, the final answer must name the unavailable context briefly instead of implying it was checked.
+
+For log-derived alarms, never finalize with only alarm frequency, threshold, or metric-filter wording when current trigger log details are available. Use `logs.current_error_details[].likely_error`, `context_lines`, and `error_lines` to explain what actually happened in the triggering request/job.
+
+## Continuous improvement loop
+
+Every `check` execution should improve this skill over time:
+- If you needed extra manual tool calls beyond the helper, decide whether that step is deterministic and reusable.
+- If it is reusable, silently fold it into the helper package (`scripts/notifly_alert_context/`), preferably as a config entry, collector registry entry, or fixed query template, during the same session when safe.
+- For any new alert pattern not covered by the helper, classify the missing context before finalizing: alarm family, AWS API needed, log query shape, source-search token, and final response field it should feed.
+- Add a small bounded collector or fixed query template for the new pattern when it can be implemented read-only and compactly. Prefer structured fields over prose.
+- If code changes are not safe during that Slack session, include a `helper_gap` note in the private reasoning and keep the final answer concrete with the best available evidence.
+- Prefer adding compact helper fields, fixed query templates, or output caps over adding more prose instructions.
+- If no reusable improvement is found, do not edit files just to create churn.
+- For Slack automated alerts, keep this maintenance silent and still post exactly one final Korean response with the hidden status directive.
+
+## Investigation recipes
+
+### A. RDS / Aurora CPU / memory alarm
+
+Pattern examples:
+- `CPUUtilization too high`
+- `FreeableMemory`
+- `notifly-db-prod-cluster`
+
+Flow:
+1. alarm metadata + exact thresholds
+2. alarm history (`OK -> ALARM`, `ALARM -> OK`)
+3. CloudWatch datapoints that actually breached
+4. instance topology (writer/readers)
+5. Performance Insights `db.load.avg` grouped by `db.sql` on the offending instance
+6. use the current alarm focus window first; report dominant `current_top_projects_by_load` instead of listing every project seen in the broader PI lookback
+7. if `current_unattributed_top_sql` has significant focus load, report it separately as unattributed DB load instead of assigning it to every detected project
+8. if sharded table suffix/project_id appears in SQL -> map via DynamoDB and include the project/product
+9. for campaign/user journey, inspect campaign-capable table families (`delivery_result`, `message_events`, `scheduled_messages`, `campaign`, user journey tables) with read-only aggregates around the alarm window; do not mark campaign/user journey unknown until this is impossible or inapplicable
+
+Questions to answer:
+- Why did the alarm fire?
+- Which instance, writer, or reader caused it?
+- Which SQL family/query fingerprint created the load?
+- Which project/product is dominant in the current alarm focus window, and which projects are only background/minor contributors?
+- Which project/product/campaign/user journey is connected to the SQL table suffix or aggregate? Do not print campaign and user journey together.
+- Is this a noisy alert or a real incident signal?
+
+### B. ECS console/log-derived alarm
+
+Pattern examples:
+- `/aws/ecs/notifly-services-prod/...`
+- `console error`
+- `slow eic query`
+- `Processing took longer than expected`
+- Redis / CROSSSLOT / rate-limit errors
+
+Flow:
+1. alarm + metric filter config
+2. live alarm history
+3. Logs Insights for the primary metric filter pattern and daily counts
+4. inspect `logs.current_alarm_window`, `logs.current_top_signatures`, and `logs.current_trigger_contexts` before writing the final answer; root cause must be based on the error that caused the latest `ALARM` transition, not a historical 7d/30d top signature, alarm name, or broad service name
+5. if the current alarm-window context shows DB errors, duplicate keys, deadlocks, dependency timeouts, or route/controller frames, treat those as the primary cause and map them to project/table/code context
+6. if alert volume changed, inspect:
+   - metric filter drift
+   - alarm config drift
+   - SNS subscriber drift
+   - CloudTrail `PutMetricFilter` / `PutMetricAlarm` / `Subscribe`
+7. trace exact code path in `notifly-event`
+8. if user asks when it started, find earliest retained log and correlate to PR/commit
+
+Do not claim a metric filter is matching unrelated messages unless the helper's primary filter terms and current alarm-window contexts prove it. Related metric filters, historical top signatures, and broad alarm words are only supporting context.
+
+### C. Console error log-level triage / bulk Amazon Q review
+
+Use this when the user asks to review recent Amazon Q / AWS Chatbot `console error` alerts over a time range and decide which logs can be downgraded from `ERROR` to `WARN`/`INFO` in `notifly-event`.
+
+Flow:
+1. If the user gives only a Slack channel ID, map `SlackChannelId -> SnsTopicArns` via AWS Chatbot in `us-west-2`, then find CloudWatch alarms whose actions use those SNS topics; this reconstructs Amazon Q alert scope without Slack history.
+2. For each relevant `ConsoleErrors` / log-derived alarm, use alarm history plus CloudWatch Logs Insights around recent `ALARM` windows to extract actual triggering log signatures, not just alarm names.
+3. Group signatures by service and code path, then trace the exact source location in `notifly-event` before recommending any log-level change.
+4. Apply a fail-closed downgrade rule:
+   - safe to downgrade only when the log is a handled expected/business/validation outcome and the invocation continues or exits normally;
+   - keep `ERROR` for unhandled exceptions, Lambda invocation failures, DLQ-producing paths, DB/SQS/Kinesis writes, provider unknown/network failures, data loss, or dependency failures.
+5. Prefer `WARN` for handled but operator-visible data/config quality issues; prefer `INFO` for normal empty-result/no-op outcomes.
+6. Remove or minimize full payload/request dumps while downgrading; log only compact non-sensitive context such as project/campaign IDs, metric names, dates, and counts. Treat recipient/device/request payloads as potential PII.
+7. Implement in small service-scoped PRs with tests that assert both the new level and that `console.error` is not called for the safe path; also assert non-suppressible failure paths remain `ERROR`.
+8. PR body should explicitly list out-of-scope `ERROR` paths so reviewers can see service-fault observability is preserved.
+
+Good candidates seen before:
+- empty result with explicit user notification and normal return -> `INFO`
+- invalid recipient/device tokens already converted into delivery failure records -> `WARN`
+- provider error branches already marked suppressible by code -> `WARN`
+- duplicate non-fatal config/cache mappings where processing continues -> `WARN`
+
+Bad candidates / keep `ERROR`:
+- database/SQS/Kinesis write failures
+- Lambda unhandled exceptions, timeout/OOM, DLQ/retry exhaustion
+- provider unknown, network, auth, or rate-limit failures unless explicitly handled/suppressed
+- cache initialization or delivery-policy missing data when it may hide a real initialization/data bug
+
+### D. SQS / DLQ alert
+
+Pattern examples:
+- `ApproximateNumberOfMessagesVisible`
+- `*-dlq`
+- retry / maxReceiveCount questions
+
+Flow:
+1. queue attributes
+2. main queue vs DLQ metrics
+3. redrive policy and source queue hints
+4. Lambda/event source mapping for the consumer when inferable
+5. Lambda logs for retry phrases
+6. avoid `receive_message` unless explicitly approved because it changes message visibility
+7. separate:
+   - retry broken
+   - retry working but poison messages still exhausting budget
+   - historical DLQ residue only
+
+### E. HTTP 4xx / 5xx / API error-rate alarm
+
+Pattern examples:
+- `[api-service] 4xx error response is greater than 300 in 5m`
+- API Gateway / ALB `4XXError`, `5XXError`, `HTTPCode_Target_4XX_Count`
+
+Flow:
+1. alarm metric/dimensions and exact threshold
+2. 4xx/5xx/request-count peer metrics over 7d
+3. Logs Insights or Athena/access-log aggregate by status, route/path, method, target service, and project/campaign IDs when available
+4. source search for the route/controller/error mapper that emits the dominant status
+5. distinguish customer/client input spikes from server-side regression
+
+### F. Redis / CROSSSLOT / cache incident
+
+Pattern examples:
+- `All keys in the pipeline should belong to the same slots allocation group`
+- `CROSSSLOT`
+- `enableAutoPipelining`
+
+Flow:
+1. exact error logs and first-seen time
+2. error daily trend vs traffic/command metrics
+3. inspect ElastiCache cluster shape and headroom
+4. trace repo call sites and redis client config
+5. correlate to PR/commit that changed cache behavior or redis config
+6. separate direct root cause from later traffic amplifier
+
+## DynamoDB project mapping rule
+
+Whenever you find a `project_id`, fetch from DynamoDB `project` table with a projection expression and report:
+- `id`
+- `product_id`
+- `name`
+- mapping status and failure reason when unavailable
+
+Do not fetch full items because the table may contain sensitive sender credentials.
+
+## GitHub correlation rule
+
+If the user asks:
+- "When did it start?"
+- "Which commit or PR was related?"
+- "Which change surfaced it?"
+
+then:
+1. first find earliest retained log time
+2. then inspect local git history in `~/workspace` or `/home/ubuntu/notifly-event`
+3. if needed, use GitHub API with `GITHUB_TOKEN`
+4. separate:
+   - first observed time
+   - direct enabling change
+   - later change that amplified / surfaced the issue
+
+## Postgres / DynamoDB / Athena step
+
+Use read-only Postgres/DynamoDB/Athena when AWS logs/metrics identify a project, campaign, user journey, event family, or log table to verify.
+
+Examples:
+- confirm campaign / user journey / schedule relationship
+- inspect schema/index shape for a known table family
+- verify shard table existence for a discovered `project_id`
+- compare recent 7d/30d event or error counts
+
+Never mutate data.
+
+## Output shape
+
+For interactive user requests, answer in this order:
+1. direct conclusion
+2. mandatory scope: project/product and exactly one of campaign or user journey, or explicit Korean unknown/service-wide/infra-wide wording
+3. DB instance + SQL fingerprint when DB-shaped, or exact evidence from AWS/logs/metrics otherwise
+4. exact evidence from AWS/logs/metrics
+5. tradeoff: real issue vs noisy alert
+6. concrete next action naming the implementation file/function, SQL/index/table family, or Terraform resource/path to change
+
+For automated Slack subscription alerts, obey the automated Slack alert contract instead of this longer shape.
+
+## Practical note
+
+The helper script is only the first pass.
+For full incident work, continue with the appropriate datasource-specific steps above.

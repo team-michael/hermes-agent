@@ -1,0 +1,131 @@
+---
+name: slack-alert-session-history
+description: Recover Slack alert root details and prior thread context from Hermes session history with a single script call when live Slack history or root-message retrieval is unavailable.
+version: 1.0.0
+author: Hermes Agent
+license: MIT
+metadata:
+  hermes:
+    tags: [slack, sessions, alerts, cloudwatch, amazon-q, thread-context, debugging]
+---
+
+# Slack Alert Session History
+
+Use this when a user asks:
+- "이 얼럿 원문/상세정보 다시 보여줘"
+- "그 Slack 스레드에서 무슨 컨텍스트가 들어왔지?"
+- "live Slack API 없이 이전 alert thread 내용을 빨리 확인하고 싶다"
+
+This skill is for **Hermes session archive inspection**, not live Slack history.
+
+## Core idea
+
+When Hermes handled a Slack thread, the useful root context often landed in two places:
+
+1. `~/.hermes/sessions/sessions.json`
+   - channel/thread → `session_id` lookup table
+2. `~/.hermes/sessions/session_<session_id>.json`
+   - actual transcript
+   - often the **first user message** contains:
+     - `[Thread context — prior messages in this thread ...]`
+     - alert root text such as Amazon Q / CloudWatch notification
+     - the user's follow-up question
+
+So the fastest path is:
+- resolve the target `session_id`
+- inspect the session JSON directly
+- extract injected thread context + first user ask + relevant assistant findings
+
+## Fast path
+
+### 1) If you already know `session_id`
+
+Run one command:
+
+```bash
+python ~/.hermes/skills/software-development/slack-alert-session-history/scripts/inspect_slack_alert_session_history.py \
+  --session-id 20260421_095149_7e990f80
+```
+
+### 2) If you know `channel_id` and `thread_ts`
+
+```bash
+python ~/.hermes/skills/software-development/slack-alert-session-history/scripts/inspect_slack_alert_session_history.py \
+  --channel-id C04KT7EH5RQ \
+  --thread-ts 1776764135.019959
+```
+
+### 3) If you only know the channel
+
+First list candidate sessions:
+
+```bash
+python ~/.hermes/skills/software-development/slack-alert-session-history/scripts/inspect_slack_alert_session_history.py \
+  --channel-id C04KT7EH5RQ
+```
+
+Then rerun with the desired `--thread-ts` or `--session-id`.
+
+## Optional narrowing
+
+If a session drifted into other topics, filter findings by keyword:
+
+```bash
+python ~/.hermes/skills/software-development/slack-alert-session-history/scripts/inspect_slack_alert_session_history.py \
+  --channel-id C04KT7EH5RQ \
+  --thread-ts 1776764135.019959 \
+  --query CPUUtilization
+```
+
+Other useful queries:
+- `CloudWatch`
+- `writer`
+- `쿼리`
+- `Amazon Q`
+- tenant/shard suffix like `560ac4c54db05db5bccc54788da901c5`
+
+## What the script prints
+
+- session metadata (`session_id`, `created_at`, `updated_at`, `channel_id`, `thread_ts`)
+- injected thread context block, if present
+- first user ask after the thread context
+- relevant assistant findings snippets
+- optional keyword-matched snippets across the transcript
+
+## Why this is the minimal-step path
+
+Without the script, the workflow is usually:
+1. search `sessions.json`
+2. find the matching session key
+3. open the session JSON
+4. manually locate the first user message
+5. scroll for the relevant assistant conclusion
+
+This skill compresses that into **one command**.
+
+## Caveats
+
+- This is **not** canonical Slack history; it is Hermes' archived view.
+- It only works if Hermes already saw the thread or the user pasted the alert/context into the session.
+- If the root message never entered Hermes, use the live Slack/AWS debugging skills instead.
+- A single session may contain multiple subtopics; use `--query` to isolate the alert-related parts.
+
+## Good workflow in practice
+
+1. Try `--channel-id + --thread-ts` if you have them.
+2. If you do not know the thread, run list mode on the channel.
+3. Read the extracted `Thread context` block first.
+4. Then read the filtered `Assistant findings` section.
+5. If needed, rerun with a tighter `--query`.
+
+## Verification
+
+You have the right session if:
+- the printed `thread_ts` matches the Slack thread you expect
+- the injected thread context includes the alert root or prior thread messages
+- the first user ask matches the investigation request
+
+## Related skills
+
+- `slack-thread-root-retrieval` — for live Slack root-message retrieval via API
+- `hermes-slack-thread-context-debugging` — when Hermes failed to ingest the root properly
