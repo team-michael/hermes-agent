@@ -13,6 +13,9 @@ Tracked here:
 - `scripts/apply-local-state.py`: reapply overlays and skill symlinks.
 - `scripts/audit-local-state.py`: check for drift and accidental secrets.
 
+The repo-managed Andrej identity is a normal named profile at
+`profiles/andrej/`; it is not the default `~/.hermes` profile.
+
 Do not commit runtime state or credentials here:
 
 - `.env`

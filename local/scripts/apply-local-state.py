@@ -176,6 +176,9 @@ def main() -> int:
 
     profiles = args.profiles or discover_profiles()
     for profile in profiles:
+        if not (LOCAL_ROOT / "profiles" / profile).is_dir():
+            print(f"skip {profile}: no repo-managed profile at local/profiles/{profile}")
+            continue
         apply_overlay(profile, args.dry_run)
         apply_skill_links(profile, args.dry_run, args.replace_existing)
         apply_soul(profile, args.dry_run, args.link_soul)

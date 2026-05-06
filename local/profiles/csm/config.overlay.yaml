@@ -1,0 +1,16 @@
+skills:
+  external_dirs:
+    - /home/ubuntu/.hermes/hermes-agent/local/profiles/csm/skills
+    - /home/ubuntu/.hermes/hermes-agent/local/skills
+display:
+  interim_assistant_messages: false
+  platforms:
+    slack:
+      streaming: false
+      tool_progress: 'off'
+  tool_progress: 'off'
+terminal:
+  env_passthrough:
+    - GITHUB_TOKEN
+update:
+  local_patch_branch: local/hermes-patches
