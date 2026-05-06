@@ -1982,6 +1982,16 @@ DEFAULT_CONFIG = {
     # Gateway / cron / non-interactive runs need this (or one of the other
     # channels) to pick up newly-added hooks.
     "hooks_auto_accept": False,
+
+    # Update behaviour.
+    "update": {
+        # Optional local branch that carries personal Hermes patches.
+        # When set, `hermes update` pulls main, then checks out this branch
+        # and rebases it onto the updated main so local commits stay active.
+        # Good for long-lived local hotfixes that are intentionally kept
+        # outside upstream.
+        "local_patch_branch": "",
+    },
     # Custom personalities — add your own entries here
     # Supports string format: {"name": "system prompt"}
     # Or dict format: {"name": {"description": "...", "system_prompt": "...", "tone": "...", "style": "..."}}

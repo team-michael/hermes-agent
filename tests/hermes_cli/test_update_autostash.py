@@ -582,6 +582,116 @@ def test_cmd_update_switches_to_main_from_detached_head(monkeypatch, tmp_path, c
     assert "detached HEAD" in out
 
 
+def test_get_configured_local_patch_branch_prefers_env_over_config(monkeypatch):
+    monkeypatch.setenv("HERMES_UPDATE_LOCAL_PATCH_BRANCH", "local/hermes-patches")
+    monkeypatch.setattr(
+        hermes_config,
+        "load_config",
+        lambda: {"update": {"local_patch_branch": "config/branch"}},
+    )
+
+    assert hermes_main._get_configured_local_patch_branch() == "local/hermes-patches"
+
+
+
+def test_cmd_update_rebases_configured_local_patch_branch_before_restoring_stash(
+    monkeypatch, tmp_path, capsys
+):
+    _setup_update_mocks(monkeypatch, tmp_path)
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/uv" if name == "uv" else None)
+    monkeypatch.setenv("HERMES_UPDATE_LOCAL_PATCH_BRANCH", "local/hermes-patches")
+    monkeypatch.setattr(
+        hermes_main, "_stash_local_changes_if_needed", lambda *a, **kw: "abc123deadbeef"
+    )
+
+    events = []
+
+    def fake_restore(*args, **kwargs):
+        events.append(("restore", args[2]))
+        return True
+
+    monkeypatch.setattr(hermes_main, "_restore_stashed_changes", fake_restore)
+
+    def fake_run(cmd, **kwargs):
+        events.append(tuple(cmd))
+        if cmd == ["git", "fetch", "origin"]:
+            return SimpleNamespace(stdout="", stderr="", returncode=0)
+        if cmd == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:
+            return SimpleNamespace(stdout="main\n", stderr="", returncode=0)
+        if cmd == ["git", "rev-list", "HEAD..origin/main", "--count"]:
+            return SimpleNamespace(stdout="1\n", stderr="", returncode=0)
+        if cmd == ["git", "pull", "--ff-only", "origin", "main"]:
+            return SimpleNamespace(stdout="Updating\n", stderr="", returncode=0)
+        if cmd == ["git", "show-ref", "--verify", "--quiet", "refs/heads/local/hermes-patches"]:
+            return SimpleNamespace(stdout="", stderr="", returncode=0)
+        if cmd == ["git", "checkout", "local/hermes-patches"]:
+            return SimpleNamespace(stdout="", stderr="", returncode=0)
+        if cmd == ["git", "rebase", "main"]:
+            return SimpleNamespace(stdout="Successfully rebased\n", stderr="", returncode=0)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(hermes_main.subprocess, "run", fake_run)
+
+    hermes_main.cmd_update(SimpleNamespace())
+
+    checkout_idx = events.index(("git", "checkout", "local/hermes-patches"))
+    rebase_idx = events.index(("git", "rebase", "main"))
+    restore_idx = events.index(("restore", "abc123deadbeef"))
+    assert checkout_idx < rebase_idx < restore_idx
+
+    out = capsys.readouterr().out
+    assert "Reapplying local patch branch 'local/hermes-patches'" in out
+    assert "Active branch: local/hermes-patches" in out
+
+
+
+def test_cmd_update_exits_when_local_patch_branch_rebase_fails(
+    monkeypatch, tmp_path, capsys
+):
+    _setup_update_mocks(monkeypatch, tmp_path)
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/uv" if name == "uv" else None)
+    monkeypatch.setenv("HERMES_UPDATE_LOCAL_PATCH_BRANCH", "local/hermes-patches")
+    monkeypatch.setattr(
+        hermes_main, "_stash_local_changes_if_needed", lambda *a, **kw: "abc123deadbeef"
+    )
+    restore_calls = []
+    monkeypatch.setattr(
+        hermes_main,
+        "_restore_stashed_changes",
+        lambda *a, **kw: restore_calls.append(1) or True,
+    )
+
+    def fake_run(cmd, **kwargs):
+        if cmd == ["git", "fetch", "origin"]:
+            return SimpleNamespace(stdout="", stderr="", returncode=0)
+        if cmd == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:
+            return SimpleNamespace(stdout="main\n", stderr="", returncode=0)
+        if cmd == ["git", "rev-list", "HEAD..origin/main", "--count"]:
+            return SimpleNamespace(stdout="1\n", stderr="", returncode=0)
+        if cmd == ["git", "pull", "--ff-only", "origin", "main"]:
+            return SimpleNamespace(stdout="Updating\n", stderr="", returncode=0)
+        if cmd == ["git", "show-ref", "--verify", "--quiet", "refs/heads/local/hermes-patches"]:
+            return SimpleNamespace(stdout="", stderr="", returncode=0)
+        if cmd == ["git", "checkout", "local/hermes-patches"]:
+            return SimpleNamespace(stdout="", stderr="", returncode=0)
+        if cmd == ["git", "rebase", "main"]:
+            return SimpleNamespace(stdout="", stderr="conflict!\n", returncode=1)
+        if cmd == ["git", "rebase", "--abort"]:
+            return SimpleNamespace(stdout="", stderr="", returncode=0)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(hermes_main.subprocess, "run", fake_run)
+
+    with pytest.raises(SystemExit, match="1"):
+        hermes_main.cmd_update(SimpleNamespace())
+
+    assert restore_calls == []
+    out = capsys.readouterr().out
+    assert "Failed to rebase configured local patch branch 'local/hermes-patches'" in out
+    assert "Resolve manually with: git checkout local/hermes-patches && git rebase main" in out
+
+
+
 def test_cmd_update_restores_stash_and_branch_when_already_up_to_date(monkeypatch, tmp_path, capsys):
     """When on a feature branch with no updates, stash is restored and branch switched back."""
     _setup_update_mocks(monkeypatch, tmp_path)

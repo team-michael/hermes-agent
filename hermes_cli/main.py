@@ -6087,6 +6087,99 @@ def _discard_stashed_changes(
     return True
 
 
+def _get_configured_local_patch_branch() -> Optional[str]:
+    """Return the branch Hermes should reactivate after `hermes update`.
+
+    Priority:
+    1. HERMES_UPDATE_LOCAL_PATCH_BRANCH env var
+    2. config.yaml → update.local_patch_branch
+    """
+    env_branch = os.getenv("HERMES_UPDATE_LOCAL_PATCH_BRANCH", "").strip()
+    if env_branch:
+        return env_branch
+
+    try:
+        from hermes_cli.config import load_config
+
+        config = load_config()
+        update_cfg = config.get("update", {})
+        if isinstance(update_cfg, dict):
+            branch = str(update_cfg.get("local_patch_branch", "") or "").strip()
+            if branch:
+                return branch
+    except Exception as e:
+        logger.debug("Failed to load update.local_patch_branch: %s", e)
+
+    return None
+
+
+def _reapply_local_patch_branch(
+    git_cmd: list[str],
+    cwd: Path,
+    patch_branch: Optional[str],
+    base_branch: str = "main",
+) -> bool:
+    """Re-checkout and rebase a configured local patch branch after update."""
+    patch_branch = (patch_branch or "").strip()
+    if not patch_branch or patch_branch == base_branch:
+        return True
+
+    exists = subprocess.run(
+        git_cmd + ["show-ref", "--verify", "--quiet", f"refs/heads/{patch_branch}"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+    )
+    if exists.returncode != 0:
+        print(
+            f"  ⚠ Configured local patch branch '{patch_branch}' was not found — "
+            "skipping automatic local patch reapply."
+        )
+        return True
+
+    print(f"→ Reapplying local patch branch '{patch_branch}' on top of {base_branch}...")
+    checkout = subprocess.run(
+        git_cmd + ["checkout", patch_branch],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+    )
+    if checkout.returncode != 0:
+        print(f"✗ Failed to check out configured local patch branch '{patch_branch}'.")
+        if checkout.stderr.strip():
+            print(f"  {checkout.stderr.strip()}")
+        print(f"  Resolve manually with: git checkout {patch_branch}")
+        return False
+
+    rebase = subprocess.run(
+        git_cmd + ["rebase", base_branch],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+    )
+    if rebase.returncode != 0:
+        print(
+            f"✗ Failed to rebase configured local patch branch '{patch_branch}' onto {base_branch}."
+        )
+        if rebase.stdout.strip():
+            print(rebase.stdout.strip())
+        if rebase.stderr.strip():
+            print(rebase.stderr.strip())
+        abort = subprocess.run(
+            git_cmd + ["rebase", "--abort"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+        )
+        if abort.returncode == 0:
+            print("  Rebase was aborted; branch restored to its pre-update state.")
+        print(f"  Resolve manually with: git checkout {patch_branch} && git rebase {base_branch}")
+        return False
+
+    print(f"  ✓ Active branch: {patch_branch}")
+    return True
+
+
 # =========================================================================
 # Fork detection and upstream management for `hermes update`
 # =========================================================================
@@ -8081,6 +8174,8 @@ def _cmd_update_impl(args, gateway_mode: bool):
         )
         current_branch = result.stdout.strip()
 
+        configured_patch_branch = _get_configured_local_patch_branch()
+
         # If user is on a different branch than the update target, switch
         # to the target. When the target is "main" this is the historical
         # "always update against main" behavior; for any other target it's
@@ -8130,6 +8225,9 @@ def _cmd_update_impl(args, gateway_mode: bool):
         else:
             auto_stash_ref = _stash_local_changes_if_needed(git_cmd, PROJECT_ROOT)
 
+        defer_stash_restore = auto_stash_ref is not None and bool(
+            configured_patch_branch and configured_patch_branch != branch
+        )
         prompt_for_restore = (
             auto_stash_ref is not None
             and not assume_yes
@@ -8289,7 +8387,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
                         PROJECT_ROOT,
                         auto_stash_ref,
                     )
-                else:
+                elif not defer_stash_restore:
                     _restore_stashed_changes(
                         git_cmd,
                         PROJECT_ROOT,
@@ -8297,6 +8395,29 @@ def _cmd_update_impl(args, gateway_mode: bool):
                         prompt_user=prompt_for_restore,
                         input_fn=gw_input_fn,
                     )
+
+        if configured_patch_branch and configured_patch_branch != branch:
+            if not _reapply_local_patch_branch(
+                git_cmd,
+                PROJECT_ROOT,
+                configured_patch_branch,
+                base_branch=branch,
+            ):
+                if auto_stash_ref is not None and defer_stash_restore:
+                    print(
+                        f"  ℹ️  Local changes preserved in stash (ref: {auto_stash_ref})"
+                    )
+                    print("  Restore manually with: git stash apply")
+                sys.exit(1)
+
+            if auto_stash_ref is not None and defer_stash_restore:
+                _restore_stashed_changes(
+                    git_cmd,
+                    PROJECT_ROOT,
+                    auto_stash_ref,
+                    prompt_user=prompt_for_restore,
+                    input_fn=gw_input_fn,
+                )
 
         _invalidate_update_cache()
 
