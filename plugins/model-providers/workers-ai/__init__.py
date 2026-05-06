@@ -34,11 +34,14 @@ class WorkersAIProfile(ProviderProfile):
 workers_ai = WorkersAIProfile(
     name="workers-ai",
     aliases=("cloudflare-workers-ai", "cloudflare-ai"),
-    env_vars=("CLOUDFLARE_API_TOKEN",),
+    # Keep this empty so hermes_cli.auth does not auto-register Workers AI as
+    # a built-in API-key runtime provider. Existing profile configs define it
+    # under `providers.workers-ai` with a user-specific account URL.
+    env_vars=(),
     display_name="Cloudflare Workers AI",
     description="Cloudflare Workers AI OpenAI-compatible API",
     signup_url="https://developers.cloudflare.com/workers-ai/",
-    base_url="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/v1",
+    base_url="",
     fallback_models=(
         "@cf/moonshotai/kimi-k2.6",
         "@cf/meta/llama-3.3-70b-instruct-fp8-fast",

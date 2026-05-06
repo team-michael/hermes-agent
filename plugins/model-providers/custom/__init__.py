@@ -8,8 +8,10 @@ Ollama instances. Key quirks:
 
 from typing import Any
 
+from agent.moonshot_schema import is_moonshot_model
 from providers import register_provider
 from providers.base import ProviderProfile
+from utils import base_url_host_matches
 
 
 class CustomProfile(ProviderProfile):
@@ -19,6 +21,8 @@ class CustomProfile(ProviderProfile):
         self,
         *,
         reasoning_config: dict | None = None,
+        model: str | None = None,
+        base_url: str | None = None,
         ollama_num_ctx: int | None = None,
         **ctx: Any,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -36,6 +40,11 @@ class CustomProfile(ProviderProfile):
             _enabled = reasoning_config.get("enabled", True)
             if _effort == "none" or _enabled is False:
                 extra_body["think"] = False
+                if (
+                    is_moonshot_model(model)
+                    and base_url_host_matches(base_url, "api.cloudflare.com")
+                ):
+                    extra_body["chat_template_kwargs"] = {"thinking": False}
 
         return extra_body, {}
 
