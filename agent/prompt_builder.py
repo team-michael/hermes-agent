@@ -1414,6 +1414,95 @@ def _truncate_content(content: str, filename: str, max_chars: int = CONTEXT_FILE
     return head + marker + tail
 
 
+_SOUL_INCLUDE_RE = re.compile(
+    r"^[ \t]*<!--[ \t]*hermes-include:[ \t]*(?P<path>.*?)[ \t]*-->[ \t]*$",
+    re.MULTILINE,
+)
+
+
+def _hermes_root_for_shared_context(hermes_home: Path) -> Path:
+    """Return the root that owns shared profile context files."""
+    try:
+        home = hermes_home.resolve()
+    except Exception:
+        home = hermes_home
+    if home.parent.name == "profiles":
+        return home.parent.parent
+    return home
+
+
+def _resolve_soul_include_path(raw_path: str, soul_path: Path) -> Optional[Path]:
+    """Resolve a SOUL include path without allowing accidental secret reads."""
+    raw = raw_path.strip().strip('"').strip("'")
+    if not raw:
+        return None
+
+    expanded = os.path.expandvars(os.path.expanduser(raw))
+    candidate = Path(expanded)
+    if not candidate.is_absolute():
+        candidate = soul_path.parent / candidate
+    policy_path = candidate.absolute()
+
+    try:
+        resolved = candidate.resolve()
+    except Exception:
+        return None
+
+    if policy_path.suffix.lower() != ".md" or not candidate.is_file():
+        return None
+
+    hermes_home = get_hermes_home()
+    shared_root = _hermes_root_for_shared_context(hermes_home) / "shared"
+    repo_shared_root = Path(__file__).resolve().parents[1] / "local" / "shared"
+    allowed_roots = [
+        soul_path.parent.resolve(),
+        shared_root.resolve(),
+        repo_shared_root.resolve(),
+    ]
+    try:
+        if not any(
+            resolved.is_relative_to(root) or policy_path.is_relative_to(root)
+            for root in allowed_roots
+        ):
+            return None
+    except Exception:
+        return None
+
+    return resolved
+
+
+def _expand_soul_includes(content: str, soul_path: Path, *, depth: int = 0,
+                          seen: Optional[set[Path]] = None) -> str:
+    """Expand trusted SOUL.md include directives."""
+    if depth >= 5:
+        return content
+    seen = seen or set()
+
+    def replace(match: re.Match) -> str:
+        raw_path = match.group("path")
+        include_path = _resolve_soul_include_path(raw_path, soul_path)
+        if include_path is None:
+            return f"[SOUL include skipped: {raw_path.strip()}]"
+        if include_path in seen:
+            return f"[SOUL include skipped: recursive include {include_path}]"
+        try:
+            included = include_path.read_text(encoding="utf-8").strip()
+        except Exception as e:
+            logger.debug("Could not read SOUL include %s: %s", include_path, e)
+            return f"[SOUL include skipped: {include_path}]"
+        if not included:
+            return ""
+        included = _scan_context_content(included, str(include_path))
+        return "\n\n" + _expand_soul_includes(
+            included,
+            include_path,
+            depth=depth + 1,
+            seen={*seen, include_path},
+        ) + "\n\n"
+
+    return _SOUL_INCLUDE_RE.sub(replace, content)
+
+
 def load_soul_md() -> Optional[str]:
     """Load SOUL.md from HERMES_HOME and return its content, or None.
 
@@ -1434,6 +1523,7 @@ def load_soul_md() -> Optional[str]:
         content = soul_path.read_text(encoding="utf-8").strip()
         if not content:
             return None
+        content = _expand_soul_includes(content, soul_path)
         content = _scan_context_content(content, "SOUL.md")
         content = _truncate_content(content, "SOUL.md")
         return content

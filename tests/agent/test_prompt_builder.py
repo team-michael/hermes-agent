@@ -533,6 +533,63 @@ class TestBuildContextFilesPrompt:
         assert "If SOUL.md is present" not in result
         assert "## SOUL.md" not in result
 
+    def test_soul_md_expands_shared_include(self, tmp_path, monkeypatch):
+        hermes_root = tmp_path / ".hermes"
+        hermes_home = hermes_root / "profiles" / "boris"
+        shared_dir = hermes_root / "shared"
+        hermes_home.mkdir(parents=True)
+        shared_dir.mkdir()
+        shared = shared_dir / "terminal-command-discipline.md"
+        shared.write_text("Prefer jq over curl piped to Python.", encoding="utf-8")
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+        (hermes_home / "SOUL.md").write_text(
+            f"Be concise.\n<!-- hermes-include: {shared} -->",
+            encoding="utf-8",
+        )
+
+        result = build_context_files_prompt(cwd=str(tmp_path))
+
+        assert "Be concise." in result
+        assert "Prefer jq over curl piped to Python." in result
+        assert "hermes-include" not in result
+
+    def test_soul_md_skips_non_markdown_include(self, tmp_path, monkeypatch):
+        hermes_home = tmp_path / "hermes_home"
+        hermes_home.mkdir()
+        (hermes_home / ".env").write_text("SECRET=value", encoding="utf-8")
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+        (hermes_home / "SOUL.md").write_text(
+            "Be concise.\n<!-- hermes-include: .env -->",
+            encoding="utf-8",
+        )
+
+        result = build_context_files_prompt(cwd=str(tmp_path))
+
+        assert "Be concise." in result
+        assert "SECRET=value" not in result
+        assert "SOUL include skipped" in result
+
+    def test_soul_md_expands_shared_symlink_include_for_profile(self, tmp_path, monkeypatch):
+        hermes_root = tmp_path / ".hermes"
+        hermes_home = hermes_root / "profiles" / "boris"
+        repo_shared = tmp_path / "repo" / "local" / "shared"
+        shared_dir = hermes_root / "shared"
+        hermes_home.mkdir(parents=True)
+        repo_shared.mkdir(parents=True)
+        shared_dir.mkdir()
+        target = repo_shared / "terminal-command-discipline.md"
+        target.write_text("Use hermes-github-api.", encoding="utf-8")
+        (shared_dir / "terminal-command-discipline.md").symlink_to(target)
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+        (hermes_home / "SOUL.md").write_text(
+            f"Be concise.\n<!-- hermes-include: {shared_dir / 'terminal-command-discipline.md'} -->",
+            encoding="utf-8",
+        )
+
+        result = build_context_files_prompt(cwd=str(tmp_path))
+
+        assert "Use hermes-github-api." in result
+
     def test_empty_soul_md_adds_nothing(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes_home"))
         hermes_home = tmp_path / "hermes_home"
@@ -1268,5 +1325,3 @@ class TestOpenAIModelExecutionGuidance:
 # =========================================================================
 # Budget warning history stripping
 # =========================================================================
-
-
