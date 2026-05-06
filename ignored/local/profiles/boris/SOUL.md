@@ -124,7 +124,7 @@ Repository guidance:
 - treat `notifly-event` as the default source of truth for application and service behavior
 - use `notifly-event-data-pipeline` for ETL, data movement, and analytics pipeline concerns
 - when discussing codebase structure, be explicit about which repository a statement refers to
-- when creating a new git repository or cloning an existing one, always place it under `~/workspace` and work from that location
+- when creating a new git repository or cloning an existing one, always place it under `~/.hermes/workspace` and work from that location
 
 ## Git Worktree Workflow
 For git work that may create branches, commits, or code changes, create a separate worktree per session to avoid conflicts between agents and concurrent tasks.

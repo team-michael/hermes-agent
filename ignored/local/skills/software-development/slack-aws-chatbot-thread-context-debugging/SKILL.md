@@ -1,7 +1,7 @@
 ---
 name: slack-aws-chatbot-thread-context-debugging
 description: Diagnose why Hermes cannot read Slack thread root messages from AWS Chatbot / Amazon Q alerts, and determine whether config changes or code changes are required.
-version: 1.0.0
+version: 1.1.0
 author: Hermes Agent
 license: MIT
 metadata:
@@ -219,8 +219,75 @@ When asked whether a skill can solve it:
 - explain that skills help after the text reaches the model
 - this problem occurs before that, in gateway ingestion
 
+## Reaction lifecycle: why Amazon Q alerts get no reaction emoji
+
+Hermes uses two separate Slack config concepts.  Confusing them causes
+alerts to be processed but never get a :white_check_mark:/:warning:/:rotating_light:
+reaction.
+
+| Config key | Purpose | Drives reactions? |
+|---|---|---|
+| `slack.channel_skill_bindings` | Auto-load a skill (e.g. `check`) when a message arrives in a channel | **No** |
+| `slack.message_subscriptions` | Tell the gateway "this bot message is an event we should react to and optionally reply to" | **Yes** |
+
+If only `channel_skill_bindings` is set, the skill runs but the gateway
+never adds the message `ts` to `_reacting_message_ids`.
+`on_processing_complete` therefore exits early at the guard clause
+`ts not in self._reacting_message_ids` and no emoji is posted.
+
+### Minimal config fix
+
+Add a `message_subscriptions` entry for the Amazon Q bot:
+
+```yaml
+slack:
+  allow_bots: all
+  message_subscriptions:
+    - channels: [C04KT7EH5RQ]
+      bot_names: ["Amazon Q Developer"]
+      reactions: true
+      bypass_mention: true
+  channel_skill_bindings:
+    - id: C04KT7EH5RQ
+      skills:
+        - check
+```
+
+Key fields:
+- `channels` or `channel_ids` — the monitored channel ID(s)
+- `bot_names` or `bot_ids` — identity filter matching the Amazon Q bot
+  (check `bot_profile.name` in raw Slack events if unsure)
+- `reactions: true` — opt this subscription into the reaction lifecycle
+- `bypass_mention: true` — so the bot need not @-mention Hermes
+
+### How to verify
+
+After restarting the gateway, watch `gateway.log` for an incoming Amazon Q
+message.  You should see:
+1. `inbound message: platform=slack user=Amazon Q …`
+2. No `Auto-loaded skill(s)` line is required for reactions—the
+   subscription match happens before that—but the `reactions` flag on
+   the subscription is what populates `_reacting_message_ids`.
+3. On `response ready`, the final emoji should appear on the original
+   Amazon Q message (not on Hermes's threaded reply).
+
+If the emoji still does not appear:
+- Confirm `message_subscriptions` is present in the active profile
+  `config.yaml`, not just `channel_skill_bindings`.
+- Check whether `SLACK_REACTIONS` env var is set to `false`.
+- Look for `reactions_add` errors in gateway logs (missing
+  `reactions:write` scope, or the bot is not in the channel).
+
+### Pitfall: gateway restart on config-only changes
+
+Changing `message_subscriptions` requires a gateway restart because the
+list is loaded once at startup via `_slack_message_subscriptions()`.
+A `hermes config set` or file edit alone is not enough.
+
 ## Practical response summary
 
 Use this concise summary in future conversations:
 
 > If the Slack thread root comes from AWS Chatbot / Amazon Q, Hermes often misses it because the root is an external bot message and the real payload lives in attachments/blocks. `allow_bots: all` can relax ingress, but it does not by itself make Hermes include external bot thread roots or parse attachment content. That requires a patch in `gateway/platforms/slack.py`.
+>
+> Additionally, if reaction emojis are missing on Amazon Q alerts, check that `slack.message_subscriptions` is configured—not just `channel_skill_bindings`—because the reaction lifecycle depends on the subscription match.
