@@ -12,8 +12,8 @@ fallback_providers:
     context_length: 1050000
 skills:
   external_dirs:
-    - /home/ubuntu/.hermes/hermes-agent/local/profiles/tarantino/skills
-    - /home/ubuntu/.hermes/hermes-agent/local/skills
+    - /home/ubuntu/.hermes/hermes-agent/ignored/local/profiles/tarantino/skills
+    - /home/ubuntu/.hermes/hermes-agent/ignored/local/skills
 display:
   interim_assistant_messages: false
   platforms:

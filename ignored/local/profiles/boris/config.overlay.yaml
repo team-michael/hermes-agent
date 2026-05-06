@@ -1,7 +1,7 @@
 skills:
   external_dirs:
-    - /home/ubuntu/.hermes/hermes-agent/local/profiles/sdr/skills
-    - /home/ubuntu/.hermes/hermes-agent/local/skills
+    - /home/ubuntu/.hermes/hermes-agent/ignored/local/profiles/boris/skills
+    - /home/ubuntu/.hermes/hermes-agent/ignored/local/skills
 display:
   interim_assistant_messages: false
   platforms:

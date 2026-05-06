@@ -9,8 +9,8 @@ from pathlib import Path
 import yaml
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-LOCAL_ROOT = REPO_ROOT / "local"
+LOCAL_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = LOCAL_ROOT.parents[1]
 DEFAULT_HERMES_ROOT = Path(os.environ.get("HERMES_ROOT", Path.home() / ".hermes"))
 
 DENY_FILE_NAMES = {
