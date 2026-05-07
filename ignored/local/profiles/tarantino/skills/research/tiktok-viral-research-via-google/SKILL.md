@@ -79,10 +79,18 @@ Parse that. No TikTok API, no captcha, no login.
 ## Procedure
 
 ### 1. Setup (depends on `headful-chrome-vnc` skill)
-Use the profile's Chrome with `python3.12` (selenium lives in the tarantino profile's local site-packages):
+Use the **clix-growth venv Python** (Python 3.11), NOT system `python3.12`. Selenium is installed at `/home/ubuntu/.hermes/venvs/clix-growth/lib/python3.11/site-packages/selenium` — NOT in the tarantino profile's `home/.local/lib/python3.12` path (that directory is empty as of 2026-05-07).
+
 ```bash
-python3.12  # NOT the venv python — selenium is in ~/.hermes/profiles/tarantino/home/.local/lib/python3.12/site-packages
+# Correct interpreter for all scrape scripts:
+DISPLAY=:1 /home/ubuntu/.hermes/venvs/clix-growth/bin/python your_script.py
+
+# Verify before running:
+/home/ubuntu/.hermes/venvs/clix-growth/bin/python -c "import selenium; print(selenium.__version__)"
+# Expected: 4.43.0 or newer
 ```
+
+If you ever see `ModuleNotFoundError: No module named 'selenium'` from a `python3.12` invocation, that's the wrong interpreter — switch to the venv path above. `hermes_chrome.py` itself works fine under either, but only the venv has selenium.
 
 ### 2. Query design
 Run ~10 variant queries to widen coverage. Mix generic + specific + competitor names. Template:
@@ -282,7 +290,8 @@ Some keyword clusters are owned by non-app content on TikTok and produce 60%+ no
 When your SERP is dominated by reality-TV, crafting, phone-tips, or nostalgia content, you've hit a polluted cluster. Pivot to more specific queries (`"relationship diary app"`, `"daily couple photo app"`, `"lapse social app"`) or accept the cluster is dead for app-discovery purposes and report it as a warning. **Action item at report time**: list the polluted clusters you detected — next run can pre-emptively swap them.
 
 ## Pitfalls
-- **Do NOT use `/home/ubuntu/.hermes/hermes-agent/venv/bin/python`** — selenium isn't installed there. Use `python3.12` which picks up `~/.hermes/profiles/tarantino/home/.local/lib/python3.12/site-packages`.
+- **Do NOT use `/home/ubuntu/.hermes/hermes-agent/venv/bin/python`** — selenium isn't installed there.
+- **Do NOT use bare `python3.12`** either — the skill's original claim that selenium lives at `~/.hermes/profiles/tarantino/home/.local/lib/python3.12/site-packages` is **stale/incorrect** (directory is empty as of 2026-05-07). The working interpreter is `/home/ubuntu/.hermes/venvs/clix-growth/bin/python` (Python 3.11, selenium 4.43.0). Verify before every cron run: `/home/ubuntu/.hermes/venvs/clix-growth/bin/python -c "import selenium"`.
 - **Google redirect URLs**: sometimes `a.href` starts with `/url?q=...`. The JS above extracts the real TikTok URL via regex on the href text; don't rely on `a.href` alone.
 - **Locale matters**: Korean SERPs give `조회수 X만회`. English SERPs show `X views` differently — adapt the regex if running with different `&hl=` param.
 - **View count is approximate**: "조회수 2350만회 이상" is a rounded floor. Treat rankings as ordinal, not precise.
@@ -292,7 +301,7 @@ When your SERP is dominated by reality-TV, crafting, phone-tips, or nostalgia co
 - **Google CAPTCHA on qdr:w heavy runs**: observed 2026-04-27 — after ~14 consecutive `tbs=qdr:w` queries the Selenium session redirects to `/sorry/` captcha page. Detect via `'unusual traffic' in body.lower()` or `'/sorry/' in driver.current_url` and skip+log the failed query instead of crashing. In headless/cron contexts, just record which queries were skipped and note it in the delivered report. Confirmed again 2026-04-29 (`hl=ko`, 18-query college-app run): 12 queries completed, 6 tail queries skipped on `/sorry/`. Treat **12–14 queries as the realistic ceiling per driver session on `hl=ko`** and **order your query list so the highest-value / hardest-to-re-cover ones run first** — the tail of the list is the part you'll lose.
 - **English-locale (`hl=en&gl=us`) burn rate is ~40% faster**: observed 2026-04-28 — `/sorry/` hit after only 9 consecutive `qdr:w` queries (vs ~14 on `hl=ko`). Treat **8 queries as the soft ceiling per driver session on `gl=us`**. A 45-second cool-down + retry in the same session does NOT work; Google remembers the session-level signal. Either (a) accept partial coverage and ship, or (b) rotate the Chrome profile and wait hours before re-attempting. Per Soomin's error-halt rule, do NOT loop retries — halt and report.
 - **Partial-coverage reports are usually decision-grade**: if 5/14 queries captcha but you already have 30+ past-week candidates and have run the direct-TikTok engagement scrape on the top 15, the virality conclusion (share/like winners, format clusters, creator repetition) is strong enough to ship. Flag the missing queries explicitly so the user can choose to unblock them via VNC, but **do not block the deliverable** waiting for full coverage. Missed queries tend to be adjacent sub-niches (e.g. `date night ideas app`, `shared calendar for couples`, `relationship app` missed on a couple-app run → married/cohabiting sub-segment), worth noting as a coverage gap in the report rather than as a pipeline failure.
-- **NA-college social-app noise handles** (add to `NOISE_HANDLES`/snippet blocklist when running college-app queries): `marymarketingirlie` (Italian), `locketgold6.0pro` (mod spam), `johnleggottcollege` (UK sixth-form), `techrosen`/`jisuinparis` (UK/FR), `cymru` (Wales), `mediamarkt_hb_weserpark` (German Saturn retail), `somnia.plus` (dorm-bed product, not social), admissions-coach handles (`vibrantcollegeadvising`, `experthan`, `collegexpert`, `essayhelpbyhollee`, `misterjensen`, `saraharberson`) — these hit the keyword but are off-ICP for NA-college-social-app targeting.
+- **NA-college social-app noise handles** (add to `NOISE_HANDLES`/snippet blocklist when running college-app queries): `marymarketingirlie` (Italian), `locketgold6.0pro` (mod spam), `johnleggottcollege` (UK sixth-form), `techrosen`/`jisuinparis` (UK/FR), `cymru` (Wales), `mediamarkt_hb_weserpark` (German Saturn retail), `somnia.plus` (dorm-bed product, not social), admissions-coach handles (`vibrantcollegeadvising`, `experthan`, `collegexpert`, `essayhelpbyhollee`, `misterjensen`, `saraharberson`) — these hit the keyword but are off-ICP for NA-college-social-app targeting. **Added 2026-05-06**: `play_and_win_telenor` (Pakistan Telenor quiz ride-along on "SumOne"), `plantslapstime1` (gardening timelapse — wins `"lapse social app"` cluster), `rubix_learning` (Australian ATAR study-coach, wrong country), `atraccioninterpersonal` (Spanish-language relationship-psychology), `iamthatenglishteacher` (K-12 grammar channel, wrong age-segment).
 - **TikTok captcha vs genuine failure**: if you do try TikTok directly and get 0 video anchors, check `document.body.innerText` for `"Drag the slider"` — that confirms captcha, not a query problem.
 
 ## Creator-as-Format-Factory Rule (how to operationalize "cluster ≥ 3")
@@ -304,6 +313,20 @@ Soomin's principle #2 says "single viral video ≠ trend, require clustering ≥
 - **Medium signal**: same format pattern appearing across 3+ different creators (harder to detect from Google SERP alone; requires per-video caption/hashtag comparison).
 
 When writing the report, rank formats by (creator-repetition count × median s/l) rather than raw max-views. A format that produced 5× s/l>15% videos from one creator beats a format that produced one 1.8M-view one-hit-wonder. It's also the right input for action-item writing: the replicable format is the one worth instructing UGC creators to copy.
+
+## Query-Design Rule: Semantic-Family Overlap
+
+Observed 2026-05-06 (NA-college-social-app run, 18 queries, 167 raw results): **top-10-by-DOM-likes had 9/10 videos at q=1** (matched by exactly one query). Only `@limmytalks` hit q=4. That's a query-design failure, not a data failure — each of the 18 queries probed a different sub-niche (`roommate finder` / `dorm life` / `college freshman` / `find friends college` / `anonymous college` all sound similar to humans but Google tokenizes them as disjoint), so the cross-query intersection signal the skill relies on for "format worth copying" was dead on arrival.
+
+**Fix**: design queries in **semantic-family clusters of 3-5 near-synonyms** so a genuinely central video can plausibly land in ≥3 of them:
+
+- Friend-discovery cluster: `"college friend app"`, `"find friends college app"`, `"meet people college app"`, `"campus friend app"`, `"college social app"`
+- Dorm-life cluster: `"dorm life app"`, `"college dorm app"`, `"roommate app college"`, `"dorm room app"`
+- Anonymity cluster: `"anonymous college app"`, `"college confession app"`, `"anon campus app"`, `"yik yak college"` (rather than `"Yik Yak"` alone which pulls brand-agnostic posts)
+
+Avoid spending budget on single-word competitor names that produce 1 result (`"BondBeyond"` returned 1 in this run — no leverage). Either wrap with disambiguator or drop.
+
+**Diagnostic**: if your final Top 10 is >80% q=1, you lost the centrality signal. Report it as a coverage warning AND pre-emptively redesign the query list for the next run. Don't treat the Top 10 as bias-free ranking in that state.
 
 ## Output Template
 Deliver as a table (rank, views, URL, one-line hook) plus a pattern-analysis section that surfaces:
