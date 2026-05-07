@@ -176,7 +176,7 @@ def sync_profile_memories_to_repo(runner: Runner, repo: Path) -> None:
     if diff.returncode == 0:
         print("profile memories ok: copied files match committed state")
         return
-    git(runner, repo, "commit", "-m", "chore(profiles): sync profile memories")
+    git(runner, repo, "commit", "-m", "chore(profiles): sync profile memories [skip ci]")
 
 
 def link_file(target: Path, source: Path, *, dry_run: bool = False) -> None:
