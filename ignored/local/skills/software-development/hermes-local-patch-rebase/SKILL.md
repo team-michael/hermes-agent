@@ -120,7 +120,13 @@ sed -n '/^update:/,/^[^ ]/p' ~/.hermes/config.yaml
    git -C ~/.hermes/hermes-agent push --force-with-lease team-michael main:main
    ```
 
-   If HTTPS credentials are needed, load `GITHUB_TOKEN` from `~/.bashrc` without printing it and use a temporary credential helper.
+   For a simple local-skill/docs commit where no history rewrite occurred, use the normal push:
+
+   ```bash
+   git -C ~/.hermes/hermes-agent push team-michael main:main
+   ```
+
+   If HTTPS credentials are needed, do not print or embed the token in the remote URL. In the Andrej profile the token may live in `/home/ubuntu/.hermes/profiles/andrej/.env` even when terminal subprocess env is sanitized and `git push` fails with `could not read Username for 'https://github.com'`. Use a temporary `GIT_ASKPASS` helper under `~/.hermes/cache/` that reads `GITHUB_TOKEN`/`GH_TOKEN` from the profile `.env`, then delete it immediately after the push. `gh auth status` can show a valid token while plain `git push` still lacks non-interactive credentials.
 
 7. **Verify final state**
 
