@@ -8,8 +8,10 @@ For `team-michael/notifly-event` web-console work, new or changed user-facing me
 §
 For Slack image/attachment questions, do not infer from text-only thread context that media is inaccessible; when channel_id/thread_ts are available, retrieve the Slack thread/root via Web API, inspect `messages[0].files[]`/attachments, download authorized images, and use vision analysis.
 §
-Hermes local patches are managed on local `main` and pushed to `team-michael/main`; live profile `memories/` dirs symlink into `/home/ubuntu/.hermes/hermes-agent/ignored/local/profiles/<profile>/memories`, and the daily commit cron force-adds memory `*.md` only, leaving `*.lock` ignored.
+Hermes local patches use local `main` pushed to `team-michael/main`; live profile memories symlink under `/home/ubuntu/.hermes/hermes-agent/ignored/local/profiles/<profile>/memories`.
 §
 Git commit identity used in prior Notifly agent work: `Andrej Karpathy <team@greyboxhq.com>`.
 §
 For `team-michael/cloudflare-containers` Access-protected endpoints, Cloudflare Access service-token headers `cf-access-client-id` and `cf-access-client-secret` can be used when available; their values are secrets and should not be stored or printed.
+§
+For remote/container operations from Slack, Hermes terminal acts on local Hermes runtime unless explicit SSH/API target is established and verified; before filesystem/service mutation, verify target identity with hostname/whoami/pwd.
