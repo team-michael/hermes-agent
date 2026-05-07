@@ -19,7 +19,7 @@ Default behavior:
 2. Fetch `origin/main` and `team-michael/main`.
 3. Fast-forward local `main` from `team-michael/main` when needed; stop if they diverged.
 4. Run `hermes update` from the `main` checkout with `HERMES_UPDATE_LOCAL_PATCH_BRANCH=main` set explicitly. This guarantees Hermes rebases local commits onto `origin/main` instead of resetting them away, even if the root/default config does not define `update.local_patch_branch`.
-5. Copy current live profile `memories/*.md` files into `ignored/local` and commit them when they changed. Do not copy `.lock` files.
+5. Copy current live profile `memories/*.md` files into `ignored/local` and commit them when they changed. Do not copy `.lock` files. Local-only profile/state commits must include `[skip ci]` so upstream test workflows are not triggered by `ignored/local` churn.
 6. Push local `main` to `team-michael/main` with `--force-with-lease`.
 7. Run `ignored/local/scripts/apply-local-state.py --replace-existing --link-soul` with no profile arguments, so newly added repo-managed profiles are included automatically.
 8. Recreate known shared symlinks under `~/.hermes/shared` and `~/.hermes/bin`.
