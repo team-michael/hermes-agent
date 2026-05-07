@@ -47,6 +47,48 @@ If you write `*bold*` in Slack mrkdwn style directly, the gateway's regex interp
 - **Nested list auto-rendering** — Slack flattens list indentation. Use `•` / `-` + newlines for flat lists. For hierarchy, prefix with indented `◦` or `-` but expect flat visual.
 - **H3+ headers** — `###` converts fine to bold, but there's only one level of bold, so don't rely on `#` vs `##` vs `###` for visual hierarchy.
 
+## The #2 Pitfall: Wrapping the ENTIRE Message in Triple-Backticks
+
+Observed 2026-05-06 (tarantino cron job `0d2144c61a4c`, first run). The agent composed a full daily report — headers, bold emphasis, emoji shortcodes, multiple code blocks for tables and prompts — and then wrapped **the whole thing** in an outer `` ``` ... ``` `` fence before returning it as the final response.
+
+Result in Slack:
+- `**bold**` rendered as literal text with asterisks visible
+- `:clapper:` / `:point_down:` rendered as literal text instead of emoji
+- Every section showed up in monospace font, gutting readability
+- The inner code blocks (Top-10 table, Seedance prompts) were invisible as separate blocks because they were nested inside the outer fence
+
+**Rule**: The Slack message body is **plain standard Markdown**. Only wrap **specific** sub-regions in triple-backticks:
+- Fixed-width tables that need column alignment
+- Code / command snippets
+- Copy-paste prompts (Seedance, LLM prompts, etc.) where the user wants a clean clipboard copy
+
+Never wrap:
+- The whole report
+- A section header + its body
+- A paragraph of prose
+- A bullet list
+
+If you're tempted to wrap "for visual consistency," stop. Let the gateway's Markdown → mrkdwn pass do its job on the prose and use code fences only where monospace is functionally required.
+
+## Cron-Prompt Authoring Rule (Slack-delivered cron jobs)
+
+When a cron job delivers to Slack (`deliver: slack` or `deliver: slack:C...`), the cron agent runs **non-interactively** — no conversational correction loop exists to catch formatting mistakes. The cron prompt itself must re-embed Slack formatting guardrails, not just rely on the skill being loaded.
+
+Minimum guardrails to paste into any Slack-delivering cron prompt:
+
+```
+## 🛑 Slack 출력 포맷 규칙
+
+- 최종 메시지 전체를 triple-backtick 코드블록으로 감싸지 말 것. 감싸면 bold/이모지/링크 전부 깨진다.
+- 본문은 **표준 Markdown 평문**으로 작성. 게이트웨이가 자동으로 Slack mrkdwn으로 변환한다.
+- 강조는 `**bold**` (단일 별표 `*x*`는 italic으로 변환됨, 금지).
+- 표는 **개별** triple-backtick 코드블록, 언어 태그 없이.
+- 섹션 헤더는 `## 제목` 사용.
+- 최종 응답 = Slack에 그대로 게시될 본문. `## Response` 같은 메타 래퍼 금지.
+```
+
+Confirmed failure mode (2026-05-06): loading `slack-mrkdwn-output` as a cron skill was NOT sufficient — the agent still wrapped the whole report. Embedding the explicit "do not wrap the whole message" rule in the cron prompt body is what makes it stick.
+
 ## Output Strategy (default for this profile)
 
 1. **Titles / section headers** → `**Bold Title**` or `## Title` (both convert to Slack bold). Blank line after.
@@ -76,6 +118,7 @@ If you write `*bold*` in Slack mrkdwn style directly, the gateway's regex interp
 
 ## Pitfalls
 
+- **Never wrap the whole message in triple-backticks** (see "#2 Pitfall" section above). Only wrap specific tables / code / copy-paste prompts.
 - **Never write raw Slack mrkdwn (`*bold*`, `<url|text>`) by hand.** The gateway's conversion pass expects Markdown input and will either double-transform or misinterpret it.
 - **Triple-backtick code blocks with language hints (` ```python `)** — the language hint may show up in Slack output. Omit the language tag for Slack delivery.
 - **Long messages (>4000 chars)** may be truncated. For very long deliverables, split into multiple messages or upload as a file.
@@ -233,6 +276,7 @@ for part_md in parts:
 ## Verification Before Sending
 
 Scan the draft for:
+- **Is the entire message wrapped in an outer triple-backtick fence?** If yes, REMOVE the outer fence. Only inner tables / code / copy-paste prompts should be fenced.
 - Any `*single-asterisk*` emphasis → replace with `**double**`. Otherwise it renders as italic.
 - Any `| ... |` markdown table rows → convert to bullets or code block.
 - Any `_italic_` used purely for emphasis → convert to `**bold**` (Minkyu's preference).

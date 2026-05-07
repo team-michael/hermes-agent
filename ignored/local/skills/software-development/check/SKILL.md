@@ -42,6 +42,7 @@ Final response rules:
 - For DB-shaped alerts, always include one compact Korean DB field naming the concrete DB instance/role and top SQL family/query fingerprint. If unavailable, say in Korean that the instance or query is unknown with the shortest reason.
 - For `needs_fix` or `urgent`, the implementation target must be concrete somewhere in the fixed labels: file/module/function, SQL/index/table family, or Terraform path/resource. Avoid generic advice like "threshold review" unless paired with the exact Terraform alarm/config location to change.
 - If immediate action is not required, do not print `액션 아이템:`; put the concrete non-urgent target briefly in `즉시 조치 필요 여부: 추적 필요 ...`.
+**Pitfall**: before finalizing a `no_action` response, count visible bullets. It must be exactly five labels (`원인`, `범위`, `빈도`, `고객 영향도`, `즉시 조치 필요 여부`). Including `액션 아이템:` under `no_action` breaks the Slack reaction contract and inflates perceived severity.
 - If the exact code or Terraform location is not found, write the most specific next lookup target instead of a generic action target.
 - Mention `@engineers` only for urgent issues requiring immediate engineering response.
 - End with exactly one hidden directive: `[[hermes:processing_status=no_action]]`, `[[hermes:processing_status=needs_fix]]`, or `[[hermes:processing_status=urgent]]`.
@@ -384,6 +385,7 @@ Flow:
 3. Logs Insights or Athena/access-log aggregate by status, route/path, method, target service, and project/campaign IDs when available
 4. source search for the route/controller/error mapper that emits the dominant status
 5. distinguish customer/client input spikes from server-side regression
+6. if AI gateway or Workers AI dependency is suspected, verify Cloudflare status per `references/cloudflare-workers-ai-status-check.md`
 
 ### F. Redis / CROSSSLOT / cache incident
 
