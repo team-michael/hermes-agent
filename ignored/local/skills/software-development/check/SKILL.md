@@ -208,10 +208,15 @@ python "${HERMES_HOME:-$HOME/.hermes}/skills/software-development/check/scripts/
   --region ap-northeast-2
 ```
 
+**Pitfall**: alarm names with embedded priority tiers (e.g., `ScheduledBatchDelivery-P2-FCMLatencyP99`) may not be detected by the text parser. Pass `--alarm-name` explicitly in these cases.
+
+**Pitfall**: When a metric filter pattern (e.g., `took too long`) differs materially from the alarm or metric name (e.g., `segment-publisher-prod slow eic query`), the helper may derive Logs Insights filter terms from the name and report `count_7d: 0` / `count_30d: 0` despite actual matches existing. Do not treat zero counts as absence of logs; fall back to the bounded manual trace using the exact `filter_pattern` string from `metric_filters[].filter_pattern`.
+
 The script does the single-pass first investigation:
 - parse alert text
 - query live CloudWatch alarm metadata/history
 - summarize 7d and 30d alarm history
+- **Pitfall**: `describe-alarm-history` may return entries with `StateValue: null` and `StateReason: null`. When this happens, the helper cannot count ALARM transitions from history alone. Fall back to metric datapoint breach density and the alarm's current `StateReason` from `describe-alarms`.
 - fetch CloudWatch metric datapoints
 - detect log groups / project IDs
 - inspect metric filters
@@ -326,6 +331,8 @@ Do not claim a metric filter is matching unrelated messages unless the helper's 
 
 **Pitfall — metric-filter name vs. actual trigger**: an alarm may be named after a historic cause (e.g., `slow eic query`) while the current trigger is a different, coarser log pattern (e.g., `[WARN] Processing took longer than expected`). When the same log group already carries a purpose-built metric filter in a custom namespace (e.g., `Custom/segment-publisher` → `SegmentPublisher.ExecutionTimeOverThreshold`), the `ConsoleErrors` copy is likely redundant or stale. Always inspect the exact log line that breached the threshold and the full set of metric filters on the log group before letting the alarm name dictate the root cause. See `references/segment-publisher-slow-eic-query-noise.md` for a concrete example.
 
+**Pitfall — broad metric filter catching multiple unrelated causes**: a coarse substring filter (e.g., `took too long`) may match both a benign WARN continuation and a real DB-query latency signal. The alarm name may be accurate for one pattern (e.g., `EventCounterCteManager.extract` slow EIC query) while a second pattern (batch-processing `[WARN]`) is noise. Always read the exact log line and surrounding context to determine which pattern fired and triage separately.
+
 ### C. Console error log-level triage / bulk Amazon Q review
 
 Use this when the user asks to review recent Amazon Q / AWS Chatbot `console error` alerts over a time range and decide which logs can be downgraded from `ERROR` to `WARN`/`INFO` in `notifly-event`.
@@ -422,6 +429,10 @@ Flow:
 
 Pitfall: do not assume the alarm name prefix equals the Lambda function name. When the helper Lambda collector fails with `ResourceNotFoundException`, manually list Lambdas and match by base service name, then verify `LastModified`.
 
+**Distinguishing real bugs from metric-filter noise**: The `ConsoleErrors` namespace is a coarse log substring filter. For Lambda functions, always cross-check the `AWS/Lambda` `Errors` metric. If `Errors > 0`, the alarm reflects a real invocation failure (unhandled exception, timeout, OOM). If `Errors == 0` and `Throttles == 0`, the log line is likely benign text caught by the broad filter. See `references/kds-consumer-event-timestamp-rangeerror.md` for a concrete real-bug example where the `RangeError` in `getValidEventTimestampInMilliseconds` elevates both console ERROR logs and Lambda runtime Errors.
+
+**Percentile metric pitfall**: `get-metric-statistics` does not accept `p99` or any percentile statistic. The valid set is `SampleCount | Average | Sum | Minimum | Maximum`. For percentile alarms such as `*-FCMLatencyP99`, use `Maximum` as a conservative proxy, or switch to `get-metric-data` with `ExtendedStatistics=['p99']` if the exact value is required. See `references/scheduled-batch-delivery-fcm-latency.md` for a concrete FCM latency triage recipe.
+
 ## DynamoDB project mapping rule
 
 Whenever you find a `project_id`, fetch from DynamoDB `project` table with a projection expression and report:
@@ -431,6 +442,15 @@ Whenever you find a `project_id`, fetch from DynamoDB `project` table with a pro
 - mapping status and failure reason when unavailable
 
 Do not fetch full items because the table may contain sensitive sender credentials.
+
+### Non-existent project edge case (api-service)
+
+If the `project_id` is missing from the `project` table **and** no related `event_list_<project_id>` or sharded DB tables (e.g., `campaign_statistics_<project_id>`, `users_<project_id>`) exist, the project is effectively non-existent. When an api-service `42P01` (`relation does not exist`) error is tied to such a project, the root cause is usually an external caller using an invalid or stale `project_id`. Check the structured access/error log for:
+- `ip` / `userAgent` (e.g., `curl/7.81.0` indicates a manual/scripted call)
+- `path` / `method` of the request
+- Request volume and recurrence pattern
+
+Single or sporadic `curl` requests from an unrecognized IP suggest a misconfigured client test rather than a service regression. See `references/api-service-invalid-project-tracing.md` for the full trace recipe.
 
 ## GitHub correlation rule
 

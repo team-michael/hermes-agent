@@ -1,1 +1,3 @@
-User prefers Notifly SDR/account research to be result-focused and concise, organized around conclusion, key evidence, contact status, sales angle, next action, and limitations rather than long process logs.
+User wants the current sdr profile's default Notifly SDR/account research behavior to follow the Slack thread setup: result-focused and concise; prioritize contact quality > account fit > stack evidence > outreach angle; organize outputs around conclusion, key evidence, contact status, sales angle, next action, and limitations; distinguish confirmed/likely/possible/unknown stack evidence; avoid guessed personal emails as primary outreach.
+§
+User prefers future Google Drive deliverables for Notifly competitor/consulting analysis in the sdr profile to be stored under Drive folder 1BUaJE9Tp3yAFBvSx2lrYnyhGJd30FAo or its subfolders.

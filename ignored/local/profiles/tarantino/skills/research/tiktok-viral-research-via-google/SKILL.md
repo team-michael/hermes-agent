@@ -297,12 +297,97 @@ When your SERP is dominated by reality-TV, crafting, phone-tips, or nostalgia co
 - **View count is approximate**: "조회수 2350만회 이상" is a rounded floor. Treat rankings as ordinal, not precise.
 - **Age heuristic is rough**: `2년 전` could be 24-35 months. Use only for tiebreaking.
 - **Likes fallback is noisy**: some snippets only show likes ("3673 Likes"). A 20x likes→views heuristic exists in the script but is unreliable; prefer videos where `조회수` is explicitly parsed.
-- **Google rate limiting**: ~10 queries back-to-back is fine. If you go heavier, add randomized sleeps or rotate IPs.
+- **Google rate limiting**: ~10 queries back-to-back is fine. If you go heavier, add randomized sleeps or rotate IPs. **Observed working cadence on `hl=ko` (2026-05-08)**: `time.sleep(2 + (i % 3))` between queries (so 2/3/4/2/3/4...) completed all 18 queries with 0 `/sorry/` hits. The previous "12-14 query ceiling" was observed with tighter spacing — jittered 2-4s spacing appears to meaningfully reduce block rate. Still treat 18 as the realistic ceiling, not a floor — don't stack a 25-query plan on top of this.
 - **Google CAPTCHA on qdr:w heavy runs**: observed 2026-04-27 — after ~14 consecutive `tbs=qdr:w` queries the Selenium session redirects to `/sorry/` captcha page. Detect via `'unusual traffic' in body.lower()` or `'/sorry/' in driver.current_url` and skip+log the failed query instead of crashing. In headless/cron contexts, just record which queries were skipped and note it in the delivered report. Confirmed again 2026-04-29 (`hl=ko`, 18-query college-app run): 12 queries completed, 6 tail queries skipped on `/sorry/`. Treat **12–14 queries as the realistic ceiling per driver session on `hl=ko`** and **order your query list so the highest-value / hardest-to-re-cover ones run first** — the tail of the list is the part you'll lose.
 - **English-locale (`hl=en&gl=us`) burn rate is ~40% faster**: observed 2026-04-28 — `/sorry/` hit after only 9 consecutive `qdr:w` queries (vs ~14 on `hl=ko`). Treat **8 queries as the soft ceiling per driver session on `gl=us`**. A 45-second cool-down + retry in the same session does NOT work; Google remembers the session-level signal. Either (a) accept partial coverage and ship, or (b) rotate the Chrome profile and wait hours before re-attempting. Per Soomin's error-halt rule, do NOT loop retries — halt and report.
+- **HOST-IP-LEVEL Google ban (hard fail mode, 2026-05-07)**: on 2026-05-07 Hermes host `43.200.138.23` was blocked **on the very first Google query** — `/sorry/` on literal `q=tiktok&hl=en`, no site: operator, no recency filter, no prior query. Fresh Chrome profile and 3-minute wait both failed. This is NOT the per-session rate limit above; it's an IP reputation block that may persist hours to days. Detection: **if query #1 of the run hits /sorry/, every subsequent query will too — skip Google entirely and fall back immediately**. See "Fallback SERP Ladder" below. Do NOT burn driver time iterating through 18 queries when the IP is cold.
 - **Partial-coverage reports are usually decision-grade**: if 5/14 queries captcha but you already have 30+ past-week candidates and have run the direct-TikTok engagement scrape on the top 15, the virality conclusion (share/like winners, format clusters, creator repetition) is strong enough to ship. Flag the missing queries explicitly so the user can choose to unblock them via VNC, but **do not block the deliverable** waiting for full coverage. Missed queries tend to be adjacent sub-niches (e.g. `date night ideas app`, `shared calendar for couples`, `relationship app` missed on a couple-app run → married/cohabiting sub-segment), worth noting as a coverage gap in the report rather than as a pipeline failure.
-- **NA-college social-app noise handles** (add to `NOISE_HANDLES`/snippet blocklist when running college-app queries): `marymarketingirlie` (Italian), `locketgold6.0pro` (mod spam), `johnleggottcollege` (UK sixth-form), `techrosen`/`jisuinparis` (UK/FR), `cymru` (Wales), `mediamarkt_hb_weserpark` (German Saturn retail), `somnia.plus` (dorm-bed product, not social), admissions-coach handles (`vibrantcollegeadvising`, `experthan`, `collegexpert`, `essayhelpbyhollee`, `misterjensen`, `saraharberson`) — these hit the keyword but are off-ICP for NA-college-social-app targeting. **Added 2026-05-06**: `play_and_win_telenor` (Pakistan Telenor quiz ride-along on "SumOne"), `plantslapstime1` (gardening timelapse — wins `"lapse social app"` cluster), `rubix_learning` (Australian ATAR study-coach, wrong country), `atraccioninterpersonal` (Spanish-language relationship-psychology), `iamthatenglishteacher` (K-12 grammar channel, wrong age-segment).
+- **NA-college social-app noise handles** (add to `NOISE_HANDLES`/snippet blocklist when running college-app queries): `marymarketingirlie` (Italian), `locketgold6.0pro` (mod spam), `johnleggottcollege` (UK sixth-form), `techrosen`/`jisuinparis` (UK/FR), `cymru` (Wales), `mediamarkt_hb_weserpark` (German Saturn retail), `somnia.plus` (dorm-bed product, not social), admissions-coach handles (`vibrantcollegeadvising`, `experthan`, `collegexpert`, `essayhelpbyhollee`, `misterjensen`, `saraharberson`) — these hit the keyword but are off-ICP for NA-college-social-app targeting. **Added 2026-05-06**: `play_and_win_telenor` (Pakistan Telenor quiz ride-along on "SumOne"), `plantslapstime1` (gardening timelapse — wins `"lapse social app"` cluster), `rubix_learning` (Australian ATAR study-coach, wrong country), `atraccioninterpersonal` (Spanish-language relationship-psychology), `iamthatenglishteacher` (K-12 grammar channel, wrong age-segment). **Added 2026-05-07**: `heillyraices` (Spanish-language), `eurosweetheart` (Taylor Swift fan content), `bbcnewsbrasil` (Portuguese news), `blainesdeclassified` (UK university nostalgia), `mrhackio`/`profsnider`/`harvardadmissions`/`verge` (edtech/admissions influencers, not college UGC), `louisegoedefroy` (French-language), `eng.abdelgawad` (Arabic-language teaching), `fonziegomez` / `julian.12kk` / `tboypod` / `saharrooo` / `catherinecasal` / `infamous_wu13` / `niyaesperanza` / `geo.all.day` (off-topic commentary/news accounts that surfaced via college-keyword pollution). Also **block official brand accounts for UGC-signal queries**: `locketcamera`, `joinsaturn`, `widgetable`, `the.leap`, `joinfizz` — these are corporate channels; if you want UGC (user testimonials) they must not appear in the pool.
 - **TikTok captcha vs genuine failure**: if you do try TikTok directly and get 0 video anchors, check `document.body.innerText` for `"Drag the slider"` — that confirms captcha, not a query problem.
+
+## Fallback SERP Ladder (when Google is hard-blocked)
+
+Tested 2026-05-07 on this host when Google returned /sorry/ on query #1. Result: **only Ecosia worked end-to-end**. Full matrix in `references/serp-fallback-matrix.md`. Quick summary:
+
+| Engine | Supports `site:` | Blocked this host | Notes |
+|---|---|---|---|
+| Google | ✅ | **Yes (IP-flagged)** | Gold standard when working; view counts in snippets |
+| Ecosia | ✅ | No | 42 queries / 0 skips / 66 URLs extracted — **preferred fallback** |
+| DuckDuckGo (html) | ⚠️ weak | No captcha, but `site:tiktok.com/@ "x"` returns "No results found" — operator essentially ignored |
+| Brave | ✅ | Proof-of-Work captcha | "Solve the challenge below to continue" blocker |
+| Bing | ✅ | Captcha | "One last step" captcha wall |
+| Mojeek | — | 403 Forbidden | "Sorry your network appears to be sending automated queries" |
+| Yandex | ✅ | SmartCaptcha | "Please confirm that you and not a robot are sending requests" |
+| Startpage | — | Captcha | "CAPTCHA Verification" |
+
+**Ecosia fallback rules** (from 2026-05-07 NA college social-app run):
+- Endpoint: `https://www.ecosia.org/search?q=<quoted>` — **no recency parameter works** (Ecosia ignores `&time=` or equivalents; results skew historical, average age was 500+ days in observed run).
+- Drop the `/@` anchor: Ecosia tokenizes `site:tiktok.com/@ "x"` poorly — use `site:tiktok.com "x"` and filter `/@<handle>/video/<id>` in the post-extraction regex instead.
+- Prime cookies by visiting `https://www.ecosia.org/` once before the first search (otherwise first call hits a cookie-consent modal that blocks anchor extraction).
+- Expect 1-10 items per query (much sparser than Google). Compensate by **doubling the query count** — go from 18 queries to 30-40 semantic-family variations.
+- Result card selector: `a.closest('article, div.result, div.mainline-result, section')` — different from Google's `div.MjjYud`.
+- **Snippet view-count extraction is NOT reliable on Ecosia** (it doesn't render the Korean "조회수 X만회" or English "X views" rich-result strings). Ecosia is for URL discovery only — DOM verification on TikTok itself becomes mandatory for every result.
+
+**Decision tree at runtime**:
+1. Try Google query #1. If `/sorry/` → do NOT iterate the rest. Pick one of:
+   - **(a) VNC-assisted Google recovery** (preferred for cron runs — verified working 2026-05-08 on this host): launch a probe via `headful-chrome-vnc` scripts/probe_first_query_google.py (leaves driver alive on block), post a VNC handoff message to Slack with driver PID + promoted window, wait for human solve, then re-run the full query list in a fresh `create_driver()` that inherits the solved cookies from the Tarantino profile. In the 2026-05-08 NA-college run this took Google from 0/18 blocked yesterday → 18/18 clean today with zero re-blocks. Cookies persisted through the cron's second driver spawn.
+   - **(b) Ecosia fallback** (no human-in-loop, but sparser data — use when VNC is unavailable or jace is offline).
+2. If (a): after the human-solve, run both Google (primary) and optionally Ecosia (width) in the same cron tick. Dedup on normalized URL.
+3. If (b): expanded semantic-family query list, DOM-verify every URL on TikTok itself.
+4. Post-collect: DOM-verify every URL on TikTok itself (see "TikTok Video Page DOM Verification" below).
+5. Report the outage + chosen fallback path as a coverage warning. Always name the path ("VNC-solved Google" / "Ecosia substitution") so future diffs are legible.
+
+**Do not retry the ladder within one cron run** unless the retry is backed by a human-solve event (option a). Rotation of IP/profile without a solve needs to happen out-of-band (VNC session, proxy, or IP change), not via in-run retry.
+
+## TikTok Video Page DOM Verification (2026-05 confirmed selectors)
+
+When you bypass SERP view counts (e.g. fell back to Ecosia), you MUST hit every candidate TikTok URL and DOM-verify. Confirmed 2026-05-07 on 52 videos (0 captcha hits, anonymous session from this host):
+
+```javascript
+// These work — all return STRONG element innerText:
+document.querySelector('[data-e2e="like-count"]').innerText      // e.g. "892"
+document.querySelector('[data-e2e="comment-count"]').innerText   // e.g. "32"
+document.querySelector('[data-e2e="share-count"]').innerText     // e.g. "94"
+document.querySelector('[data-e2e="favorite-count"]').innerText  // e.g. "37" (saves)
+
+// These DO NOT work — returned None on every 2026-05 test:
+document.querySelector('[data-e2e="browse-like-count"]')    // null
+document.querySelector('[data-e2e="browse-share-count"]')   // null
+document.querySelector('[data-e2e="browse-comment-count"]') // null
+```
+
+The `browse-*` variants listed in the older section are obsolete. Prefer the bare selectors above. The comma-joined fallback `'[data-e2e="like-count"], [data-e2e="browse-like-count"]'` still works but the second branch is dead weight.
+
+**Count-string parsing** (`"1.1M"`, `"103K"`, `"892"` all show up):
+```python
+def parse_count(s):
+    if not s: return None
+    s = s.strip().replace(',', '')
+    m = re.match(r'([0-9]*\.?[0-9]+)\s*([KkMmBb])?', s)
+    if not m: return None
+    n = float(m.group(1))
+    mult = {'k':1e3,'m':1e6,'b':1e9}.get((m.group(2) or '').lower(), 1)
+    return int(n * mult)
+```
+
+**Gotcha — `share_raw` can be the literal string `"Share"`** instead of a number on very-low-engagement videos (observed 2026-05-08 on `@muthtyauraa_` and `@geeker.mcfreaker2`, both with like counts < 300). TikTok renders the share *button label* when there's no share count to display. `parse_count("Share")` returns `None` which is correct, but any downstream code that assumes `share` is always numeric will crash — always guard with `isinstance(v.get('share'), int)` or `(v.get('share') or 0)` in sort keys. Same caveat applies in principle to `comment`/`favorite` when those are zero-floor, though `share` is the only one confirmed so far.
+
+Captcha detection before trusting a read:
+```javascript
+!!document.querySelector('#captcha-verify-container-main-page')
+```
+
+## TikTok Video ID → Creation Timestamp (snowflake decode)
+
+TikTok video IDs are Snowflake-like: **the top 32 bits are a Unix-seconds timestamp of video creation**. This is more reliable than scraping the SERP snippet date (often missing, wrong timezone, or Google-rounded) or the `span/time` elements on the video page (often rendered as relative text `"3 weeks ago"` that also needs parsing).
+
+```python
+from datetime import datetime, timezone
+def tiktok_id_to_datetime(video_id: str | int) -> datetime:
+    return datetime.fromtimestamp(int(video_id) >> 32, tz=timezone.utc)
+```
+
+Verified 2026-05-07 on 52 videos — every ID decoded to a plausible creation date matching the TikTok page's own date display where present. Use this as the authoritative `age_days` source. See `scripts/decode_video_date.py` for a ready-to-run converter.
 
 ## Creator-as-Format-Factory Rule (how to operationalize "cluster ≥ 3")
 
@@ -328,6 +413,8 @@ Avoid spending budget on single-word competitor names that produce 1 result (`"B
 
 **Diagnostic**: if your final Top 10 is >80% q=1, you lost the centrality signal. Report it as a coverage warning AND pre-emptively redesign the query list for the next run. Don't treat the Top 10 as bias-free ranking in that state.
 
+**Recurrence log**: 2026-05-08 run hit this exact failure mode again (9/10 Top-10 at q=1) despite the skill warning being in place. The issue is that **the cron prompt owns the query list**, not this skill, so adding the warning here doesn't prevent the next session from firing disjoint queries. If you're editing a cron prompt that invokes this skill, the query list itself must ship semantic-family clusters of 3-5; a simple flat "pick 18 promising keywords" list will always produce q=1-dominant output. When writing daily reports, include a "next-run query set" section in the warnings post so the cron prompt can be patched before the next tick.
+
 ## Output Template
 Deliver as a table (rank, views, URL, one-line hook) plus a pattern-analysis section that surfaces:
 - dominant content format (listicle / single-app tutorial / comparison / couple-game)
@@ -351,7 +438,7 @@ High share rate is the FYP amplifier — the algorithm reads "people send this t
 
 When reporting, compute share/like per video and flag the outliers. Recommend `share/like ≥ 5%` as the minimum success bar for app-growth content experiments — this bar means the creative is actually doing distribution work, not just getting shown.
 
-Per-video TikTok DOM selectors for likes/comments/shares (as of Apr 2026):
+Per-video TikTok DOM selectors for likes/comments/shares (as of Apr 2026 — **superseded, see "TikTok Video Page DOM Verification" section above for 2026-05 confirmed selectors**):
 ```javascript
 document.querySelector('[data-e2e="like-count"], [data-e2e="browse-like-count"]').innerText
 document.querySelector('[data-e2e="comment-count"], [data-e2e="browse-comment-count"]').innerText
@@ -364,3 +451,101 @@ Array.from(document.querySelectorAll('a[href*="/tag/"]')).map(a => a.innerText)
 
 ## Verification Step
 After ranking, hit the top 10 URLs with a HEAD/GET to confirm 200 OK. TikTok occasionally takes down or privates videos; dead links in the final table are worse than fewer results.
+
+## Cron-Job Delivery: Pinned-Thread Pattern (2026-05-08)
+
+When this skill is invoked by a scheduled cron job (`hermes cron`) rather than an interactive ask, the delivery shape jace wants is:
+- **No channel-top-level post ever.** Daily headers pollute the channel.
+- All output lands as **replies under a single pinned thread** (one dedicated thread per report series).
+- That means: 1 summary reply + N detail replies, all with `thread_ts` fixed to the pinned message.
+
+### Deliver string shape (use the channel/thread combo, but don't rely on it)
+
+The cron's `deliver` field accepts `slack:CHANNEL:THREAD_TS`, e.g. `slack:C0APW93G614:1778196777.375029`. The `cron run` scheduler *does* honor that to pin its own auto-delivery summary to the thread. **However, observed 2026-05-08**: when the agent's body posts go through `chat.postMessage` directly and the scheduler then tries to append its own "Cronjob Response: ..." summary, the scheduler can return `⚠ Delivery failed: delivery error: Slack API error: channel_not_found`. The body already landed correctly — only the scheduler's appended summary failed.
+
+**Treatment**: benign noise. Two ways to suppress it:
+1. Set `deliver: local` on the job (scheduler writes to local only, agent does all the Slack work). Cleanest.
+2. Leave `deliver: slack:CHANNEL:THREAD_TS` and ignore the `channel_not_found` warning — the body post is what actually matters.
+
+Do not chase the `channel_not_found` unless the body post is *also* missing from the thread. Verify body landed via `conversations.replies` before debugging delivery.
+
+### Agent-side posting recipe (use this, not `send_message`)
+
+`send_message(action='send', ...)` cannot pin a post to an arbitrary `thread_ts` — it's channel-level. For this pattern, post everything via `chat.postMessage` directly:
+
+```python
+import json, urllib.request, re
+
+FIXED_THREAD_TS = "1778196777.375029"   # per-series constant
+CHANNEL = "C0APW93G614"
+
+# Slack token from profile .env
+env = {}
+with open('/home/ubuntu/.hermes/profiles/tarantino/.env') as f:
+    for line in f:
+        line = line.strip()
+        if not line or line.startswith('#') or '=' not in line: continue
+        k, v = line.split('=', 1)
+        env[k] = v.split('#', 1)[0].strip().strip('"').strip("'")
+slack_token = env['SLACK_BOT_TOKEN']
+
+# Markdown -> Slack mrkdwn (direct API does NOT auto-convert)
+def md_to_mrkdwn(text):
+    lines, out, in_code = text.split('\n'), [], False
+    for line in lines:
+        if re.match(r'^\s*```', line):
+            out.append('```'); in_code = not in_code; continue
+        if in_code:
+            out.append(line); continue
+        m = re.match(r'^(#{1,6})\s+(.*)$', line)
+        if m:
+            out.append(f"*{m.group(2).strip()}*"); continue
+        new = line
+        new = re.sub(r'\*\*\*(.+?)\*\*\*', r'*_\1_*', new)
+        new = re.sub(r'\*\*(.+?)\*\*', r'*\1*', new)
+        new = re.sub(r'~~(.+?)~~', r'~\1~', new)
+        new = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<\2|\1>', new)
+        out.append(new)
+    return '\n'.join(out)
+
+def post_reply(text_markdown, channel=CHANNEL, thread_ts=FIXED_THREAD_TS):
+    payload = {
+        "channel": channel, "thread_ts": thread_ts,
+        "text": md_to_mrkdwn(text_markdown),
+        "mrkdwn": True, "unfurl_links": False, "unfurl_media": False,
+    }
+    req = urllib.request.Request(
+        "https://slack.com/api/chat.postMessage",
+        data=json.dumps(payload).encode('utf-8'),
+        headers={"Authorization": f"Bearer {slack_token}",
+                 "Content-Type": "application/json; charset=utf-8"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.loads(r.read())
+```
+
+**Rules:**
+- **Never call `send_message` in this pattern.** It always creates a top-level channel post.
+- Each reply ≤ 4000 chars. If a section overflows, split with `3-1/2` / `3-2/2` suffixes.
+- `unfurl_links: False` and `unfurl_media: False` — otherwise TikTok URLs blow up into giant previews and the thread becomes unreadable.
+- Strong emphasis is `**bold**` only (jace rule: no italic); the converter maps `**X**` → `*X*`.
+- **Do NOT wrap the whole reply in a single triple-backtick block.** Tables and prompt bodies each get their own code block; connective prose stays outside.
+- Verify with `conversations.replies` after a run:
+  ```python
+  urllib.request.urlopen(urllib.request.Request(
+      f"https://slack.com/api/conversations.replies?channel={CHANNEL}&ts={FIXED_THREAD_TS}&limit=20",
+      headers={"Authorization": f"Bearer {slack_token}"}
+  ))
+  ```
+  Expected count = 1 (thread root) + N (replies posted this run) + 1 (scheduler's own summary, if `deliver:slack:...` didn't fail).
+
+### Manual-run vs scheduled-run same-day collision
+
+If you fire `cronjob action=run` manually to recover from a block (common after a VNC handoff), the job's next scheduled tick is **not automatically suppressed**. It will fire at its normal cron schedule the same day and publish a second report with the same date header. Options:
+
+1. Pause the cron until the next day: `cronjob action=pause` after the manual run, then `action=resume` the next morning.
+2. Accept the duplicate and let the second tick's data freshness add value.
+3. Let the second run detect it's re-covering ground already in today's thread and abort — requires the prompt to check `conversations.replies` for today's date string before posting. Not currently implemented.
+
+Default behavior: ask jace which option he wants after a manual-run-then-normal-tick collision becomes imminent.

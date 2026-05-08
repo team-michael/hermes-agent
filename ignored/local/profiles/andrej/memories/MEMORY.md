@@ -1,4 +1,4 @@
-For the andrej Hermes profile, Slack credentials are stored in /home/ubuntu/.hermes/profiles/andrej/.env; terminal subprocesses intentionally strip messaging secrets such as SLACK_BOT_TOKEN from ambient os.environ unless explicitly loaded or allowlisted.
+Slack access: /home/ubuntu/.hermes/profiles/andrej/.env contains SLACK_BOT_TOKEN; load it in one-off scripts without printing it to call Slack Web API (conversations.replies/search.messages). Terminal strips messaging secrets from ambient env.
 §
 Notifly project lookup convention: when a `project_id` is found, map it through the DynamoDB `project` table and include the corresponding product_id/name; PostgreSQL per-project tables follow the `table_name_${project_id}` naming pattern.
 §

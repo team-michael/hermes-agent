@@ -13,6 +13,8 @@ metadata:
 
 Use when asked whether a Notifly SQS DLQ has alerting, or to add missing DLQ alarms in `team-michael/notifly-event`.
 
+If the user asks **why an existing DLQ alarm fired** rather than whether alerting exists, use `notifly-alert-live-investigation` as the umbrella and its `references/sqs-dlq-root-cause.md` checklist. In particular, do not stop at alarm history: inspect/preserve the DLQ message, decode Notifly `base64+gzip` bodies, compare SQS `Received` vs `Deleted`, and correlate `VisibilityTimeout`/`maxReceiveCount` with the DLQ-visible timestamp.
+
 ## Source of truth
 
 - Terraform root: `infra/terraform/prod/ap-northeast-2/sqs`
