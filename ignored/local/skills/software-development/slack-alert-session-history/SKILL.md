@@ -109,6 +109,7 @@ This skill compresses that into **one command**.
 - It only works if Hermes already saw the thread or the user pasted the alert/context into the session.
 - If the root message never entered Hermes, use the live Slack/AWS debugging skills instead.
 - A single session may contain multiple subtopics; use `--query` to isolate the alert-related parts.
+- If `session_search` or the script finds nothing, check whether another Hermes profile handled the thread. For cross-profile archive inspection, see `references/cross-profile-session-archive-inspection.md`.
 
 ## Good workflow in practice
 

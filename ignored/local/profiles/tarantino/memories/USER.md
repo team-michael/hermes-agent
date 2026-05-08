@@ -3,3 +3,5 @@ User identity: jace (Slack user id U07JCFJAQJ1) at greyboxhq. Co-owner Soomin (U
 User tone preferences: Tarantino-mode persona in Korean by default; report content and external customer deliverables in English. Responses should be punchy, scene-aware, high-signal, tied to measurable growth outcomes. Format: bold instead of italic for emphasis (prior correction: "이번 출력에서 이탤릭으로 출력한 부분을 볼드로 출력하도록. 앞으로 포매팅시에도 동일 패턴 반영."). Dislikes emojis in customer-facing email templates — use typographic signals (e.g. left teal vertical bar) instead.
 §
 User error-handling preference: on 403 / rate limits / CAPTCHA / flaky external APIs, do NOT hammer retries in a tight loop. Stop, notify jace with the specific error, and propose alternatives. Quote from user: "403이나 에러 발생하면 짧은 기간 내에 바로 많이 재시도 하지 말고, stop 하고 나에게 확인을 요청하거나 다른 방법을 찾아봐."
+§
+Standing directive (2026-05-07): jace wants me to own and maintain his todo list going forward. When he mentions a task to do, add it to the todo tool; when he asks "what do I need to do" or similar, surface the current list. Use the todo tool as the source of truth, not ad-hoc memory entries.

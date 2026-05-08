@@ -10,8 +10,6 @@ Hashimoto Slack completion reactions require `message_subscriptions` with the ta
 §
 Notifly recurring `ScheduledBatchDelivery-P2-FCMLatencyP99` alerts usually indicate FCM external p99 latency, not message loss; when `outcome=success`, Lambda Errors are zero, and SQS/DLQ are clear, the customer impact is delayed push delivery only.
 §
-Notifly `segment-publisher long running alam` and `segment-publisher slow eic query` alerts often share the same large-batch cause: UL1T00/stepup/proudp-style campaigns with ~87만 recipients and ~50 minute processing; verify completion/DLQ before treating as customer-impacting.
-§
 Notifly `api-service` 4xx and console-error alerts are frequently noise from `/authenticate` 400 bursts, PostgreSQL 23505 set-user-properties races, or payload strings containing `ERROR`; distinguish client rejection/log-filter noise from real 5xx/ECS task failure.
 §
 Notifly `anomaly-delivery-monitoring lambda error` often means NHN pending delivery-result findings logged at ERROR level, not Lambda runtime failure; check Lambda Errors/Throttles, pending `delivery_result_${projectId}` rows, and `notifly-nhn-delivery-result-collector` before escalation.

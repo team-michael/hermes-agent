@@ -27,6 +27,8 @@ So prefer **Python via `terminal`** and explicitly construct a boto3 `Session` f
 
 ## Workflow
 
+Reference for noisy p95/p99/p99.9 alarm tuning: `references/noisy-percentile-alarm-tuning.md`.
+
 1. **Check environment first**
    - `aws --version`
    - `env | grep '^AWS_' | sort`
@@ -179,6 +181,17 @@ session = boto3.Session(
    - practical interpretation:
      - many `StateUpdate` / `Action` entries with `Period=60`, `EvaluationPeriods=1`, `DatapointsToAlarm=1`
      - => this is true flapping from a very sensitive alarm, not necessarily a routing bug
+   - for percentile/tail-latency alarms (p95/p99/p99.9), avoid reflexively raising the threshold when the metric definition is still meaningful. First ask whether the issue is **severity** or **persistence**:
+     - if threshold represents a good SLO boundary (for example p99 > 3000ms), keep it and add persistence via `datapoints_to_alarm` / `evaluation_periods`
+     - use `2/3` over 5-minute periods as a common balanced default for transient external-API jitter: filters isolated spikes, still pages on ~10 minutes of bad latency within 15 minutes
+     - reserve threshold increases for cases where the threshold itself is below the normal tail distribution or no longer maps to user impact
+   - when recommending new alarm values, compute both:
+     - live alarm history count from `describe_alarm_history()` as the actual user-visible frequency
+     - metric replay simulations from `get_metric_data()` for candidate configs, e.g. `threshold=3000 1/1`, `3500 1/1`, `4000 1/1`, `3000 2/2`, `3000 2/3`, `3000 3/3`
+     - call out that CloudWatch percentile alarm history and replayed metric-data simulations may not match exactly, but the simulation is still useful for relative comparison
+   - final rationale for noisy tail alarms should explicitly distinguish:
+     - threshold = “what counts as bad latency”
+     - datapoints/evaluation periods = “how long it must stay bad before waking a human”
    - if a log-derived metric is involved, also inspect CloudTrail for `PutMetricFilter` and `PutMetricAlarm`
      - metric filters often change during setup and can materially widen the match set (`%ERROR|Exception%` -> `%ERROR|Error%` -> `ERROR`)
      - use `lookup_events` with `EventName=PutMetricFilter` / `PutMetricAlarm` and filter the request payload for the exact filter/alarm name
@@ -193,11 +206,13 @@ session = boto3.Session(
        1. alarm newly created or made broader
        2. additional SNS subscriber added outside Terraform
        3. genuine alarm flapping due to 1-minute / 1-datapoint sensitivity
+       4. single-datapoint p99/p99.9 spikes from external API tail latency
    - in the final answer, separate these clearly:
        1. **alarm definition changed or not**
        2. **metric filter changed or not**
        3. **notification routing / subscriber count changed or not**
        4. **actual ALARM publish frequency**
+       5. **simulated frequency under candidate trigger conditions**
 
 10. **State the root cause precisely**
    - distinguish:

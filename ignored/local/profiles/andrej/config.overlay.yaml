@@ -1,4 +1,5 @@
 agent:
+  gateway_notify_interval: 0
   reasoning_effort: xhigh
   service_tier: fast
 terminal:

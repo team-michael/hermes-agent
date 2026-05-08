@@ -131,6 +131,8 @@ Interpret response:
 - For private channels, “scope exists” is not enough; membership is usually the real blocker.
 - If the agent runtime cannot directly call Slack Web API, enrich thread context in the bridge/backend before invoking the agent.
 - When validating accessible channels, fully paginate `conversations.list`; private channels can be missed if you stop early.
+- In the Andrej Hermes profile, Slack Web API access may require explicitly loading `SLACK_BOT_TOKEN` from `/home/ubuntu/.hermes/profiles/andrej/.env` inside a one-off script; terminal subprocesses may strip messaging secrets from ambient `os.environ`. Never print the token.
+- To inspect a permalink, parse `/archives/{channel}/p{10digits}{6digits}` into `channel` and `ts={10digits}.{6digits}`, then call `conversations.replies`. For keyword expansion when `search.messages` returns `not_allowed_token_type`, page `conversations.history` for the channel/time window and locally filter terms such as `발송 중단`, `캠페인 중단`, `중지 가능`, `중단 가능`.
 
 ## Good user-facing fallback
 
