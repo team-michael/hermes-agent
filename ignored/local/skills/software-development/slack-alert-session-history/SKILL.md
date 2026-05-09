@@ -66,6 +66,38 @@ python ~/.hermes/skills/software-development/slack-alert-session-history/scripts
 
 Then rerun with the desired `--thread-ts` or `--session-id`.
 
+## Cross-profile keyword search for prior discussions
+
+When the user asks “기존에 고민해 본 적 있는지 Slack 같은 곳에서 찾아봐” and you do not have live Slack search context/channel, search Hermes' Slack/session archives across profiles before concluding. `session_search` may only cover the current profile/recent indexed subset; fall back to scanning `~/.hermes/profiles/*/sessions/session_*.json`.
+
+Use a small script under `~/.hermes` or `execute_code`; avoid writing outside `~/.hermes`. Search only `user`/`assistant` messages and skip tool dumps / context compaction blocks, because they create many false positives.
+
+Reusable pattern:
+
+```python
+import json, re
+from pathlib import Path
+root = Path('/home/ubuntu/.hermes/profiles')
+rx = re.compile(r'perRequestTimeout|Service Connect|internal-api-service|SSE|heartbeat|ALB idle', re.I)
+for p in root.glob('*/sessions/session_*.json'):
+    data = json.loads(p.read_text(errors='ignore'))
+    hits = []
+    for m in data.get('messages', []):
+        if m.get('role') not in ('user', 'assistant'):
+            continue
+        c = m.get('content') or ''
+        if not isinstance(c, str) or 'CONTEXT COMPACTION' in c:
+            continue
+        if rx.search(c):
+            hits.append(re.sub(r'\s+', ' ', c)[:700])
+    if hits:
+        print(p, hits[:2])
+```
+
+In the final answer, distinguish:
+- “Hermes-visible Slack/session archive found no prior discussion” from
+- “Slack workspace definitely has no discussion.”
+
 ## Optional narrowing
 
 If a session drifted into other topics, filter findings by keyword:
