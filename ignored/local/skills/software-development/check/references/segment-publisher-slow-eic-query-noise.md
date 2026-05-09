@@ -44,6 +44,16 @@ This is emitted by `services/task/segment-publisher/sqs_publisher.ts:55` when th
 2. **Cause mismatch** — the alarm name says "slow eic query", but Pattern B trigger is batch-processing latency in `sqs_publisher.ts`, not DB query time.
 3. **Duplication** — the same log group already has a proper `Custom/segment-publisher` metric filter (`segment-publisher-slow-processing-filter`) with pattern `Processing took longer than expected` and metric `SegmentPublisher.ExecutionTimeOverThreshold`, plus a companion alarm `segment-publisher long running alam`.
 
+### CloudWatch Logs filter syntax detail
+
+The metric filter pattern `took too long` has **no quotes** in the filter configuration, so CloudWatch Logs treats it as three separate terms (`took`, `too`, `long`) that are ANDed together. CloudWatch matches each term as a **substring**, not as a whole word.
+
+- `"took"` matches `Processing **took** longer than expected`
+- `"too"` matches `Processing t**oo**k longer than expected` (substring of `took`)
+- `"long"` matches `Processing took lo**ng**er than expected` (substring of `longer`)
+
+This means `filter_log_events` with a quoted phrase `"took too long"` returns **zero** matches for the WARN line, while `"took" "too" "long"` returns the match. In manual traces, always test with the separate-term form when the metric filter pattern is unquoted.
+
 ## Known recurrence
 
 - Pattern B: roughly daily around the same campaign window (stepup `UL1T00`). Project `32d8d9d6294d52e7a5427c036b471f91` (product `stepup`) is explicitly noted in code comments as dominating this alert.
@@ -70,7 +80,26 @@ Determine which pattern triggered the current alarm before classifying.
 
 - **2026-05-07 11:50 KST ALARM**: Metric datapoint 1.0 at 11:49:00 UTC, log line `[WARN] Processing took longer than expected: 3025296.53 ms` at 11:49:49.527 UTC. This is Pattern B (batch processing in `sqs_publisher.ts`), not Pattern A (slow EIC query). Scope: proudp/UL1T00 (~879K recipients). The log timestamp (11:49:49) falls inside the CloudWatch metric period 11:49:00–11:49:59, which the alarm evaluated at 11:50:21 UTC.
 - Pattern A was also present earlier the same day (10:50:04 and 10:53:37 UTC for regather, ~128s), but those triggered separate ALARM transitions (10:51 and 10:54). The 11:50 transition is unequivocally Pattern B.
+- **2026-05-08 20:48 KST ALARM**: Metric datapoint 1.0 at 11:48:00 UTC, log line `[WARN] Processing took longer than expected: 2977275.38 ms` at 11:48:56.538 UTC. This is Pattern B, not Pattern A. Scope: stepup/UL1T00 (~880K recipients). The log timestamp (11:48:56) falls inside the metric period 11:48:00–11:48:59, evaluated at 11:49:21 UTC.
+
+## 2026-05-08 session — `segment-publisher long running alam`
+
+Alarm: `segment-publisher long running alam`  
+Metric filter: `Processing took longer than expected` on `/aws/ecs/notifly-services-prod/segment-publisher`  
+Metric: `Custom/segment-publisher` / `SegmentPublisher.ExecutionTimeOverThreshold`
+
+Evidence:
+- Trigger log (2026-05-08 11:48:56.538 UTC): `[WARN] Processing took longer than expected: 2977275.38 ms`
+- Same-stream context: `campaignId: UL1T00, 880029 recipients published. (batch index: 18)`
+- Project mapping from `Project segment extraction query` in the same stream: `project_id: bcf172129f80521a9a3b2d72b58ecb29` → DynamoDB `project` table → product `proudp`
+- Received event payload confirms campaign name: `[만보기] 매일 적립 리마인드`
+- Daily recurrence: exactly 1 match per day for the last 7 days (2026-05-01 through 2026-05-08), durations ~2993–3025 s (~49.8–50.4 min)
+- This is a total-batch-processing WARN, not a slow EIC query and not an error.
+
+Triage: `no_action` if publish completes and no DLQ/ECS failure. The `Custom/segment-publisher` alarm (`segment-publisher long running alam`) is the correct metric for this pattern; the `ConsoleErrors` `slow eic query` metric on the same log group is redundant for Pattern B.
 
 ## Helper / investigation gap
 
 The `check` helper derives Logs Insights filter terms from the alarm/metric name (`slow eic query`) rather than the metric filter pattern (`took too long`). This causes `count_7d` and `count_30d` to return 0 even when actual matches exist. Use the bounded manual trace in `references/ecs-log-manual-trace.md` with the exact metric filter pattern `took too long` when the helper reports empty current trigger contexts for this alarm.
+
+A second gap was observed for `segment-publisher long running alam` (filter pattern `Processing took longer than expected`): the helper reported `logs.skipped: "no stable filter terms inferred"` even though the pattern is a stable literal substring. When this happens, use the exact literal string in a bounded Logs Insights query rather than treating zero helper counts as absence of logs.

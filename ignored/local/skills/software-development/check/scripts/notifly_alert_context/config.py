@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 DEFAULT_AWS_REGION = 'ap-northeast-2'
-DEFAULT_REPO = Path('/home/ubuntu/notifly-event')
+DEFAULT_REPO = Path('/home/ubuntu/.hermes/workspace/notifly-event')
 PROJECT_TABLE_NAME = 'project'
 
 MAX_LOG_QUERY_GROUPS = 4

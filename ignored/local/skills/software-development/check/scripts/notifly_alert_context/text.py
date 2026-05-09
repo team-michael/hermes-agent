@@ -77,6 +77,12 @@ def metric_filter_terms(pattern: str) -> List[str]:
 
     terms: List[str] = []
     terms.extend(re.findall(r'"([^"]{3,120})"', pattern))
+    # Collapse case-insensitive character-class spellings like [Ee][Rr][Rr][Oo][Rr] -> ERROR
+    for seq in re.findall(r'(?:\[[A-Za-z]+\])+', pattern):
+        classes = re.findall(r'\[([A-Za-z]+)\]', seq)
+        word = ''.join(cls[0] for cls in classes)
+        if len(word) >= 3 and word not in terms:
+            terms.append(word)
     for word in re.findall(r'\b[A-Za-z][A-Za-z0-9_.:-]{3,80}\b', pattern):
         if word.lower() in BROAD_FILTER_WORDS:
             continue

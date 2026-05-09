@@ -27,12 +27,14 @@ Typical files:
 - `services/server/web-console/src/models/campaignStatistics.ts`
 - `services/server/api-service/lib/api/v1/statistics/constants.js`
 - `services/server/api-service/lib/api/v1/statistics/services/campaignService.js`
+- `services/server/api-service/lib/api/v1/statistics/services/index.js`
 - `services/server/api-service/lib/api/v1/statistics/utils/aggregateMetricByChannel.js`
 
 Questions to answer:
 - What exact internal metric name is displayed? (`send_success`, `failover_text_message_send_success`, etc.)
 - Does the API map `message_sent` to `send_success` for that channel?
 - Does aggregation use the row's real `channel`, or does it overwrite channel from campaign metadata?
+- In the API v1 statistics path, `services/index.js` may reattach `channel` from `campaigns_${projectId}` / user journey node details before `aggregateMetricByChannel`, so verify whether channel semantics come from raw rows or campaign metadata.
 
 ### 2. Trace raw event writers
 
@@ -116,6 +118,24 @@ If the user asks "Does send_success include failover SMS success?" answer in lay
 2. **Displayed campaign metric semantics**: maybe yes — if the campaign stat path groups by `campaign_id + event_name` and ignores/folds channel, failover text-message `send_success` can appear inside campaign `send_success`.
 3. **Pipeline caveat**: legacy NHN collector uses explicit `failover_text_message_send_success`, while newer `kakao_bizmessage` pipeline uses `send_success` + failover flags.
 
+## User-level push history with missing current device
+
+Use this path when a user has push delivery history but the current user detail screen shows no device information.
+
+1. Resolve the current user row from `users_<projectId>` by `external_user_id`; note `notifly_user_id`, `created_at`, and `updated_at`.
+2. Check `device_<projectId>` both by current `notifly_user_id` and by `external_user_id`; absence here only means the user has no **current** device row.
+3. Query `delivery_result_<projectId>` by the resolved `notifly_user_id`, grouped by `channel,event_name`; inspect recent rows and `extra_data` keys.
+4. If push rows have `extra_data.token`, join that token to current `device_<projectId>.device_token`. If it now belongs to a different `notifly_user_id` with blank `external_user_id`, suspect logout/anonymous transition rather than data loss.
+5. Query `message_events_<projectId>` for the same old `notifly_user_id`. Pair `delivery_result.send_success` with SDK-side events such as `push_delivered`, `push_not_delivered`, and `push_click`; `send_success` is provider/send-request success, not proof of device display.
+6. Use Athena `notifly_event_logs` around the device/user transition window for `session_start`, `set_user_properties`, and `remove_external_user_id` filtered by old/new `notifly_user_id`, `external_user_id`, and `notifly_device_id`.
+7. Code proof for identity movement: `services/lambda/kds-consumer/lib/event_utils.ts` makes `remove_external_user_id` return device data with `force_update_user_id=true`; `services/lambda/kds-consumer/lib/device_utils.ts` then updates `notifly_user_id` and `external_user_id` on conflict for the same `notifly_device_id`.
+
+Common interpretation:
+- Past push rows can remain attached to the old identified user while the same physical device has moved to a new anonymous `notifly_user_id` after `remove_external_user_id`.
+- If `message_events.event_name='push_not_delivered'` and `event_params.reason='missing POST_NOTIFICATIONS permission'`, the UI may show “메시지 발송 성공” from `delivery_result.send_success`, but the actual device-side outcome was push receipt/display failure due to Android notification permission.
+
+See `references/user-push-history-missing-device.md` for a compact SQL/Athena recipe from an investigated case.
+
 ## High-signal files to cite
 
 - `services/server/web-console/src/models/campaignStatistics.ts`
@@ -128,6 +148,9 @@ If the user asks "Does send_success include failover SMS success?" answer in lay
 - `services/lambda/kakao-delivery-result-poller/service/result_service.ts`
 - `services/lambda/kakao-delivery-result-poller/service/failover_service.ts`
 - `services/lambda/delivery-result-webhook-receiver/lib/delivery_result.ts`
+- `services/lambda/kds-consumer/lib/event_utils.ts`
+- `services/lambda/kds-consumer/lib/device_utils.ts`
+- `services/server/web-console/src/components/users/list/PushLogListComponent.tsx`
 
 ## Pitfalls
 

@@ -333,6 +333,12 @@ Do not claim a metric filter is matching unrelated messages unless the helper's 
 
 **Pitfall — broad metric filter catching multiple unrelated causes**: a coarse substring filter (e.g., `took too long`) may match both a benign WARN continuation and a real DB-query latency signal. The alarm name may be accurate for one pattern (e.g., `EventCounterCteManager.extract` slow EIC query) while a second pattern (batch-processing `[WARN]`) is noise. Always read the exact log line and surrounding context to determine which pattern fired and triage separately.
 
+**Pitfall — helper skipping literal substring metric filters**: when `metric_filters[].filter_pattern` is a simple literal string (e.g., `Processing took longer than expected`) and the helper reports `logs.skipped: "no stable filter terms inferred"`, the helper’s term extractor is failing on what should be a stable substring. Do not conclude "no logs exist." Fall back to the bounded manual trace in `references/ecs-log-manual-trace.md` with the exact literal string, or run a direct Logs Insights `filter @message like 'Processing took longer than expected'` query bounded to the alarm window. This commonly affects `segment-publisher long running alam` and similar alarms whose filter pattern is a plain phrase rather than a tokenized keyword list.
+
+**Pitfall — access-log benign substring matching coarse filter**: a metric filter such as `%ERROR|Exception%` may match benign substrings embedded in HTTP access logs, e.g. a query parameter `templateName=service_error` or a path segment containing `error`. The resulting log line is a normal 200/304 request, not an application error. When `logs.current_error_details` is empty and the trigger context shows only access logs, run a follow-up Logs Insights query that filters out known benign patterns (e.g., `service_error`, `error.html`) to confirm whether any real ERROR logs exist in the alarm window. See `references/ecs-console-error-false-positive-patterns.md`.
+
+**Pitfall — Sentry email alert pipeline matching its own payload**: The `ops-email-receiver` Lambda writes parsed Sentry email alerts to a dedicated log group (`/aws/ecs/notifly-services-prod/web-console/sentry`). A broad `%ERROR%` metric filter on that log group matches the S-issue `title` (`"Error"`, `"SyntaxError"`) and `"level":"error"` inside the JSON payload, causing the alarm to fire whenever any Sentry alert arrives. The Lambda itself is healthy; the real errors are `web-console` Next.js issues tracked in Sentry. When the helper returns empty `current_trigger_contexts`, fall back to `aws logs filter-log-events` bounded by the exact metric-datapoint window because Logs Insights lags metric-filter ingestion. See `references/sentry-email-alert-pipeline-false-positives.md` for scope extraction via `productId` and DynamoDB GSI lookup.
+
 ### C. Console error log-level triage / bulk Amazon Q review
 
 Use this when the user asks to review recent Amazon Q / AWS Chatbot `console error` alerts over a time range and decide which logs can be downgraded from `ERROR` to `WARN`/`INFO` in `notifly-event`.
@@ -442,6 +448,8 @@ Whenever you find a `project_id`, fetch from DynamoDB `project` table with a pro
 - mapping status and failure reason when unavailable
 
 Do not fetch full items because the table may contain sensitive sender credentials.
+
+**Sentry alert scoping**: When the alert originates from the `web-console/sentry` log group, the Sentry JSON payload may contain a Notifly product slug in `request.url` or `tags.url` (e.g. `productId=hybiome`). Use the `project` table GSI `product_id-project_id-index` to map this slug to a Notifly `project.id`. See `references/sentry-email-alert-pipeline-false-positives.md` for the exact query and duplicate-item pitfall.
 
 ### Non-existent project edge case (api-service)
 

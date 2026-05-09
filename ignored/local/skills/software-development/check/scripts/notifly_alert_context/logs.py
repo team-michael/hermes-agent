@@ -89,8 +89,17 @@ def build_log_filter_terms(
             primary_terms.extend(extracted)
         else:
             related_terms.extend(extracted)
+    primary_patterns = [
+        (mf.get('filter_pattern') or '') for mf in metric_filters or []
+        if isinstance(mf, dict) and mf.get('match_type') == 'primary_metric'
+    ]
+    has_ci_markers = any(
+        bool(re.search(r'\[[A-Za-z]{2,}\]', pat))
+        for pat in primary_patterns
+    )
+    prefix = 'ci:' if has_ci_markers else 'cs:'
     if primary_terms:
-        return [f'cs:{t}' for t in unique([t for t in primary_terms if len(normalize_ws(t)) >= 3])[:6]]
+        return [f'{prefix}{t}' for t in unique([t for t in primary_terms if len(normalize_ws(t)) >= 3])[:6]]
 
     terms: List[str] = []
     terms.extend(f'ci:{term}' for term in re.findall(r'(?i)(?:error|exception|timeout|crossslot|slow [a-z0-9 _-]{4,80}|processing took longer than expected)', text))
