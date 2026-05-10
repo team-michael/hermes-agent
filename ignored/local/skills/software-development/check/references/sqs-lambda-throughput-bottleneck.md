@@ -89,3 +89,11 @@ Code:
 - Do not recommend code changes when the fix is simply raising `MaximumConcurrency`.
 - Do not search project IDs in Lambda logs for shared-pipeline queues; the messages are intentionally aggregate.
 - Do not omit the EventSourceMapping config from the final answer when it is the dominant root cause.
+
+### Lambda healthy but DLQ still receives messages
+When Lambda `Errors=0`, `Throttles=0`, and `Duration` is normal, yet the DLQ has messages, the failure is **not in the function code** but elsewhere in the Lambda-SQS integration chain. Common explanations:
+
+1. **AWS service-level message-deletion failure** — Lambda finishes successfully but the internal SQS `DeleteMessage` call from the Lambda service to SQS fails transiently (network blip, SQS API error). The message becomes visible again and, with `maxReceiveCount=1`, is sent straight to DLQ on the next visibility cycle.
+2. **`maxReceiveCount=1` with zero retries** — Any transient failure (including #1) immediately DLQs the message because there are no retry attempts. Terraform fix: raise `maxReceiveCount` to 3–5.
+3. **Caught vs uncaught error distinction** — If the Lambda code itself wraps downstream calls (e.g., Kinesis `putRecords`) in `try/catch` and logs, the Lambda invocation succeeds, the SQS message is deleted, and the message **never reaches DLQ**. DLQ presence therefore proves an **uncaught** error or a service-level deletion failure, not a handled code error.
+4. **DLQ message body inspection** — When Lambda logs are sparse (only `START/END/REPORT`), read the actual DLQ messages with `receive_message` to extract `project_id` and `campaign_id` from the JSON payload. Map them through DynamoDB `project` for scope attribution. See `references/sqs-dlq-message-inspection.md`.
