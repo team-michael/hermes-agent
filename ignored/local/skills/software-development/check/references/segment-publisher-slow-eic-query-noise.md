@@ -98,8 +98,24 @@ Evidence:
 
 Triage: `no_action` if publish completes and no DLQ/ECS failure. The `Custom/segment-publisher` alarm (`segment-publisher long running alam`) is the correct metric for this pattern; the `ConsoleErrors` `slow eic query` metric on the same log group is redundant for Pattern B.
 
+## 2026-05-09 session — `segment-publisher long running alam` recurrence
+
+Alarm: `segment-publisher long running alam`  
+Transition: `INSUFFICIENT_DATA -> ALARM` at 2026-05-09 11:50:03 UTC  
+Datapoint: `Sum=1.0` at 2026-05-09 11:45:00 UTC  
+30-day metric history: continues the exact daily 1-dp recurrence (2026-04-09 through 2026-05-09, every day `Sum=1.0`)
+
+Investigation note:
+- The exact trigger log for the 11:45 UTC datapoint was not retrieved in this session because the manual `filter-log-events` window was anchored to the Slack `message_ts` rather than the CloudWatch `StateReasonData.startDate` timestamp. This reproduced the timestamp-derivation pitfall now documented in `SKILL.md`.
+- Alarm history, metric pattern (exactly 1 per day at ~11:48–11:50 UTC), and prior session evidence strongly indicate this is the same Pattern B (batch-processing WARN in `sqs_publisher.ts`).
+- Classification: `no_action`.
+
 ## Helper / investigation gap
 
 The `check` helper derives Logs Insights filter terms from the alarm/metric name (`slow eic query`) rather than the metric filter pattern (`took too long`). This causes `count_7d` and `count_30d` to return 0 even when actual matches exist. Use the bounded manual trace in `references/ecs-log-manual-trace.md` with the exact metric filter pattern `took too long` when the helper reports empty current trigger contexts for this alarm.
 
 A second gap was observed for `segment-publisher long running alam` (filter pattern `Processing took longer than expected`): the helper reported `logs.skipped: "no stable filter terms inferred"` even though the pattern is a stable literal substring. When this happens, use the exact literal string in a bounded Logs Insights query rather than treating zero helper counts as absence of logs.
+
+## Related skill
+
+For deeper project segment extraction, EIC Large Scale conversion workflows, and user-journey session analysis, see `notifly-segment-publisher-alarm-analysis`.

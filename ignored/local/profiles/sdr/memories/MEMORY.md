@@ -11,3 +11,5 @@ For the sdr profile, when accessing Google Workspace documents, load the google-
 For the sdr profile, Google Workspace access uses `gws` with `GOOGLE_WORKSPACE_CLI_CONFIG_DIR=/home/ubuntu/.config/gws`; this env var is saved in `/home/ubuntu/.hermes/profiles/sdr/.env`. Load the google-workspace skill first, then use `gws` for Docs/Drive/Sheets access.
 §
 Notifly pricing context for the sdr profile, including non-public Plus-plan handling and the customer/vendor KakaoTalk/SMS/RCS/080 unit-rate Sheet `고객사 현재 카카오톡/문자 발송 단가 조사` (1gJ32S0s4P-86yDWhnVD0VZCpUs9jJFIbDb7U3boIX_Y), is restored in skill `notifly-sales-enablement` at `references/notifly-pricing-context-2026.md`.
+§
+Notifly GTM engineering v0 prep artifacts for the sdr profile are stored at `/home/ubuntu/.hermes/profiles/sdr/workspace/gtm-copilot/`: prompts, scoring rules, JSON schema, daily queue template, outcome log template, and future cron prompt. The `notifly-sdr-lead-research` skill includes a GTM Copilot / Outbound Engineering v0 section pointing to this workspace.
