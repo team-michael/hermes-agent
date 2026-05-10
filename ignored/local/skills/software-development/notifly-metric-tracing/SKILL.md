@@ -118,6 +118,21 @@ If the user asks "Does send_success include failover SMS success?" answer in lay
 2. **Displayed campaign metric semantics**: maybe yes — if the campaign stat path groups by `campaign_id + event_name` and ignores/folds channel, failover text-message `send_success` can appear inside campaign `send_success`.
 3. **Pipeline caveat**: legacy NHN collector uses explicit `failover_text_message_send_success`, while newer `kakao_bizmessage` pipeline uses `send_success` + failover flags.
 
+## Statistics read slowness / timeout triage
+
+Use this path when a user asks why Notifly metrics/statistics reads are very slow, timeout, or feel unusable.
+
+1. Separate **freshness lag** from **read latency**. Raw events may exist while `campaign_statistics_*` is not yet collected, but large statistics API reads can also be slow even after aggregation.
+2. Identify the path: API v1 aggregate statistics, CSV export, web-console campaign detail, or web-console fallback to raw `delivery_result_*`.
+3. Inspect `api-service/lib/api/v1/statistics/services/index.js`: `aggregateStatistics()` runs campaign statistics and user-journey statistics under a hard `TIMEOUT = 29000`.
+4. Inspect `campaignService.js` and `userJourneyService.js` for computed date filters like `replace(collected_from, '_', ' ')::timestamp + interval '9 hours'`. This can prevent efficient btree-index use and lead to `Parallel Seq Scan` on large per-project tables.
+5. For production-sized tables, prefer `EXPLAIN` over `EXPLAIN ANALYZE` unless explicitly approved; `EXPLAIN ANALYZE` executes the expensive query.
+6. Check per-project table sizes via PostgreSQL catalog estimates and inspect table-specific indexes. Whole-project date-range reads may not match indexes whose leading columns start with `campaign_id` or other dimensions.
+7. Remember CSV has a 2MB limit and timeout/limit messages may be returned as HTTP 200 text, which can look like “export is broken.”
+8. Frame “아예 못 쓴다” carefully: large project + long date range + CSV/export can be effectively unusable, while small/narrow/short queries may still work.
+
+See `references/statistics-read-performance.md` for a compact query-plan checklist, key files, and explanation template.
+
 ## User-level push history with missing current device
 
 Use this path when a user has push delivery history but the current user detail screen shows no device information.

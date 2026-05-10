@@ -131,6 +131,7 @@ Resolve scope in this order:
 6. For DB alerts, Performance Insights SQL statements are scope evidence: `event_intermediate_counts_$project_id`, `users_$project_id`, `delivery_result_$project_id`, `message_events_$project_id`, etc. mean the project is known and must not be reported as unknown.
 7. For campaign/user_journey scope, first check whether the SQL/table family can carry `campaign_id`, `resource_type`, or `user_journey_id`. If yes, run a read-only aggregate around the alarm/PI window to find the top campaign or user-journey contributor. If campaign evidence exists, stop there and do not also report user journey. If not available because the query is parameterized or the table family has no campaign/user_journey column, say that specific reason.
 8. For service-wide, Lambda/ECS, RDS, SQS, Redis, or broad metric-filter alerts with no per-project evidence, state in Korean that the project and campaign/user journey are unknown, and add a Korean service-wide or infra-wide marker when that is the correct scope.
+   - For shared-pipeline SQS queues (e.g., `kinesis-record-dispatcher-queue`) where messages aggregate records from all projects, the Lambda consumer logs typically contain only `START/END/REPORT` lines with no per-project IDs. Do not force a project scope; explicitly say the scope is infra-wide common pipeline delay.
 
 Do not omit scope to stay under the target length. Compress wording first; if still necessary, exceed the target length.
 
@@ -209,6 +210,8 @@ python "${HERMES_HOME:-$HOME/.hermes}/skills/software-development/check/scripts/
 ```
 
 **Pitfall**: alarm names with embedded priority tiers (e.g., `ScheduledBatchDelivery-P2-FCMLatencyP99`) may not be detected by the text parser. Pass `--alarm-name` explicitly in these cases.
+
+**Pitfall — log-group prefix conflation in alarm name detection**: The text parser may prepend `/aws/ecs/.../` log-group prefixes to the auto-detected alarm name. If `describe_alarms` returns no metadata for a detected name but the alarm is known to exist, try the bare alarm name without the log group prefix.
 
 **Pitfall**: When a metric filter pattern (e.g., `took too long`) differs materially from the alarm or metric name (e.g., `segment-publisher-prod slow eic query`), the helper may derive Logs Insights filter terms from the name and report `count_7d: 0` / `count_30d: 0` despite actual matches existing. Do not treat zero counts as absence of logs; fall back to the bounded manual trace using the exact `filter_pattern` string from `metric_filters[].filter_pattern`.
 
@@ -371,6 +374,7 @@ Bad candidates / keep `ERROR`:
 
 Pattern examples:
 - `ApproximateNumberOfMessagesVisible`
+- `ApproximateAgeOfOldestMessage`
 - `*-dlq`
 - retry / maxReceiveCount questions
 
@@ -380,11 +384,25 @@ Flow:
 3. redrive policy and source queue hints
 4. Lambda/event source mapping for the consumer when inferable
 5. Lambda logs for retry phrases
-6. avoid `receive_message` unless explicitly approved because it changes message visibility
-7. separate:
+6. **Lambda throughput bottleneck analysis** (for `ApproximateAgeOfOldestMessage` alarms):
+   - if the consumer is a Lambda, inspect the EventSourceMapping config: `BatchSize`, `MaximumConcurrency`, `VisibilityTimeout`
+   - check Lambda `Duration`, `Errors`, `Throttles` metrics; short duration + zero errors + zero throttles with queue age rising strongly suggests throughput bottleneck, not code failure
+   - compare `NumberOfMessagesSent` vs `NumberOfMessagesDeleted`: near-parity means consumption is keeping up on average; a transient spike causes the age alarm
+   - if `MaximumConcurrency` is low (e.g., 2) and `BatchSize` is small (e.g., 50) while message volume is high, the Lambda is likely the bottleneck even when healthy
+   - see `references/sqs-lambda-throughput-bottleneck.md` for the full recipe
+7. **DLQ-specific checks** (for `-dlq` alarms):
+   - DLQ alarms often have no `ALARM` history because messages are short-lived. Cross-correlate with the companion main-queue alarm (e.g., `ApproximateAgeOfOldestMessage` or throughput alarms) using `describe-alarm-history` or `describe-alarms` on the main queue name.
+   - Read the main queue `RedrivePolicy` and check `maxReceiveCount`. A value of **1** means any transient receive failure immediately DLQs the message with zero retries. This is a common structural root cause.
+   - Check Lambda `Errors` and `Throttles` during the window. If both are zero, the DLQ entries are likely from retry policy, not code bugs.
+   - `receive_message` on the DLQ may return zero messages during investigation because they were already re-driven, purged, or consumed. This does not invalidate the alarm.
+   - see `references/sqs-dlq-alarm-triage.md` for the full recipe
+8. avoid `receive_message` unless explicitly approved because it changes message visibility
+9. separate:
    - retry broken
    - retry working but poison messages still exhausting budget
    - historical DLQ residue only
+   - throughput bottleneck (consumer concurrency too low for traffic spike)
+   - aggressive `maxReceiveCount=1` causing zero-retries-on-failure
 
 ### E. HTTP 4xx / 5xx / API error-rate alarm
 
@@ -428,14 +446,21 @@ Flow:
 3. CloudWatch metric datapoints that breached, from the custom namespace if available
 4. **resolve the real Lambda function name**: alarm prefixes may include priority tiers (e.g., `-P2`) that are not part of the actual function name; see `references/lambda-name-mapping-gaps.md`
 5. Lambda configuration (`MemorySize`, `Timeout`, `LastModified`) from the **actual** function name
-6. `AWS/Lambda` Duration/Errors/Throttles metrics for the real function
-7. log group `/aws/lambda/<actual_name>` for ERROR lines or trigger context
-8. correlate `LastModified` deploy time to the alarm window; recurring alarms that spike right after a deploy are not purely baseline
-9. determine scope: these are usually service-wide unless log payloads carry `project_id`/`campaign_id`; do not force a project scope when none exists
+6. **EventSourceMapping config** when the alarm is tied to an SQS/Kinesis/DynamoDB trigger:
+   - `BatchSize`, `MaximumConcurrency`, `ParallelizationFactor`, `BisectBatchOnFunctionError`
+   - low `MaximumConcurrency` (e.g., 2) with rising queue latency is a strong throughput-bottleneck signal even if Lambda Duration/Errors/Throttles are all healthy
+7. `AWS/Lambda` Duration/Errors/Throttles metrics for the real function
+8. log group `/aws/lambda/<actual_name>` for ERROR lines or trigger context
+9. correlate `LastModified` deploy time to the alarm window; recurring alarms that spike right after a deploy are not purely baseline
+10. determine scope: these are usually service-wide unless log payloads carry `project_id`/`campaign_id`; do not force a project scope when none exists
 
 Pitfall: do not assume the alarm name prefix equals the Lambda function name. When the helper Lambda collector fails with `ResourceNotFoundException`, manually list Lambdas and match by base service name, then verify `LastModified`.
 
-**Distinguishing real bugs from metric-filter noise**: The `ConsoleErrors` namespace is a coarse log substring filter. For Lambda functions, always cross-check the `AWS/Lambda` `Errors` metric. If `Errors > 0`, the alarm reflects a real invocation failure (unhandled exception, timeout, OOM). If `Errors == 0` and `Throttles == 0`, the log line is likely benign text caught by the broad filter. See `references/kds-consumer-event-timestamp-rangeerror.md` for a concrete real-bug example where the `RangeError` in `getValidEventTimestampInMilliseconds` elevates both console ERROR logs and Lambda runtime Errors.
+**Distinguishing real bugs from metric-filter noise**: The `ConsoleErrors` namespace is a coarse log substring filter. For Lambda functions, always cross-check the `AWS/Lambda` `Errors` metric. If `Errors > 0`, the alarm reflects a real invocation failure (unhandled exception, timeout, OOM). If `Errors == 0` and `Throttles == 0`, the log line is likely benign text caught by the broad filter. See `references/kds-consumer-event-timestamp-rangeerror.md` for a concrete real-bug example where the `RangeError` in `getValidEventTimestampInMilliseconds` elevates both console ERROR logs and Lambda runtime Errors. See `references/anomaly-delivery-monitoring-lambda-consoleerrors.md` for the counterpart false-positive pattern where routine inspection logs at ERROR level trip the metric filter while Lambda runtime Errors remain zero.
+
+**Pitfall — empty `current_trigger_contexts` on Lambda ConsoleErrors alarms**: The helper's Logs Insights query for the current alarm window may return zero results despite the metric filter having breached. This is common for Lambda log groups where Logs Insights ingestion lags behind metric-filter evaluation. When `logs.current_trigger_contexts` is empty but `can_answer_root_cause` is `true`, do not assume no logs exist. Run a bounded `aws logs filter-log-events` on `/aws/lambda/<actual_function_name>` using the exact metric datapoint timestamp ±5 min as the time window. Use the literal `filterPattern` from the metric filter configuration or a `like` query with the known ERROR substring. This fallback is read-only and deterministic; it resolves scope and trigger evidence that Logs Insights may miss.
+
+**Pitfall — using Slack message time instead of alarm datapoint time for log searches**: When the helper fails and manual `filter-log-events` is needed, anchor the search window precisely to the CloudWatch alarm's `StateReasonData.startDate` or `recentDatapoints[].timestamp` (from `describe-alarms`), converted exactly to epoch milliseconds. Slack `message_ts` and conversation start times can lag the actual alarm transition by minutes or hours; using them as the window anchor searches the wrong time range and may return zero matches even when the triggering logs exist.
 
 **Percentile metric pitfall**: `get-metric-statistics` does not accept `p99` or any percentile statistic. The valid set is `SampleCount | Average | Sum | Minimum | Maximum`. For percentile alarms such as `*-FCMLatencyP99`, use `Maximum` as a conservative proxy, or switch to `get-metric-data` with `ExtendedStatistics=['p99']` if the exact value is required. See `references/scheduled-batch-delivery-fcm-latency.md` for a concrete FCM latency triage recipe.
 

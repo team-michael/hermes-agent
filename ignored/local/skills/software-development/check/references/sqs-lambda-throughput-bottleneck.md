@@ -1,0 +1,91 @@
+# SQS Lambda Throughput Bottleneck Analysis
+
+When an SQS `ApproximateAgeOfOldestMessage` alarm fires and the consumer is a Lambda,
+the root cause is often a throughput bottleneck rather than a code failure.
+This reference describes how to distinguish bottleneck from bug and where to fix it.
+
+## When to use
+
+- Alarm metric is `AWS/SQS ApproximateAgeOfOldestMessage` (or `ApproximateNumberOfMessagesVisible`).
+- Consumer is a Lambda function (detectable via `list_event_source_mappings`).
+- Lambda `Errors` and `Throttles` are zero (or near-zero) during the alarm window.
+- Lambda `Duration` is short (e.g., < 100 ms) and stable.
+- `NumberOfMessagesDeleted` ≈ `NumberOfMessagesSent` over longer windows, but a transient spike caused the age to rise.
+
+## Analysis flow
+
+1. **Identify the consumer Lambda**
+   ```bash
+   aws lambda list-event-source-mappings --region ap-northeast-2 --query 'EventSourceMappings[?contains(EventSourceArn, `kinesis-record-dispatcher-queue`)]'
+   ```
+   Record `FunctionArn`, `BatchSize`, `MaximumConcurrency`, `State`.
+
+2. **Inspect Lambda health**
+   ```bash
+   aws cloudwatch get-metric-statistics --namespace AWS/Lambda --metric-name Errors --dimensions Name=FunctionName,Value=kinesis-record-dispatcher ...
+   aws cloudwatch get-metric-statistics --namespace AWS/Lambda --metric-name Throttles --dimensions Name=FunctionName,Value=kinesis-record-dispatcher ...
+   aws cloudwatch get-metric-statistics --namespace AWS/Lambda --metric-name Duration --dimensions Name=FunctionName,Value=kinesis-record-dispatcher ...
+   ```
+   If all three are healthy, suspect throughput bottleneck.
+
+3. **Compare send vs delete**
+   ```bash
+   aws cloudwatch get-metric-statistics --namespace AWS/SQS --metric-name NumberOfMessagesSent --dimensions Name=QueueName,Value=kinesis-record-dispatcher-queue --start-time ... --end-time ... --period 60 --statistics Sum
+   aws cloudwatch get-metric-statistics --namespace AWS/SQS --metric-name NumberOfMessagesDeleted --dimensions Name=QueueName,Value=kinesis-record-dispatcher-queue --start-time ... --end-time ... --period 60 --statistics Sum
+   ```
+   Near-parity over 5–10 minutes means the consumer is not stuck; it simply cannot absorb the peak.
+
+4. **Inspect EventSourceMapping config**
+   ```bash
+   aws lambda get-event-source-mapping --uuid <uuid> --region ap-northeast-2
+   ```
+   Key fields:
+   - `BatchSize`: how many messages per invocation
+   - `MaximumConcurrency`: hard limit on concurrent invocations (absent = 1000, but many Notifly Lambdas are set to 2)
+   - `VisibilityTimeout`: must be >= 6 × Lambda `Timeout`
+   - `ScalingConfig.MaximumConcurrency`: same as above
+
+5. **Calculate throughput ceiling**
+   ```
+   max_messages_per_second = MaximumConcurrency × BatchSize / (Duration_seconds + overhead)
+   ```
+   Example: `MaximumConcurrency=2`, `BatchSize=50`, `Duration=0.07s`
+   → ceiling ≈ 1,400 messages/second. If the producer sends 2,000 msg/s for a minute, queue age will spike.
+
+6. **Check DLQ**
+   ```bash
+   aws sqs get-queue-attributes --queue-url <dlq-url> --attribute-names ApproximateNumberOfMessages --region ap-northeast-2
+   ```
+   DLQ > 0 implies poison messages or retry exhaustion, not pure throughput.
+
+7. **Map scope**
+   - SQS messages in a shared pipeline (e.g., `kinesis-record-dispatcher-queue`) aggregate records from **all** projects.
+   - Lambda logs (`/aws/lambda/kinesis-record-dispatcher`) usually contain only `START/END/REPORT` lines, not per-project IDs.
+   - Do not force a project/campaign scope when the pipeline is intentionally project-agnostic.
+   - State explicitly in Korean: "프로젝트/캠페인/유저여정 특정 불가 — 인프라 공통 파이프라인 지연".
+
+## Representative case: `kinesis-record-dispatcher-queue`
+
+- Producer: `event-proxy` ECS service writes to Kinesis (`notifly-event-stream`), then records are enqueued to SQS.
+- Consumer: `kinesis-record-dispatcher` Lambda (node22.x, 1024 MB, 300 s timeout).
+- EventSourceMapping: `BatchSize=50`, `MaximumConcurrency=2`.
+- Symptoms: `ApproximateAgeOfOldestMessage` 22–55 s, `Errors=0`, `Throttles=0`, `Duration=60–80 ms`.
+- Root cause: peak event volume temporarily exceeds `2 × 50 / 0.07 ≈ 1,400` msg/s capacity.
+- Impact: all Notifly projects using the shared event stream experience delivery delay (no data loss, DLQ=0).
+
+## Fix targets
+
+Terraform:
+- `infra/terraform/prod/ap-northeast-2/sqs/queues.tf` — alarm threshold or evaluation period
+- Lambda module / `aws_lambda_event_source_mapping` resource — `maximum_concurrency`, `batch_size`
+
+Code:
+- Lambda batch processing efficiency (reduce per-record latency)
+- Producer batching (reduce message count)
+
+## Pitfalls
+
+- Do not assume `ApproximateAgeOfOldestMessage` = Lambda failure. Zero errors + short duration = bottleneck.
+- Do not recommend code changes when the fix is simply raising `MaximumConcurrency`.
+- Do not search project IDs in Lambda logs for shared-pipeline queues; the messages are intentionally aggregate.
+- Do not omit the EventSourceMapping config from the final answer when it is the dominant root cause.

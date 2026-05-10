@@ -8,7 +8,7 @@ Notifly docs live site `docs.notifly.tech` is Mintlify-backed from `notifly-tech
 §
 For Slack image/attachment questions, do not infer from text-only thread context that media is inaccessible; when channel_id/thread_ts are available, retrieve the Slack thread/root via Web API, inspect `messages[0].files[]`/attachments, download authorized images, and use vision analysis.
 §
-Hermes local patches use local `main` pushed to `team-michael/main`; live profile memories symlink under `/home/ubuntu/.hermes/hermes-agent/ignored/local/profiles/<profile>/memories`.
+CloudCheckr AU: for customer 2000841/account a4dcbb7d-0bb4-4f2c-a6c6-51a80586d728 use skill `cloudcheckr-service-cost-api-fetch`; user permits ending other sessions on MaxSessionsNotice.
 §
 Git commit identity used in prior Notifly agent work: `Andrej Karpathy <team@greyboxhq.com>`.
 §
@@ -16,4 +16,4 @@ For `team-michael/cloudflare-containers` Access-protected endpoints, Cloudflare 
 §
 For remote/container operations from Slack, Hermes terminal acts on local Hermes runtime unless explicit SSH/API target is established and verified; before filesystem/service mutation, verify target identity with hostname/whoami/pwd.
 §
-Notifly ECS SC: live config may be under `deployments[].serviceConnectConfiguration`; top-level `serviceConnectConfiguration` can be null even when SC is enabled.
+Notifly ECS SC: check `deployments[].serviceConnectConfiguration` (top-level may be null). Slack #engineering 2026-01-09: SC imposes 15s request timeout.

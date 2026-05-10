@@ -87,7 +87,12 @@ Recipe:
    Verify with `xdotool getwindowname $WID` — title should reference the blocked URL.
 4. Post a handoff message to the governing Slack location (if the cron job has a
    pinned `thread_ts`, post to that thread; otherwise to the channel it delivers to)
-   using the profile's bot token. Proven legible shape:
+   using the profile's bot token. A ready-to-run template lives in the
+   `tiktok-viral-research-via-google` skill at `templates/post_vnc_handoff.py` —
+   copy it to your task's tmp dir, edit the `BLOCK_TYPE` / `BLOCK_URL` /
+   `DRIVER_PID` / `COVERAGE_LINE` fields, run with the clix-growth venv. It
+   publishes the post via direct `chat.postMessage` (not `send_message`) so the
+   text is not re-transformed by the Slack gateway. Proven legible shape:
    ```
    :octagonal_sign: *VNC 수동 솔빙 요청*
    *차단 종류*: <google-sorry | tiktok-captcha | turnstile | recaptcha | other>
@@ -298,7 +303,24 @@ xdotool search --onlyvisible --name 'Google Chrome' windowactivate %@ windowrais
 
 If a Selenium/webdriver-controlled Chrome is already running against the `Tarantino` user-data-dir (for example, because `p2_weekly_report.py` halted on CAPTCHA and left chromedriver alive), launching a second `google-chrome --user-data-dir=.../Tarantino` **silently exits** — Chrome detects the existing instance's `SingletonLock` and bails without an error message. Symptom: `ps -eo pid,comm | grep chrome` still shows the old `chromedriver` + children with `--test-type=webdriver` and no new window appears.
 
-Do this instead:
+**Cron-specific common case (verified 2026-05-09)**: The previous cron tick's probe/scrape is still parked. When §4's "driver INTENTIONALLY not quit; parking 24h" policy triggers, the Python process sits in `time.sleep(86400)` with chromedriver + Chrome attached. The next cron tick (~24h later) finds them still alive. Check for this first:
+
+```bash
+# Find a parked scrape process from a previous tick
+ps -eo pid,etime,stat,comm,args | grep -E 'scrape_google|probe.*google' | grep -v grep
+# ETIME > 20h + STAT=S means it's parked. Kill the Python parent; chromedriver
+# becomes a zombie (Z STAT) and dies when you reap it:
+kill -9 <python_pid>
+# Then clean up any orphans:
+kill -9 $(ps -eo pid,comm,args | grep -E 'chrome|chromedriver' | grep -v grep | awk '{print $1}')
+rm -f /home/ubuntu/.hermes/profiles/tarantino/Tarantino/SingletonLock \
+      /home/ubuntu/.hermes/profiles/tarantino/Tarantino/SingletonCookie \
+      /home/ubuntu/.hermes/profiles/tarantino/Tarantino/SingletonSocket
+```
+
+After manual solve in VNC, if the user reports "풀었음" the cookies are persisted even if the parked probe is still running — you can kill the parked probe and `create_driver()` on the next tick without re-solving. So the kill-then-spawn sequence does NOT lose session state.
+
+Do this instead of trying to attach to the existing window:
 
 ```bash
 # 1. Enumerate existing Chrome windows on the VNC display

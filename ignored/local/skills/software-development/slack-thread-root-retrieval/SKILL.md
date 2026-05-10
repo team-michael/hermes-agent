@@ -127,6 +127,7 @@ Interpret response:
 
 ## Practical notes
 
+- For long-range Slack support/CS Q&A dataset extraction, use the same `conversations.history` + `conversations.replies` pattern but make the export resumable, persist raw JSONL, categorize threads into coarse topic CSVs, and validate category row totals before packaging. See `references/bulk-channel-qa-dataset-export.md`.
 - `app_mention` only gives messages pertinent to the app; do not rely on it for full thread context.
 - For private channels, “scope exists” is not enough; membership is usually the real blocker.
 - If the agent runtime cannot directly call Slack Web API, enrich thread context in the bridge/backend before invoking the agent.
