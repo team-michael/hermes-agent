@@ -211,6 +211,8 @@ python "${HERMES_HOME:-$HOME/.hermes}/skills/software-development/check/scripts/
 
 **Pitfall**: alarm names with embedded priority tiers (e.g., `ScheduledBatchDelivery-P2-FCMLatencyP99`) may not be detected by the text parser. Pass `--alarm-name` explicitly in these cases.
 
+**Pitfall — DLQ creation alarm names**: alarm names matching the literal pattern `<queue-name>-dlq has been created` are not auto-detected because `has been created` is prose, not a metric. Pass `--alarm-name` explicitly, e.g. `--alarm-name 'kinesis-record-dispatcher-queue-dlq has been created'`.
+
 **Pitfall — log-group prefix conflation in alarm name detection**: The text parser may prepend `/aws/ecs/.../` log-group prefixes to the auto-detected alarm name. If `describe_alarms` returns no metadata for a detected name but the alarm is known to exist, try the bare alarm name without the log group prefix.
 
 **Pitfall**: When a metric filter pattern (e.g., `took too long`) differs materially from the alarm or metric name (e.g., `segment-publisher-prod slow eic query`), the helper may derive Logs Insights filter terms from the name and report `count_7d: 0` / `count_30d: 0` despite actual matches existing. Do not treat zero counts as absence of logs; fall back to the bounded manual trace using the exact `filter_pattern` string from `metric_filters[].filter_pattern`.
@@ -395,6 +397,8 @@ Flow:
    - Read the main queue `RedrivePolicy` and check `maxReceiveCount`. A value of **1** means any transient receive failure immediately DLQs the message with zero retries. This is a common structural root cause.
    - Check Lambda `Errors` and `Throttles` during the window. If both are zero, the DLQ entries are likely from retry policy, not code bugs.
    - `receive_message` on the DLQ may return zero messages during investigation because they were already re-driven, purged, or consumed. This does not invalidate the alarm.
+   - **Inspect DLQ message bodies** with `receive_message` (read-only, do not delete) to extract `project_id`/`campaign_id` from the JSON payload. Map via DynamoDB `project` for scope attribution even when Lambda logs are sparse. See `references/sqs-dlq-message-inspection.md`.
+   - **Lambda-healthy + DLQ-has-messages paradox**: When Lambda `Errors=0`, `Throttles=0`, and `Duration` is normal, yet DLQ has messages, the failure is likely an AWS service-level message-deletion failure (Lambda succeeded but the internal SQS `DeleteMessage` call failed), or `maxReceiveCount=1` causing immediate DLQ routing on any transient issue. Do not force a code-bug root cause when metrics show healthy Lambda. There is **no customer-visible log source** for Lambda-SQS deletion failures; see `references/sqs-dlq-alarm-triage.md` § "Deep analysis: Lambda healthy but DLQ still receives messages" for evidence limits and the full triage recipe.
    - see `references/sqs-dlq-alarm-triage.md` for the full recipe
 8. avoid `receive_message` unless explicitly approved because it changes message visibility
 9. separate:
