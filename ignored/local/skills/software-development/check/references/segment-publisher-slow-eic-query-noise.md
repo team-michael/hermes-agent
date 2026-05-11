@@ -91,8 +91,7 @@ Metric: `Custom/segment-publisher` / `SegmentPublisher.ExecutionTimeOverThreshol
 Evidence:
 - Trigger log (2026-05-08 11:48:56.538 UTC): `[WARN] Processing took longer than expected: 2977275.38 ms`
 - Same-stream context: `campaignId: UL1T00, 880029 recipients published. (batch index: 18)`
-- Project mapping from `Project segment extraction query` in the same stream: `project_id: bcf172129f80521a9a3b2d72b58ecb29` → DynamoDB `project` table → product `proudp`
-- Received event payload confirms campaign name: `[만보기] 매일 적립 리마인드`
+- Received event payload confirms schedule type `user_journey` with name `[만보기] 매일 적립 리마인드`. Project mapping from the same stream: `project_id: 32d8d9d6294d52e7a5427c036b471f91` → DynamoDB `project` table → product `stepup`.
 - Daily recurrence: exactly 1 match per day for the last 7 days (2026-05-01 through 2026-05-08), durations ~2993–3025 s (~49.8–50.4 min)
 - This is a total-batch-processing WARN, not a slow EIC query and not an error.
 
@@ -109,6 +108,43 @@ Investigation note:
 - The exact trigger log for the 11:45 UTC datapoint was not retrieved in this session because the manual `filter-log-events` window was anchored to the Slack `message_ts` rather than the CloudWatch `StateReasonData.startDate` timestamp. This reproduced the timestamp-derivation pitfall now documented in `SKILL.md`.
 - Alarm history, metric pattern (exactly 1 per day at ~11:48–11:50 UTC), and prior session evidence strongly indicate this is the same Pattern B (batch-processing WARN in `sqs_publisher.ts`).
 - Classification: `no_action`.
+
+## 2026-05-10 session — `segment-publisher long running alam` recurrence
+
+Alarm: `segment-publisher long running alam`  
+Transition: `INSUFFICIENT_DATA -> ALARM` at 2026-05-10 11:52:03 UTC  
+Datapoint: `Sum=1.0` at 2026-05-10 11:47:00 UTC (metric period 300s)
+
+Evidence:
+- Trigger log (2026-05-10 11:51:53.215 UTC): `[WARN] Processing took longer than expected: 3150574.29 ms`
+- Same-stream context: 18 batches, final count `campaignId: UL1T00, 881595 recipients published.`
+- Received event payload (2026-05-10 11:39:22 UTC) shows `schedule_type: "user_journey"`, id `UL1T00`, name `[만보기] 매일 적립 리마인드`.
+- Project explicit in stream: `project_id: 32d8d9d6294d52e7a5427c036b471f91` → DynamoDB `project` → product `stepup`.
+- Daily recurrence continues: 30d=30, 7d=7, 1d=1 exactly at ~11:47–11:52 UTC each day. Durations ~2977–3150 s (~49.6–52.5 min).
+- This is the exact same Pattern B as 2026-05-08 and 2026-05-09; the WARN source is `sqs_publisher.ts:55` and total processing time is dominated by large-scale user-journey recipient publishing.
+
+Triage: `no_action`.
+
+## 2026-05-10 session — `segment-publisher slow eic query` ALARM
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`  
+Transition: `OK -> ALARM` at 2026-05-10 11:52:21 UTC  
+Datapoint: `Sum=1.0` at 2026-05-10 11:45:00 UTC  
+30-day alarm history: 3 ALARM transitions total (2026-05-08, 2026-05-09, 2026-05-10) — exactly one per day.
+
+Evidence:
+- Trigger log (2026-05-10 11:38:33 UTC): `[WARN] Processing took longer than expected: 3150574.29 ms`
+- Same-stream context: `campaignId: UL1T00, 881595 recipients published. (batch index: 18)`
+- Project mapping from earlier payload in the same stream: `project_id: 32d8d9d6294d52e7a5427c036b471f91` → DynamoDB `project` table → product `stepup`
+- Campaign name confirmed: `[만보기] 매일 적립 리마인드`
+- This is unequivocally Pattern B (batch-processing WARN in `sqs_publisher.ts`), not Pattern A (slow EIC query).
+
+**Investigation note — stream tail first:**
+- `filter-log_events` with both three-term and quoted patterns returned zero matches in the expected time window because the segment-publisher Fargate task creates short-lived log streams that flush and become inactive quickly.
+- The actual trigger was found by calling `get_log_events` with `startFromHead=False` and a small `limit` on recently active streams from `describe_log_streams`, then scanning the tail events manually.
+- See `references/ecs-log-manual-trace.md` § "Stream-first tail check for short-lived ECS tasks" for the exact fallback.
+
+Classification: `no_action` (publish completed, no DLQ/ECS failure, no customer impact).
 
 ## Helper / investigation gap
 

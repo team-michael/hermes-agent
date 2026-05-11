@@ -42,6 +42,40 @@ recover the current trigger context.
 
 5. **Sanitize and scope** — extract campaign IDs, recipient counts, batch indices, project IDs, error signatures. Do not paste raw full payloads.
 
+## Stream-first tail check for short-lived ECS tasks
+
+Some ECS services (e.g., `segment-publisher`) run as short-lived Fargate tasks triggered by SQS. They create a new log stream per task, write all events quickly, and the stream becomes inactive within minutes. `filter-log-events` with a time window may return **zero** matches even when the triggering log exists, because:
+
+- The stream was created and finished inside the window but is not indexed for `filter-log-events` fast enough.
+- Task startup/shutdown flushes leave the stream in a state where `filter-log-events` skips it.
+
+When this happens, use a **stream-first tail check** instead:
+
+1. **List recent streams** (not events):
+   ```bash
+   aws logs describe-log-streams \
+     --log-group-name '/aws/ecs/notifly-services-prod/<service>' \
+     --order-by LastEventTime --descending --limit 20
+   ```
+
+2. **Inspect the tail of each candidate stream** with a small limit:
+   ```bash
+   aws logs get-log-events \
+     --log-group-name '/aws/ecs/notifly-services-prod/<service>' \
+     --log-stream-name '<stream>' \
+     --start-from-head false --limit 10
+   ```
+   Scan the returned messages for the metric filter pattern or campaign/project IDs.
+
+3. **Expand the matching stream** once you identify the right one:
+   ```bash
+   aws logs get-log-events \
+     --log-group-name '/aws/ecs/notifly-services-prod/<service>' \
+     --log-stream-name '<stream>' \
+     --start-from-head false --limit 100
+   ```
+   This keeps the search bounded to exactly one stream.
+
 ## Example outcome
 
 From a `segment-publisher` trace around a `Processing took longer than expected` alarm:
@@ -62,3 +96,4 @@ This gives:
 - Do not run unbounded `filter-log-events` across the entire log group without a stream or time restriction.
 - Do not dump more than ~20 surrounding lines; keep evidence compact.
 - If the log stream has high volume, narrow the time window to ±5 min around the metric datapoint breach.
+- **For short-lived ECS tasks**, prefer `get_log_events` on recent streams over `filter-log_events` when the latter returns zero results despite an active alarm.
