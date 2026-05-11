@@ -350,13 +350,32 @@ DISPLAY=:1 XAUTHORITY=/home/ubuntu/.Xauthority bash -c "
 "
 ```
 
-If you do need a fresh Chrome (automation is done, next run hasn't started, user wants to log into something manually), kill the webdriver tree first:
+If you do need a fresh Chrome (automation is done, next run hasn't started, user wants to log into something manually), kill the webdriver tree first.
+
+**PITFALL — `pkill -f 'chrome.*--user-data-dir=...'` kills YOUR terminal session** (verified 2026-05-11). `pkill -9 -f` matches against its own `bash -c` argv because the full-args pattern contains the kill pattern itself. Symptom: the `pkill` command exits with code -9 (SIGKILL) and every subsequent command in the same terminal call is silently dropped. Do NOT use the broad `-f` form on `chrome`/`chromedriver`. Enumerate PIDs first, then kill explicitly — the enumeration step filters out your own shell:
 
 ```bash
-pkill -f 'chromedriver'
-pkill -f 'chrome.*--user-data-dir=/home/ubuntu/.hermes/profiles/tarantino/Tarantino'
-sleep 2
+# SAFE — enumerate-then-kill, awk+grep runs in a separate process tree
+for pid in $(ps -eo pid,args | \
+  grep -E 'chrome.*--user-data-dir=/home/ubuntu/.hermes/profiles/tarantino/Tarantino|chrome_crashpad|chromedriver' | \
+  grep -v grep | awk '{print $1}'); do
+  kill -9 $pid 2>/dev/null
+done
+sleep 3
+# Verify empty
+ps -eo pid,args | grep -E 'chrome|chromedriver' | grep -v grep | wc -l   # expect 0
+
 # Optional, only if Chrome refuses to start: rm -f /home/ubuntu/.hermes/profiles/tarantino/Tarantino/SingletonLock
+rm -f /home/ubuntu/.hermes/profiles/tarantino/Tarantino/SingletonLock \
+      /home/ubuntu/.hermes/profiles/tarantino/Tarantino/SingletonCookie \
+      /home/ubuntu/.hermes/profiles/tarantino/Tarantino/SingletonSocket
+```
+
+**DO NOT USE** — the obvious-looking form self-terminates:
+```bash
+# ❌ Kills the terminal tool's own bash -c wrapper; exit code -9, silent drop.
+pkill -9 -f 'chromedriver'
+pkill -9 -f 'chrome.*--user-data-dir=/home/ubuntu/.hermes/profiles/tarantino/Tarantino'
 ```
 
 Cookies and localStorage from the manual interaction persist in the profile and are picked up by the next automation run against the same `user-data-dir`.
