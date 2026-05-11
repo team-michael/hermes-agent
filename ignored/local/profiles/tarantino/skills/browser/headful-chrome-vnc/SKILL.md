@@ -305,6 +305,13 @@ If a Selenium/webdriver-controlled Chrome is already running against the `Tarant
 
 **Cron-specific common case (verified 2026-05-09)**: The previous cron tick's probe/scrape is still parked. When §4's "driver INTENTIONALLY not quit; parking 24h" policy triggers, the Python process sits in `time.sleep(86400)` with chromedriver + Chrome attached. The next cron tick (~24h later) finds them still alive. Check for this first:
 
+**Sibling failure mode — zombie chromedriver from completed pipeline stage (verified 2026-05-10)**: A DOM-verify / ranker / post-processing script from the *previous* pipeline run can exit normally but leave its chromedriver child as a defunct process (`STAT=Z`, `comm=[chromedriver] <defunct>`). The Python parent is gone but the zombie still holds the profile's SingletonLock via its parent reaping. Symptom on next cron tick:
+```
+ubuntu  223780  850  0  01:08 ?  00:00:00 /home/ubuntu/.hermes/venvs/clix-growth/bin/python dom_verify_run.py
+ubuntu  223782 223780 0 01:08 ?  00:00:00 [chromedriver] <defunct>
+```
+(ETIME is ~22h, STAT=Z on the child.) Kill the Python parent with `kill -9` — it reaps the zombie — then proceed. Do NOT skip this check; `create_driver()` will hang or fail cryptically against a locked profile.
+
 ```bash
 # Find a parked scrape process from a previous tick
 ps -eo pid,etime,stat,comm,args | grep -E 'scrape_google|probe.*google' | grep -v grep
