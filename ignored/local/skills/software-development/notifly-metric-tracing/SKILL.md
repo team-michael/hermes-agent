@@ -118,6 +118,23 @@ If the user asks "Does send_success include failover SMS success?" answer in lay
 2. **Displayed campaign metric semantics**: maybe yes — if the campaign stat path groups by `campaign_id + event_name` and ignores/folds channel, failover text-message `send_success` can appear inside campaign `send_success`.
 3. **Pipeline caveat**: legacy NHN collector uses explicit `failover_text_message_send_success`, while newer `kakao_bizmessage` pipeline uses `send_success` + failover flags.
 
+## Campaign statistics date-boundary / one-day shift triage
+
+Use this path when campaign stats / 발송 현황 shows dates shifted by one day, a selected period's previous day appears as `0`, or the same calendar date has different counts depending on selected start/end date.
+
+1. Prioritize thread detail over the parent summary if the user says the parent is not reproducible. Look for concrete symptoms like "DB 수와 일치하는데 하루씩 뒤로 밀림" or "설정한 기간 -1 날짜가 0으로 표기".
+2. Trace UI → API → DB range conversion:
+   - `services/server/web-console/src/components/stats/CampaignStats.tsx` sends `startDate.toISOString()` / `endDate.toISOString()`.
+   - `services/server/web-console/src/pages/api/projects/[projectId]/campaigns/[campaignId]/stats/index.ts` parses query dates.
+   - `services/server/web-console/src/services/CampaignStatisticService.ts` converts to `yyyy-MM-dd_HH` UTC bucket strings and also builds display zero-fill date ranges.
+   - `services/server/web-console/src/repositories/CampaignStatisticRepository.ts` filters `collected_from >= from` and `collected_to <= to`.
+3. Remember KST midnight datepicker values serialize as prior-day `15:00Z`; e.g. 5/7 KST 00:00 becomes `5/6T15:00Z`. This can be correct for DB buckets but wrong for display zero-fill if mixed with raw `Date` intervals.
+4. Treat `collected_from='YYYY-MM-DD_15'` as the next KST calendar day at 00:00 before calling it a one-day data shift.
+5. Compare web-console behavior with `services/server/api-service/lib/api/campaigns/stats.js`, which has explicit KST-midnight end-date adjustment when building display date ranges.
+6. Recommended fix shape: normalize the selected period once as a KST day range, then derive both DB UTC bucket bounds and display zero-fill labels from that same range.
+
+See `references/campaign-statistics-kst-utc-date-boundary.md` for reproduction commands, exact files, and regression-test ideas.
+
 ## Statistics read slowness / timeout triage
 
 Use this path when a user asks why Notifly metrics/statistics reads are very slow, timeout, or feel unusable.

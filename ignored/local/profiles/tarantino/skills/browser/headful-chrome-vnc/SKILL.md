@@ -117,6 +117,22 @@ Cron jobs operating under this contract should declare it by listing
 conversation. Auto-retry, SERP-provider fallback, and silent skipping are all
 forbidden for blocks under this contract.
 
+### Two-stage captcha on recovery runs (Google + TikTok are separate cookie layers)
+
+Observed 2026-05-11: a clean VNC solve on Google `/sorry/` does NOT seed TikTok cookies. When the recovery pipeline moves from SERP scraping to TikTok DOM verification, expect a **second captcha handoff** on the first TikTok page load if it's been more than ~a day since the last TikTok session in this profile.
+
+Detection signature for Stage 2:
+- `dom_verify*.out` logs `CAPTCHA at @<handle>: <url>` on video #1 (not a random mid-run failure)
+- Chrome window title still shows the video URL (rotation puzzle is a modal overlay, doesn't rewrite title)
+- `#captcha-verify-container-main-page` present in DOM
+
+Handling:
+- Treat Stage 2 as continuation of the same incident, not a new failure. In interactive Slack contexts, post the Stage-2 request as a **reply in the same thread** as the Stage-1 handoff, not a new top-level ops post. In cron/webhook contexts, a fresh top-level handoff may be appropriate because the user needs a push notification.
+- Promote the TikTok tab to VNC viewport with the same xdotool recipe as Stage 1.
+- After human solves, remaining DOM-verify candidates pass without further captcha (TikTok cookie stays warm for same-day runs).
+
+Multi-day gap → multi-stage handoff risk. If the cron job hasn't done a TikTok DOM verify in 3+ days, plan for Stage 2 even if Stage 1 went clean.
+
 ### Rapid probe script
 
 Use `scripts/probe_google_block.py` (bundled with this skill) for a fast isolated

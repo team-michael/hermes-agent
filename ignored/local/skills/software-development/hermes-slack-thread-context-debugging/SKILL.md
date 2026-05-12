@@ -215,6 +215,28 @@ This makes inbound parsing consistent for human messages, app messages, and thre
 
 ## Runtime behavior to account for during verification
 
+### `/mute` and `/unmute` are profile-local in multi-profile threads
+
+When a Slack thread contains more than one Hermes profile/bot, do not treat mute state as global. Each profile has its own `HERMES_HOME` and its own `<profile>/slack_muted_threads.json`, keyed by `<channel>:<thread_ts>`. A `/mute` or `/unmute` addressed to one bot/profile does not automatically update the other profile.
+
+Debug this profile-by-profile:
+
+1. identify the bot user ID mentioned by the command;
+2. inspect every relevant profile's `slack_muted_threads.json` for the same `<channel>:<thread_ts>` key;
+3. inspect that profile's gateway logs for `inbound message ... '<@BOT_ID> /mute'` or `/unmute` and command response sends;
+4. inspect `sessions/sessions.json` for the Slack session key (`agent:main:slack:group:<channel>:<thread_ts>`) and bound `session_id` in each profile;
+5. remember that shared/group session transcripts may persist command turns with a `[user_name]` prefix, so the saved transcript can look like an ordinary message even if the gateway parsed it as a command.
+
+Pitfall: in muted threads, do not assume any text that looks like `<@BOT_ID> /unmute` should wake the current profile. The Slack adapter's mute gate must verify that the inline command targets the current bot/profile; otherwise `<@other_bot> /unmute` can bypass the muted-thread filter, then be processed as ordinary text because an existing session makes the thread eligible. This creates the symptom “mute broke / Hermes came back alive.”
+
+Recommended fix shape for multi-profile mute bugs:
+
+- keep profile-local state explicit in UX copy (`Muted this Hermes profile in this thread`), or implement a shared/fan-out mute registry if users expect global thread mute;
+- when `is_thread_muted(channel_id, thread_ts)` is true, allow only plain `/unmute` in trusted command contexts or `<@this_bot> /unmute`; block `<@other_bot> /unmute`, `<@other_bot> /mute`, and normal replies;
+- consider ignoring non-target `<@other_bot> /mute|/unmute` even when `has_session` would normally make the thread auto-trigger.
+
+Session-specific reference: `references/slack-mute-unmute-multiple-profiles.md`.
+
 ### Existing thread sessions can mask the fix
 
 Even after patching and restarting the gateway, the same Slack thread may still appear unchanged if Hermes already has an active/restored session for that thread.

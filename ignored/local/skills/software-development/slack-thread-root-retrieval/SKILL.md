@@ -134,6 +134,8 @@ Interpret response:
 - When validating accessible channels, fully paginate `conversations.list`; private channels can be missed if you stop early.
 - In the Andrej Hermes profile, Slack Web API access may require explicitly loading `SLACK_BOT_TOKEN` from `/home/ubuntu/.hermes/profiles/andrej/.env` inside a one-off script; terminal subprocesses may strip messaging secrets from ambient `os.environ`. Never print the token.
 - To inspect a permalink, parse `/archives/{channel}/p{10digits}{6digits}` into `channel` and `ts={10digits}.{6digits}`, then call `conversations.replies`. For keyword expansion when `search.messages` returns `not_allowed_token_type`, page `conversations.history` for the channel/time window and locally filter terms such as `발송 중단`, `캠페인 중단`, `중지 가능`, `중단 가능`.
+- For cross-source research tasks, Slack bot tokens may not support global `search.messages` (`not_allowed_token_type`) and may also lack `conversations.list` scopes (`missing_scope`). In that case, do not claim “no Slack evidence”; state the API limitation, use known permalinks/thread IDs or previously exported accessible-channel indexes, then retrieve exact threads with `conversations.replies`.
+- When thread root files/images are the evidence, fetch `messages[0].files[]` metadata and, if needed, download via `url_private_download` using the bot token without printing it. OCR/vision can extract event signage, dates, or agenda text even when message text is only a short label like `GFSA`.
 
 ## Good user-facing fallback
 

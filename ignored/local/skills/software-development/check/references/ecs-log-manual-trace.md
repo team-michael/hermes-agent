@@ -97,3 +97,7 @@ This gives:
 - Do not dump more than ~20 surrounding lines; keep evidence compact.
 - If the log stream has high volume, narrow the time window to ±5 min around the metric datapoint breach.
 - **For short-lived ECS tasks**, prefer `get_log_events` on recent streams over `filter-log_events` when the latter returns zero results despite an active alarm.
+- **When streams are already gone:** If `describe_log_streams` shows `lastEventTimestamp` already past the alarm datapoint window (often within 5–10 minutes for `segment-publisher`), the trigger stream has flushed and become inactive. `get_log_events` will also fail because the stream is no longer indexed. In this case, fall back to:
+  1. Verify the daily metric sum from `get-metric-statistics` (Period=86400) to place the alarm in the 30-day baseline.
+  2. Check prior verified events on the same day (from session history or other streams) to establish that the pattern completed normally.
+  3. Accept a `no_action` classification if baseline is stable and no failure metric (ECS failed tasks, DLQ, Lambda Errors) is elevated, even when the exact trigger log is unreachable.

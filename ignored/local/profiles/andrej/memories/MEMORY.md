@@ -1,4 +1,4 @@
-Slack access: `.env` in profile contains SLACK_BOT_TOKEN; for Slack permalinks/threads, parse `/archives/{channel}/p{ts}` and call Slack Web API without printing token. Terminal strips messaging secrets from ambient env.
+Slack: profile `.env` has SLACK_BOT_TOKEN; use Slack Web API for permalinks/threads without printing tokens. Google Workspace: use `google-workspace` skill + `gws` CLI with `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` from profile `.env`.
 §
 Notifly project lookup convention: when a `project_id` is found, map it through the DynamoDB `project` table and include the corresponding product_id/name; PostgreSQL per-project tables follow the `table_name_${project_id}` naming pattern.
 §

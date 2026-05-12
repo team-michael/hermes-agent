@@ -1,11 +1,9 @@
-For Notifly GitHub PR work, the user prefers PRs to be assigned to `clix-so-bot`; after creating or updating a PR, review comments and GitHub check results should be checked, while Cloudflare Preview Worker Deploy can be treated as non-blocking unless explicitly needed.
+For Notifly GitHub/DM work, share findings or patch direction first and wait for explicit approval before opening PRs; when PRs are opened, assign `clix-so-bot`, check reviews and GitHub checks, and treat Cloudflare Preview Worker Deploy as non-blocking unless requested.
 §
-User explicitly corrected that home directories such as /ubuntu/home, /home/ubuntu, or $HOME must never be deleted or destructively mutated, whether on a remote container or local system.
-§
-User corrected that remote/container tasks must never be executed against the local Hermes runtime by assumption; establish and verify the intended target system first, and never destructively mutate home directories.
+Remote/container tasks: never assume local Hermes is target; verify intended system first, and never destructively mutate home dirs like /ubuntu/home, /home/ubuntu, or $HOME.
 §
 User is studying Notifly infra and is AWS/ECS Service Connect–unfamiliar; prefers senior-engineer mentor explanations with mechanisms, concrete flows, failure modes, verification steps, and brief term definitions. For timeout/SSE topics, separate app vs infra fixes, finite vs disabled tradeoffs, complete-response vs idle timeout, and whether Service Connect is live.
 §
 In DMs, user wants infra explanations tailored to their Mobile/iOS + SDK Eng background: use iOS/SDK analogies only when mechanisms truly match, and flag SDK-side implications for contracts, retries, offline behavior, telemetry, or DX.
 §
-User's Cloudflare 2FA is in iOS Passwords/암호 app.
+For Notion planning docs, user prefers medium-density readable sections; when asked to adjust verbosity/format, show one representative item before applying changes if requested.

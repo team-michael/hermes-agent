@@ -146,6 +146,90 @@ Evidence:
 
 Classification: `no_action` (publish completed, no DLQ/ECS failure, no customer impact).
 
+## 2026-05-11 session — `segment-publisher slow eic query` ALARM (Pattern A), 06:34 UTC
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`  
+Transition: `OK -> ALARM` at 2026-05-11 06:34:21 UTC (KST 15:34)  
+Datapoint: `Sum=1.0` at 2026-05-11 06:33:00 UTC
+
+Evidence:
+- Trigger log (2026-05-11 06:33:52.808 UTC): `EventCounterCteManager.extract:031b18009978590188e49e6777447fc2 took too long: 63401ms`
+- This is **Pattern A** (actual slow EIC query), not Pattern B.
+- Project mapping: `project_id: 031b18009978590188e49e6777447fc2` → DynamoDB `project` → product `munice`.
+- Schedule context setup completed ID: `f72d9080259a4abdafa5d443d5924496`.
+- Campaign/user journey scope could not be narrowed: `user_journeys_031b...` had no matching ID; `scheduled_messages_031b...` also no match; logs showed `campaign_id: undefined`.
+- The batch continued normally after the slow query log (`Schedule context setup completed` followed by standard publishing steps).
+- Classification: `no_action` because the alarm metric filter is broad and catches mostly Pattern B noise; this isolated Pattern A spike completed without delivery failure.
+
+## 2026-05-11 session — `segment-publisher slow eic query` ALARM (Pattern A), 11:02 UTC
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`  
+Transition: `OK -> ALARM` at 2026-05-11 11:02:21 UTC (KST 20:02)  
+Datapoint: `Sum=1.0` at 2026-05-11 11:01:00 UTC
+
+Evidence:
+- Trigger log (2026-05-11 11:01:55.178 UTC): `EventCounterCteManager.extract:031b18009978590188e49e6777447fc2 took too long: 63876ms`
+- Project mapping: same `031b18009978590188e49e6777447fc2` → product `munice`.
+- Stream context shows `Schedule context setup completed b563e7a844804442847f46ea6e2243b8` and then standard publishing batches (344→3020 recipients).
+- `campaign_id: undefined` in log; schedule is segment-condition-driven, not a named campaign.
+- Classification: `no_action` — query completed, batch publishing finished, no recipient loss.
+
+## 2026-05-11 session — `segment-publisher slow eic query` ALARM (Pattern A), 11:08 UTC
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`  
+Transition: `OK -> ALARM` at 2026-05-11 11:08:21 UTC (KST 20:08)  
+Datapoint: `Sum=1.0` at 2026-05-11 11:07:00 UTC
+
+Evidence:
+- Trigger log (2026-05-11 11:07:03.852 UTC, stream `prod/segment-publisher/b424b4efffeb46b98dbd96b53dda8858`): `EventCounterCteManager.extract:031b18009978590188e49e6777447fc2 took too long: 67210ms`
+- Project mapping: `project_id: 031b18009978590188e49e6777447fc2` → DynamoDB `project` → product `munice`.
+- Same-stream context: schedule context setup completed `9827cde1d7334a48b1e4f46b1c3ecd6e`, then standard publishing batches (344→2683 recipients, 8 batches).
+- `campaign_id: undefined`; schedule is segment-condition-driven.
+- Classification: `no_action` — query completed, batch publishing finished, no recipient loss.
+
+## 2026-05-11 session — `segment-publisher slow eic query` ALARM (Pattern A), 11:14 UTC
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`  
+Transition: `OK -> ALARM` at 2026-05-11 11:15:21 UTC (KST 20:15)  
+Datapoint: `Sum=1.0` at 2026-05-11 11:14:00 UTC
+
+Evidence:
+- Trigger log (2026-05-11 11:14:21 UTC, stream `prod/segment-publisher/88330228c9d84107855c363e77121bd6`): `EventCounterCteManager.extract:031b18009978590188e49e6777447fc2 took too long: 61786ms`
+- Project mapping: `project_id: 031b18009978590188e49e6777447fc2` → DynamoDB `project` → product `munice`.
+- Same-stream context: schedule context setup completed `37252857851147688a09f6313c675ec2`, then standard publishing batches up to 8,759 recipients.
+- `campaign_id: undefined`; schedule is segment-condition-driven.
+- Classification: `no_action` — query completed, batch publishing finished, no recipient loss.
+
+Note: This was the fourth verified Pattern A occurrence for `munice` on 2026-05-11. Daily `Sum` for 2026-05-11 was later updated to **5.0 total** (see the 11:53 UTC entry below); the fifth occurrence could not be verified because the Fargate log stream had already flushed.
+
+## 2026-05-11 session — `segment-publisher slow eic query` ALARM, 11:53 UTC
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`  
+Transition: `OK -> ALARM` at 2026-05-11 11:53:21 UTC (KST 20:53)  
+Datapoint: `Sum=1.0` at 2026-05-11 11:52:00 UTC
+
+Investigation note:
+- `filter-log-events` across the alarm window returned zero matches because segment-publisher Fargate tasks create short-lived log streams that become inactive within minutes of task stop. By the time of investigation, the 11:52 UTC datapoint window had no active stream.
+- Daily metric sum for 2026-05-11 is **5.0 total**. Four of the five were verified as Pattern A (`EventCounterCteManager.extract:031b18009978590188e49e6777447fc2 took too long`) for munice; the fifth (this alarm) is consistent with the same daily baseline but could not be verified as Pattern A vs Pattern B due to the expired log window.
+- Classification: `no_action` based on (1) the 30-day baseline of 1–7/day, (2) the four verified munice Pattern A events on the same day all completed normally with no recipient loss, and (3) no ECS failure or DLQ signal.
+
+### Pattern A scope-attribution note
+
+When the trigger is `EventCounterCteManager.extract:{project_id} took too long: {ms}ms`, the log line carries the `project_id` but often **no campaign or user-journey ID**. In the stream context, `campaign_id` may appear as `undefined` because the schedule is segment-condition-based rather than tied to a single campaign entity. Do not force a campaign scope when the log explicitly shows `campaign_id: undefined` and no `user_journey.id` is present in the payload. The correct scope is `project/unknown-campaign` (or `project/unknown-user-journey` when the payload shape suggests a journey).
+
+### Baseline assessment via daily metric datapoints
+
+For this alarm, `get_metric_statistics` with `Period=86400` and `Statistics=['Sum']` across 30 days produces a stable 1–7 / day histogram. This is the quickest way to distinguish a baseline recurring pattern from a true anomaly. Example daily counts observed (updated 2026-05-11):
+
+```
+2026-04-11=1, 04-12=1, 04-13=7, 04-14=3, 04-15=2, 04-16=3, 04-17=4, 04-18=1,
+04-19=1, 04-20=5, 04-21=3, 04-22=2, 04-23=3, 04-24=6, 04-25=2, 04-26=2,
+04-27=4, 04-28=3, 04-29=5, 04-30=2, 05-01=1, 05-02=3, 05-03=1, 05-04=2,
+05-05=1, 05-06=1, 05-07=3, 05-08=1, 05-09=1, 05-10=1, 05-11=4
+```
+
+If a single day jumps to >10 or the weekly total doubles versus the 30-day mean, treat it as `needs_fix` and inspect the dominant project in that window. Otherwise, `no_action` is appropriate. The 2026-05-11 count (4) is within the 1–7 baseline range but higher than the recent 1–3/day trend, so monitor for sustained elevation rather than treating it as an isolated anomaly.
+
 ## Helper / investigation gap
 
 The `check` helper derives Logs Insights filter terms from the alarm/metric name (`slow eic query`) rather than the metric filter pattern (`took too long`). This causes `count_7d` and `count_30d` to return 0 even when actual matches exist. Use the bounded manual trace in `references/ecs-log-manual-trace.md` with the exact metric filter pattern `took too long` when the helper reports empty current trigger contexts for this alarm.

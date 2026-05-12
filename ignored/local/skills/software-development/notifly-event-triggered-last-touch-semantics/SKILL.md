@@ -70,6 +70,50 @@ These show whether delivery re-renders from live/latest state or merely uses the
 
 ## Investigation workflow
 
+### 0. When a curl `/track-event` test “did not trigger”
+For Notifly event-triggered campaign complaints, first distinguish **not triggered** from **triggered but not visibly received**.
+
+Recommended evidence chain:
+1. **Athena raw event check** in `notifly_analytics.notifly_event_logs` filtered by `project_id`, `dt`, `name`, and `notifly_user_id`.
+   - Table time is commonly microseconds in this path; render with `from_unixtime(time/1000000.0)` rather than milliseconds.
+   - `event_params` may appear as a map of strings, e.g. JSON boolean `false` as `"false"`.
+2. **Map project** through DynamoDB `project` table and include product/name when reporting.
+3. **Postgres campaign check** in `campaigns_${projectId}`:
+   - event-triggered active campaigns are `status = 1 AND timing_type = 1`.
+   - match `triggering_conditions` / legacy `triggering_event` against the event name.
+   - verify `channel`, `delay`, `segment_type`, `testing`, `whitelist`, and `starts`/`end`.
+4. **Delivery evidence check**:
+   - `message_events_${projectId}` for `push_delivered`, `send_*`, `skipped__*`, etc.
+   - `delivery_result_${projectId}` for `send_success` / delivery result rows.
+   - `scheduled_messages_${projectId}` only if delayed; no rows are expected for direct-send campaigns.
+5. If results exist, report as: “이벤트/캠페인/발송은 동작했고, 문제는 수신 UI/채널 기대값 쪽입니다.” Then check whether the user expected a different channel, e.g. `in-web-message` vs `web-push-notification`, or a different campaign trigger.
+6. For **web-push-notification** specifically, distinguish console test-send from event-triggered delivery:
+   - Test-send in web-console resolves recipients by `external_user_id` and can fan out to multiple valid JS/web device tokens.
+   - Event-triggered KDS events often lack `notifly_device_id`; `SegmentService.filterBySegment(...)` then calls `selectMostRecentDeviceIdByUser(...)`, which selects `ORDER BY updated_at DESC LIMIT 1` from `device_${projectId}`.
+   - Therefore “test send works but event-triggered push is invisible” can mean the trigger sent successfully to a different/latest web device than the browser/profile the user is watching.
+   - Verify by comparing `delivery_result_${projectId}` / `message_events_${projectId}` with `device_${projectId}` rows: selected `notifly_device_id`, `platform`, `sdk_type`, token presence, `updated_at`, and whether the viewed browser owns that device id.
+   - `push_delivered` for web push is logged by the Notifly service worker after the push event and `showNotification(...)` attempt; it is stronger than SQS enqueue/send_success, but not the same as human-visible notification perception because browser profile, OS notification settings, focus mode, and permission state still matter.
+
+Scope discipline: if the user names a specific campaign id, keep the analysis anchored to that campaign first. Do not pivot to another active campaign just because it is visually similar, more recently updated, or has a related channel. If mentioning other campaigns, label them explicitly as non-target comparators.
+
+Common pitfall: campaign copy/name can say “웹팝업” while the actual `channel` is `web-push-notification`. Do not infer the product behavior from the campaign name; use the `channel` column.
+
+Identity pitfall for curl/manual `/track-event` tests:
+- Public API `services/server/api-service/lib/api/track-event.js` treats `event.userId` / `event.userID` as **external_user_id**, not `notifly_user_id`.
+- It computes `notifly_user_id` with `generateNotiflyUserId(projectId, externalUserId)` and marks the record `is_server_side_event: true`.
+- If someone copies an internal `notifly_user_id` into curl `userId`, the API generates a different internal id. The event may be accepted and visible in Athena, but KDS can skip sending because that generated user has no `users_${projectId}` / `device_${projectId}` rows.
+- Confirm by comparing Athena `external_user_id` and `notifly_user_id`, then checking Postgres user/device rows and `/aws/lambda/kds-consumer` logs for `Failed to get user data for event ... Skip sending message.`
+- Fix the test by passing the real external user id. Example: if the real rows are `notifly_user_id = abc...` and `external_user_id = user-123`, curl should use `"userId": "user-123"`.
+
+Event-name pitfall: matching is exact unless the campaign uses a non-equals operator. `hj_sent` and `hjsent` are different events.
+
+Device-targeting pitfall for curl/manual `/track-event` tests:
+- Public `/track-event` creates a server-side, user-level event and does **not** carry `notifly_device_id`.
+- In `services/lambda/kds-consumer/lib/event.ts`, event-triggered sending uses `notiflyDeviceId ? getDevice(...) : selectMostRecentDeviceIdByUser(...)`.
+- Therefore a curl-triggered web-push campaign targets the user's most recently updated device row, not necessarily the browser the tester is looking at.
+- The web JS SDK `trackEvent(...)` path is different: it reads `__notiflyDeviceID` from IndexedDB and logs `notifly_device_id`, so KDS can target the browser/device that emitted the event.
+- If someone asks “how do I target the current browser?”, answer: trigger the event from that browser via the JS SDK, or change product/code to accept a device id or fan out to all valid web devices. Campaign settings alone cannot force curl `/track-event` to choose a specific browser instance.
+
 ### 1. Confirm whether trigger properties are stored immediately
 Read `event.ts` → `message.ts` → the relevant `send_messages/<channel>.ts`.
 
@@ -170,6 +214,10 @@ So this still does not create true last-touch semantics.
 2. **Mechanism** — trigger snapshot vs latest-event lookup
 3. **Workaround** — cancellation condition on same event for delayed sends
 4. **Caveat** — not universal for direct-send or already-queued sends
+
+## References
+
+- `references/web-push-event-trigger-vs-test-send.md` — session-specific notes for cases where web-push test send works but event-triggered delivery is not visibly received, including device selection/fan-out differences and verification queries.
 
 ## Known durable findings
 
