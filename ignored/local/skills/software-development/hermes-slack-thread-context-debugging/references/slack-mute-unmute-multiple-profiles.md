@@ -101,6 +101,38 @@ Likely causes:
 - `<profile>/slack_muted_threads.json`
   - persistent per-profile muted thread state
 
+## Fix pattern that has worked
+
+The minimal safe fix is to make inline mute commands both **command-name aware** and **target-bot aware** before they interact with the muted-thread gate or existing-session routing.
+
+Recommended implementation shape in `gateway/platforms/slack.py`:
+
+1. Parse leading mentions only when they precede an inline slash command:
+   ```python
+   def _inline_command_target_bot_ids(text: str) -> tuple[str, ...]:
+       stripped = (text or "").strip()
+       targets = []
+       while stripped:
+           match = re.match(r"^<@([^>|]+)(?:\|[^>]+)?>\s*", stripped)
+           if not match:
+               break
+           targets.append(match.group(1))
+           stripped = stripped[match.end():].strip()
+       return tuple(targets) if stripped.startswith("/") else ()
+   ```
+2. Compute `bot_uid`, `inline_command_name`, and `inline_command_targets` before the muted-thread check.
+3. If `inline_command_name in {"mute", "unmute"}` and the command has leading targets but none is the current `bot_uid`, return early. This prevents `<@other_bot> /mute|/unmute` from waking the current profile via `has_session`.
+4. In a muted thread, allow only `plain /unmute` or `<@this_bot> /unmute` to bypass the mute gate. Block `<@other_bot> /unmute`.
+5. After current-bot mention stripping, classify inline commands as `MessageType.COMMAND` using the parsed `inline_command_name`, not only `original_text.startswith("/")`.
+
+Regression tests to keep:
+
+- muted thread + `<@other_bot> /unmute` + existing session ⇒ `handle_message.assert_not_awaited()`
+- unmuted/normal thread + `<@other_bot> /mute` + existing session ⇒ `handle_message.assert_not_awaited()`
+- muted thread + `<@this_bot> /unmute` ⇒ message reaches gateway as `text == "/unmute"`, `message_type == MessageType.COMMAND`
+
+TDD note: run the two non-target tests first and verify RED. In the observed Hermes bug, both failed because `handle_message` was awaited once; after the fix the `TestThreadMute` subset passed.
+
 ## Product implication
 
 If users expect mute/unmute to control all Hermes profiles in a Slack thread, the implementation needs either:
