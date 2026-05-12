@@ -444,6 +444,22 @@ class SlackAdapter(BasePlatformAdapter):
         return ""
 
     @staticmethod
+    def _inline_command_target_bot_ids(text: str) -> tuple[str, ...]:
+        """Return leading Slack bot mentions that target an inline command."""
+        stripped = (text or "").strip()
+        targets: list[str] = []
+        while stripped:
+            match = re.match(r"^<@([^>|]+)(?:\|[^>]+)?>\s*", stripped)
+            if not match:
+                break
+            targets.append(match.group(1))
+            stripped = stripped[match.end():].strip()
+
+        if not stripped.startswith("/"):
+            return ()
+        return tuple(targets)
+
+    @staticmethod
     def _inline_command_name(text: str) -> str:
         """Return the inline slash command name from a Slack message."""
         stripped = (text or "").strip()
@@ -2898,10 +2914,40 @@ class SlackAdapter(BasePlatformAdapter):
                 # further changes.
                 thread_ts = None
 
+        bot_uid = self._team_bot_user_ids.get(team_id, self._bot_user_id)
+        routing_text = original_text or ""
+        is_mentioned = bot_uid and f"<@{bot_uid}>" in routing_text
+        inline_command_name = self._inline_command_name(text)
+        inline_command_targets = self._inline_command_target_bot_ids(text)
+        inline_targets_this_bot = bool(
+            bot_uid and bot_uid in inline_command_targets
+        )
+
+        # In a multi-profile Slack thread, command-looking messages addressed
+        # to another Hermes bot must not wake this profile via existing-session
+        # routing. Only the explicitly mentioned profile owns its /mute or
+        # /unmute command.
+        if (
+            inline_command_name in {"mute", "unmute"}
+            and inline_command_targets
+            and not inline_targets_this_bot
+        ):
+            logger.debug(
+                "[Slack] Ignoring %s command targeted at another bot in thread %s:%s",
+                inline_command_name,
+                channel_id,
+                thread_ts,
+            )
+            return
+
+        inline_unmute_for_this_profile = (
+            inline_command_name == "unmute"
+            and (not inline_command_targets or inline_targets_this_bot)
+        )
         if (
             thread_ts
             and self.is_thread_muted(channel_id, thread_ts)
-            and self._inline_command_name(text) != "unmute"
+            and not inline_unmute_for_this_profile
         ):
             logger.debug("[Slack] Ignoring message in muted thread %s:%s", channel_id, thread_ts)
             return
@@ -2913,9 +2959,6 @@ class SlackAdapter(BasePlatformAdapter):
         #   2. The message is a reply in a thread the bot started/participated in, OR
         #   3. The message is in a thread where the bot was previously @mentioned, OR
         #   4. There's an existing session for this thread (survives restarts)
-        bot_uid = self._team_bot_user_ids.get(team_id, self._bot_user_id)
-        routing_text = original_text or ""
-        is_mentioned = bot_uid and f"<@{bot_uid}>" in routing_text
         event_thread_ts = event.get("thread_ts")
         is_thread_reply = bool(event_thread_ts and event_thread_ts != ts)
 
@@ -3002,7 +3045,7 @@ class SlackAdapter(BasePlatformAdapter):
 
         # Determine message type
         msg_type = MessageType.TEXT
-        if (original_text or "").startswith("/"):
+        if inline_command_name or (text or "").startswith("/"):
             msg_type = MessageType.COMMAND
 
         # Handle file attachments

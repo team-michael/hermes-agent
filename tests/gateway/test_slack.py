@@ -3138,6 +3138,7 @@ class TestThreadMute:
         adapter.mute_thread("C1", "123.000")
         adapter._user_name_cache["U1"] = "User One"
         adapter._fetch_thread_context = AsyncMock(return_value="")
+        adapter._fetch_thread_parent_text = AsyncMock(return_value="")
 
         event = {
             "channel": "C1",
@@ -3154,6 +3155,41 @@ class TestThreadMute:
         assert msg.text == "/unmute"
         assert msg.message_type == MessageType.COMMAND
         assert msg.source.thread_id == "123.000"
+
+    @pytest.mark.asyncio
+    async def test_non_target_unmute_mention_does_not_wake_muted_thread(self, adapter, tmp_path):
+        adapter._muted_threads_path = tmp_path / "slack_muted_threads.json"
+        adapter._muted_threads = set()
+        adapter.mute_thread("C1", "123.000")
+        adapter._has_active_session_for_thread = MagicMock(return_value=True)
+
+        event = {
+            "channel": "C1",
+            "channel_type": "channel",
+            "user": "U1",
+            "text": "<@U_OTHER_BOT> /unmute",
+            "ts": "123.456",
+            "thread_ts": "123.000",
+        }
+        await adapter._handle_slack_message(event)
+
+        adapter.handle_message.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_non_target_mute_mention_is_ignored_even_with_existing_session(self, adapter):
+        adapter._has_active_session_for_thread = MagicMock(return_value=True)
+
+        event = {
+            "channel": "C1",
+            "channel_type": "channel",
+            "user": "U1",
+            "text": "<@U_OTHER_BOT> /mute",
+            "ts": "123.456",
+            "thread_ts": "123.000",
+        }
+        await adapter._handle_slack_message(event)
+
+        adapter.handle_message.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_gateway_mute_and_unmute_commands(self, adapter, tmp_path):
