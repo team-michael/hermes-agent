@@ -1,3 +1,30 @@
+providers:
+  openai:
+    name: OpenAI
+    base_url: https://api.openai.com/v1
+    key_env: OPENAI_API_KEY
+    default_model: gpt-5.5
+    transport: codex_responses
+fallback_providers:
+- provider: openai
+  model: gpt-5.5
+  context_length: 1050000
+compression:
+  enabled: true
+  threshold: 0.55
+  target_ratio: 0.35
+  protect_last_n: 20
+  hygiene_hard_message_limit: 400
+auxiliary:
+  compression:
+    provider: openai-codex
+    model: gpt-5.4-mini
+    base_url: ""
+    api_key: ""
+    timeout: 240
+    extra_body:
+      reasoning:
+        effort: low
 agent:
   gateway_notify_interval: 0
   reasoning_effort: xhigh
@@ -7,6 +34,7 @@ terminal:
   - GITHUB_TOKEN
   - SLACK_BOT_TOKEN
 display:
+  busy_input_mode: queue
   interim_assistant_messages: false
   platforms:
     slack:

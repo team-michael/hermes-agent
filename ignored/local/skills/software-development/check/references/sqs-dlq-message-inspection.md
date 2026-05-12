@@ -50,7 +50,34 @@ Read-only recipe for inspecting DLQ message bodies to extract scope and root cau
    ```
    Report `project_id + product_id + name` in the final scope field.
 
-5. **Extract event type from payload for deeper context**
+5. **Kinesis-specific DLQ body shape (e.g., `kds-consumer-dlq`)**
+   When the source trigger is a Kinesis stream EventSourceMapping, the DLQ payload is not an SQS record but a Kinesis batch failure report:
+   ```json
+   {
+     "requestContext": {
+       "requestId": "<UUID>",
+       "functionArn": "arn:aws:lambda:ap-northeast-2:702197142747:function:kds-consumer",
+       "condition": "RetryAttemptsExhausted",
+       "approximateInvokeCount": 2
+     },
+     "responseContext": {
+       "statusCode": 200,
+       "executedVersion": "$LATEST",
+       "functionError": "Unhandled"
+     },
+     "KinesisBatchInfo": {
+       "shardId": "shardId-000000002903",
+       "startSequenceNumber": "...",
+       "batchSize": 1,
+       "streamArn": "arn:aws:kinesis:ap-northeast-2:702197142747:stream:notifly-event-stream"
+     }
+   }
+   ```
+   - `condition: RetryAttemptsExhausted` and `approximateInvokeCount` are the key fields showing retry exhaustion.
+   - `timestamp` in the top-level body is the failure time; convert to epoch ms to search Lambda logs.
+   - Do not search inside `KinesisBatchInfo` for project IDs; scope comes from the Lambda log itself.
+
+6. **Extract event type from payload for deeper context**
    Notifly DLQ payloads often contain Kinesis-style dispatch commands. Parse the JSON body for:
    - `streamName` — e.g. `notifly-message-events-stream`, `notifly-triggering-events-stream`
    - `records[].data.name` — event name, e.g. `send_success`, `send_fail`
@@ -62,7 +89,7 @@ Read-only recipe for inspecting DLQ message bodies to extract scope and root cau
    - `streamName: notifly-message-events-stream` with `campaign_id`, `resource_type: campaign`, `name: send_success` → push notification delivery success event.
    - `streamName: notifly-triggering-events-stream` with `campaign_id`, `experiment_id`, `variant_id`, `triggering_event_id` → event-triggered campaign activation event.
 
-6. **Check redrive policy on source queue**
+7. **Check redrive policy on source queue**
    ```bash
    aws sqs get-queue-attributes \
      --queue-url <main-queue-url> \

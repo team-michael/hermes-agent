@@ -13,3 +13,5 @@ Notifly Lambda `ConsoleErrors` alarms can false-positive on broad `%ERROR|Status
 For DLQ alerts, useful triage includes directly inspecting DLQ message bodies/attributes and summarizing project, campaign/user journey, metadata, queue lifecycle, and retry context; post-redrive/purge verification should show no visible/not-visible messages.
 §
 Lambda `invalid input syntax for type json` scope workflow: parse `delivery_result_<project_id>` table suffix → extract `campaign_id` from VALUES tuple → map `project_id` via DynamoDB `project` → read PostgreSQL `where`/`detail` for broken surrogate. Skill `notifly-lambda-json-surrogate-error` created.
+§
+Linear API key is not configured in the current Hermes environment; LINEAR_API_KEY environment variable is empty. Linear triage/issue creation requests will fail with 401 until the key is set.

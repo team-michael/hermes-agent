@@ -213,9 +213,11 @@ python "${HERMES_HOME:-$HOME/.hermes}/skills/software-development/check/scripts/
 
 **Pitfall — DLQ creation alarm names**: alarm names matching the literal pattern `<queue-name>-dlq has been created` are not auto-detected because `has been created` is prose, not a metric. Pass `--alarm-name` explicitly, e.g. `--alarm-name 'kinesis-record-dispatcher-queue-dlq has been created'`.
 
-**Pitfall — log-group prefix conflation in alarm name detection**: The text parser may prepend `/aws/ecs/.../` log-group prefixes to the auto-detected alarm name. If `describe_alarms` returns no metadata for a detected name but the alarm is known to exist, try the bare alarm name without the log group prefix.
+**Pitfall — log-group prefix conflation in alarm name detection**: The text parser may prepend `/aws/ecs/.../` log-group prefixes to the auto-detected alarm name, or it may strip an existing prefix and return a bare name. If `describe_alarms` returns no metadata for a detected name but the alarm is known to exist, try the opposite form: prepend the full log group prefix (`/aws/ecs/notifly-services-prod/<name>`) to a bare detected name, or try the bare alarm name without the prefix.
 
 **Pitfall**: When a metric filter pattern (e.g., `took too long`) differs materially from the alarm or metric name (e.g., `segment-publisher-prod slow eic query`), the helper may derive Logs Insights filter terms from the name and report `count_7d: 0` / `count_30d: 0` despite actual matches existing. Do not treat zero counts as absence of logs; fall back to the bounded manual trace using the exact `filter_pattern` string from `metric_filters[].filter_pattern`.
+
+**Pitfall — `segment-publisher slow eic query` helper false-negative:** The helper frequently returns `can_answer_root_cause: false` for this alarm because its term extractor derives `slow eic query` from the alarm name instead of the actual metric filter pattern `took too long`. When this happens, bypass the generic `required_followups` and immediately run the bounded manual trace using `"took" "too" "long"` (three separate terms) plus a stream-first tail check. See `references/segment-publisher-slow-eic-query-noise.md` for exact fallback commands and Pattern A vs Pattern B triage.
 
 **Pitfall — custom EMF metric alarms have no metric filters**: Alarms in the `Notifly/ScheduledBatchDelivery` namespace (e.g., `DbInsert`, `FCMSendBatch`) are emitted as CloudWatch EMF metrics from Lambda stdout, not CloudWatch log metric filters. The helper will report `metric_filters: []` for these. Do not conclude "no logs exist." Instead, inspect the Lambda log group `/aws/lambda/<actual_function_name>` directly with `filter-log-events` around the alarm datapoint time. See `references/scheduled-batch-delivery-dbinsert-json-serialization-bug.md` for the `DbInsert outcome=error` pattern.
 
@@ -223,7 +225,7 @@ The script does the single-pass first investigation:
 - parse alert text
 - query live CloudWatch alarm metadata/history
 - summarize 7d and 30d alarm history
-- **Pitfall**: `describe-alarm-history` may return entries with `StateValue: null` and `StateReason: null`. When this happens, the helper cannot count ALARM transitions from history alone. Fall back to metric datapoint breach density and the alarm's current `StateReason` from `describe-alarms`.
+- **Pitfall**: `describe-alarm-history` may return entries with `StateValue: null` and `StateReason: null`. When this happens, the helper cannot count ALARM transitions from history alone. First, inspect `HistoryData` JSON: it contains `oldState.stateValue` and `newState.stateValue` fields that reliably encode the transition direction. If those are also absent or parsing fails, fall back to metric datapoint breach density and the alarm's current `StateReason` from `describe-alarms`.
 - fetch CloudWatch metric datapoints
 - detect log groups / project IDs
 - inspect metric filters
@@ -466,11 +468,39 @@ Pitfall: do not assume the alarm name prefix equals the Lambda function name. Wh
 
 **Pitfall — empty `current_trigger_contexts` on Lambda ConsoleErrors alarms**: The helper's Logs Insights query for the current alarm window may return zero results despite the metric filter having breached. This is common for Lambda log groups where Logs Insights ingestion lags behind metric-filter evaluation. When `logs.current_trigger_contexts` is empty but `can_answer_root_cause` is `true`, do not assume no logs exist. Run a bounded `aws logs filter-log-events` on `/aws/lambda/<actual_function_name>` using the exact metric datapoint timestamp ±5 min as the time window. Use the literal `filterPattern` from the metric filter configuration or a `like` query with the known ERROR substring. This fallback is read-only and deterministic; it resolves scope and trigger evidence that Logs Insights may miss.
 
-**Pitfall — `Notifly/ScheduledBatchDelivery DbInsert` JSON serialization / surrogate pair bug**: For `ScheduledBatchDelivery-P2-DbError` alarms (or any `Notifly/ScheduledBatchDelivery` alarm with `DbInsert outcome=error`), the Lambda log group `/aws/lambda/scheduled-batch-delivery` typically shows `invalid input syntax for type json` on INSERT into `delivery_result_<project_id>`. The most common cause is a missing `JSON.stringify()` on `extra_data` in `prepareSendResultsToInsertForNHNCloud` or `[object Object]` leaking into `delivery_failure_log.request_body`/`response_body`. However, even when `JSON.stringify` is present, PostgreSQL can reject the JSON with `code: '22P02'` and `detail: 'Unicode low surrogate must follow a high surrogate.'` when emoji in personalized message content have broken UTF-16 surrogate pairs. Inspect the pg error object's `detail` and `where` fields in Lambda logs to distinguish the two failure modes. See `references/scheduled-batch-delivery-dbinsert-json-serialization-bug.md` for scope extraction, exact file/line targets, and surrogate pair triage.
+**Pitfall — `Notifly/ScheduledBatchDelivery DbInsert` JSON serialization / surrogate pair bug**: For `ScheduledBatchDelivery-P2-DbError` alarms (or any `Notifly/ScheduledBatchDelivery` alarm with `DbInsert outcome=error`), the Lambda log group `/aws/lambda/scheduled-batch-delivery` typically shows `invalid input syntax for type json` on INSERT into `delivery_result_<project_id>` or `delivery_failure_log_<project_id>`. The push-notification path in `scheduled-batch-delivery` most commonly leaks `[object Object]` via `toSendFailureLog` in `services/lambda/scheduled-batch-delivery/lib/push_utils.js` (`sender_info`, `request_body`, `response_body` are raw objects without `JSON.stringify`). The text-message path in `scheduled-batch-text-message-delivery` leaks via `prepareSendResultsToInsertForNHNCloud` (`extra_data` is a raw object). Even when `JSON.stringify` is present, PostgreSQL can reject the JSON with `code: '22P02'` and `detail: 'Unicode low surrogate must follow a high surrogate.'` when emoji in personalized message content have broken UTF-16 surrogate pairs. Inspect the pg error object's `detail` and `where` fields in Lambda logs to distinguish the two failure modes. Also note that the ConsoleErrors alarm `scheduled-batch-delivery lambda error` (metric filter `%ERROR|Status: timeout%`) catches these same ERROR logs, so the same triage applies even when the alarm namespace is `ConsoleErrors` rather than `Notifly/ScheduledBatchDelivery`. See `references/scheduled-batch-delivery-dbinsert-json-serialization-bug.md` for scope extraction, exact file/line targets for both Lambdas, and surrogate pair triage.
 
 **Pitfall — using Slack message time instead of alarm datapoint time for log searches**: When the helper fails and manual `filter-log-events` is needed, anchor the search window precisely to the CloudWatch alarm's `StateReasonData.startDate` or `recentDatapoints[].timestamp` (from `describe-alarms`), converted exactly to epoch milliseconds. Slack `message_ts` and conversation start times can lag the actual alarm transition by minutes or hours; using them as the window anchor searches the wrong time range and may return zero matches even when the triggering logs exist.
 
 **Percentile metric pitfall**: `get-metric-statistics` does not accept `p99` or any percentile statistic. The valid set is `SampleCount | Average | Sum | Minimum | Maximum`. For percentile alarms such as `*-FCMLatencyP99`, use `Maximum` as a conservative proxy, or switch to `get-metric-data` with `ExtendedStatistics=['p99']` if the exact value is required. See `references/scheduled-batch-delivery-fcm-latency.md` for a concrete FCM latency triage recipe.
+
+**Pitfall — CloudWatch Logs API timestamp unit confusion**: `aws logs filter-log-events` expects `--start-time` and `--end-time` in **epoch milliseconds** (ms since 1970-01-01). Some AWS APIs (e.g., `describe-log-streams`) return `lastEventTimestamp` in milliseconds, but the raw value may be visually indistinguishable from seconds if you only glance at the integer. Always verify the unit before passing a value to `filter-log-events`; using seconds instead of milliseconds searches a time range seconds after 1970 and returns zero events, creating a false "no logs exist" conclusion. Convert with `date -d 'YYYY-MM-DD HH:00:00 UTC' +%s` and then multiply by 1000.
+
+**Pitfall — `kds-consumer` null byte → PG error → timeout → ConsoleErrors false positive**: When the `kds-consumer` Lambda processes events containing `\u0000` (null byte) in `event_params`, the INSERT into `event_intermediate_counts_<project_id>` fails with PostgreSQL `22021` (`invalid byte sequence for encoding "UTF8": 0x00`). The code retries up to 10 times via `async-retry`, exhausting the Lambda timeout (900s) and producing a `REPORT ... Status: timeout` line. The `ConsoleErrors` metric filter (`%ERROR|Status: timeout%`) matches this REPORT line, triggering the alarm even though there is no unhandled Lambda exception. Simultaneously, the actual ERROR log line (`invalid byte sequence...`) may be matched by the same filter. Cross-check `AWS/Lambda Errors` to confirm whether this is a runtime crash (real bug) or a retry-timeout from a known data-quality issue. Root cause is usually missing sanitization of `\u0000` in `constructEventIntermediateCountData()` (`services/lambda/kds-consumer/lib/event_counter_utils.ts`). See `references/kds-consumer-null-byte-utf8-timeout.md`.
+
+### H. Kinesis stream iterator age / throughput alarm
+
+Pattern examples:
+- `notifly-event-stream High GetRecords Iterator Age`
+- `ReadProvisionedThroughputExceeded`
+- Metric namespace `AWS/Kinesis` with `GetRecords.IteratorAgeMilliseconds`
+
+Flow:
+1. alarm metadata + exact threshold (this is a native AWS metric alarm, not log-derived)
+2. alarm history and recurrence pattern
+3. **Stream status**: `describe-stream` to confirm `ACTIVE` and record shard count
+4. **Consumer topology**: `list-stream-consumers` for EFO consumers; `list-event-source-mappings` to find the actual Lambda consumer. Do not guess the Lambda name from the stream name.
+5. **EventSourceMapping config**: `BatchSize`, `ParallelizationFactor`, `MaximumRetryAttempts`, `BisectBatchOnFunctionError`, `DestinationConfig` (DLQ)
+6. **Lambda function config**: `MemorySize`, `Timeout`, `LastModified` (deploy time correlation)
+7. **Producer traffic**: `IncomingRecords` trend over the past hour to identify spikes
+8. **Consumer health**: Lambda `Errors`, `Duration`, `Invocations` in the same window
+9. **Iterator age trend**: `GetRecords.IteratorAgeMilliseconds` over the past hour to see if the spike is transient or sustained
+10. **Bounded Lambda log check**: `filter-log-events` on `/aws/lambda/<actual_name>` for ERROR lines around the alarm datapoint time; anchor to `StateReasonData.startDate`, not Slack message time
+11. Determine if the alarm is a transient spike (`no_action`), throughput bottleneck (`needs_fix` if recurring), or consumer failure (`needs_fix`/`urgent`)
+
+Scope is typically infra-wide because Kinesis streams are shared pipelines with no per-project dimensions on `AWS/Kinesis` metrics. Do not force a project scope unless Lambda logs contain explicit `project_id`/`campaign_id`.
+
+See `references/kinesis-stream-iterator-age-triage.md` for exact bounded commands and interpretation heuristics.
 
 ## DynamoDB project mapping rule
 

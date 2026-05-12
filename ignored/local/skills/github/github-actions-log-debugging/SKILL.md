@@ -36,6 +36,8 @@ Important consequence:
 
 ## Investigation recipe
 
+For manually-triggered operational workflows (`workflow_dispatch`) that run production scripts, also use `references/workflow-dispatch-operational-scripts.md`. It covers comparing nearby dispatch runs, reading the workflow at the failing SHA, checking optional-input CLI rendering, and separating direct CI failure from live application-state conflicts.
+
 ### 1. Fetch job metadata
 Use the job API first to learn which step failed.
 
