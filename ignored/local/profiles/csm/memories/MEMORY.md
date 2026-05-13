@@ -1,4 +1,4 @@
-Notifly csm Hermes profile home: /home/ubuntu/.hermes/profiles/csm. Profile .env has Slack/GitHub/Cloudflare credential keys; never print/save credential values. Slack recovery exports/scripts live under profile/recovery.
+Notifly csm profile home: /home/ubuntu/.hermes/profiles/csm. Never print .env secrets. Notifly console repro: use .env NOTIFLY_AUTH email:password, login /ko/auth/login; Michael slug michael, dashboard /console/products/michael/dashboard.
 §
 Notifly positioning/pricing (2026-05): Korean B2C CRM automation across push, popup, Kakao Alimtalk/brand message, SMS/MMS, email, webhook, LINE. Strengths: Kakao-native, Korean UX/support, predictable pricing, Braze alternative. Standard KRW 150k/mo; Pro KRW 800k/mo; Enterprise quoted.
 §

@@ -133,6 +133,21 @@ Regression tests to keep:
 
 TDD note: run the two non-target tests first and verify RED. In the observed Hermes bug, both failed because `handle_message` was awaited once; after the fix the `TestThreadMute` subset passed.
 
+Verification commands that caught the regression and guarded the broader Slack surface:
+
+```bash
+python -m pytest tests/gateway/test_slack.py::TestThreadMute -q
+python -m pytest tests/gateway/test_slack.py tests/gateway/test_slack_mention.py -q
+git diff --check
+```
+
+Operational rollout notes:
+
+- If patching the local Hermes checkout under `~/.hermes/hermes-agent`, commit the fix before syncing/pushing; avoid leaving gateway behavior as uncommitted local state.
+- Existing Notifly-style local sync may use a profile script such as `profiles/<profile>/scripts/hermes_agent_daily_commit_push.sh`; inspect and reuse it instead of inventing a new push path.
+- Confirm the remote branch with `gh api repos/<owner>/<repo>/commits/<branch> --jq '{sha:.sha,message:.commit.message}'` or equivalent after push.
+- The Slack gateway process must be restarted or reloaded before the patched adapter code affects live Slack traffic; passing tests plus a pushed commit does not mutate the already-running gateway.
+
 ## Product implication
 
 If users expect mute/unmute to control all Hermes profiles in a Slack thread, the implementation needs either:

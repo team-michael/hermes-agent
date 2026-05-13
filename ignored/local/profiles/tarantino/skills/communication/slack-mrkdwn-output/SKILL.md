@@ -6,6 +6,35 @@ tags: [slack, formatting, messaging, mrkdwn, output, markdown]
 
 # Slack Output Formatting (Hermes Gateway)
 
+## CRITICAL: Tabular answer behavior in Slack (tarantino)
+
+When a Slack response involves tabular data — and especially when the user explicitly asks for "표 형태", "table form", "in a table" — DO NOT emit Markdown pipe tables (`| col1 | col2 |`). Slack does not render them and the user sees raw pipe text.
+
+Decision tree (apply every time a table-shaped answer is in the draft):
+
+1. **Genuine 3+ columns × 3+ rows of parallel structured data** (matrix, comparison grid, mapping table where each row is one entity and each column is one attribute):
+   - **Preferred for normal Slack replies:** include a hidden fenced directive in the final response:
+     ````
+     Visible lead-in text here.
+
+     ```slack-table
+     {"headers":["Col A","Col B","Col C"],"rows":[["1","2","3"],["4","5","6"]],"column_settings":[{"is_wrapped":true},{"is_wrapped":true},{"is_wrapped":true}]}
+     ```
+     ````
+     SlackAdapter strips the fenced block and sends one native Block Kit table attached to the **same Slack message**. If the user is in a Slack thread, it stays in that thread because gateway metadata supplies `thread_ts`.
+   - **Use `send_message(slack_table=…)` only when intentionally sending a separate/proactive message.** It now supports Slack thread targets as `slack:CHANNEL_ID:THREAD_TS`, but final-answer tables should use the directive above so the table lives inside the answer message.
+   - The visible text should be a real one-line summary; the table is appended by Slack at the bottom of that same message.
+2. **2-column key/value, ≤ 2 body rows, or short comparison**:
+   - Use a bullet list inside the regular response — no `slack_table`, no pipe table.
+   - Format: `- **Key** — value` per line.
+3. **Wide alignment-critical text that is not really tabular** (e.g. log lines, code output):
+   - Use a fenced code block (monospace).
+
+Never emit Markdown pipe tables in a Slack-bound response. The validator on `slack_table` enforces ≥3×3, so undersized data must go through bullets.
+
+Korean cue → English action:
+- "표 형태로 답해줘" / "테이블로 정리" → run the decision tree above. Do NOT respond with `| ... |` pipes even if the user wrote them in their request.
+
 ## When to Use
 - Any response whose delivery target is Slack (channel, thread, DM).
 - `Current Session Context` in the system prompt indicates `Source: Slack`.
@@ -43,9 +72,100 @@ If you write `*bold*` in Slack mrkdwn style directly, the gateway's regex interp
 
 ## What Still Does NOT Work (gateway cannot fix these)
 
-- **Tables** (`| a | b |`) — render as raw pipe text. Convert to bullet lists or fixed-width code block.
+- **Markdown pipe tables** (`| a | b |`) — render as raw pipe text. The gateway's Markdown → mrkdwn converter does not touch them.
 - **Nested list auto-rendering** — Slack flattens list indentation. Use `•` / `-` + newlines for flat lists. For hierarchy, prefix with indented `◦` or `-` but expect flat visual.
 - **H3+ headers** — `###` converts fine to bold, but there's only one level of bold, so don't rely on `#` vs `##` vs `###` for visual hierarchy.
+
+## Native Slack tables — same-message directive + `send_message(slack_table=…)` fallback
+
+As of 2026-05-12 tarantino supports two native Slack Block Kit table paths:
+
+1. **Same-message final reply (preferred)** — write a fenced `slack-table` JSON directive in the final response. SlackAdapter strips the directive and attaches the table to the same `chat.postMessage` call. This is the path for normal answers, because it stays inside the current message/thread.
+2. **Separate/proactive message** — call `send_message(..., slack_table={...})`. Use this only when you intentionally want to send a standalone message. It supports top-level targets (`slack:C...`) and threaded targets (`slack:C...:THREAD_TS`).
+
+Both paths are **profile-gated** — only `tarantino` sees/uses them; the feature is invisible on the other five profiles (andrej / boris / csm / hashimoto / sdr) and runtime gates drop/ignore the feature elsewhere.
+
+For the design pattern behind this gating (and what to do when you need to add the next profile-isolated feature), see `software-development/hermes-multi-profile-feature-rollout`. That skill carries the two-layer gate template, profile resolution snippet, restart strategy, and the slack-table rollout as a worked-example reference.
+
+When to reach for it:
+
+- 3+ columns × 3+ rows of genuinely parallel data that a reader wants to scan column-by-column (e.g. a competitor matrix, an experiment result grid, an ICP-mapping table).
+- The reader benefits from column alignment — misaligned text would hurt comprehension.
+
+When **NOT** to use it (prefer a bullet list in `message` instead):
+
+- 2-column key/value lists → `• **Key** — value`
+- Short comparisons (≤ 2 rows)
+- Anything mobile-read-heavy — Slack's table block scrolls awkwardly on mobile, bullet lists do not.
+- Styled text inside cells — cells are `raw_text`, so `**bold**` / `[link](url)` render as literal characters.
+
+Preferred final-response shape (same Slack message / same thread):
+
+````
+Repo 관리 범위 — 이번 변경의 파일 분류입니다.
+
+```slack-table
+{"headers":["파일","위치","repo 관리?"],"rows":[["tools/send_message_tool.py","repo 안","관리됨"],["tests/tools/test_send_message_slack_table.py","repo 안","관리됨"]],"column_settings":[{"is_wrapped":true},{"is_wrapped":true},{"is_wrapped":true}]}
+```
+````
+
+Separate/proactive call shape (use only when intentionally sending another message):
+
+```python
+send_message(
+    target="slack:C0XXXXXXX",               # or "slack:C0XXXXXXX:1778626719.373509" for a thread reply
+    message="ICP 레퍼런스 매핑 — Zai 주요 기능 4개",   # required text fallback
+    slack_table={
+        "headers": ["앱 고유 기능", "장면", "ICP 레퍼런스", "각도"],
+        "rows": [
+            ["Zai 알 까기", "2분 몰입", "Bitmoji 270.8K", "Identity play"],
+            ["Hangout AI", "황당 모험 공유", "storytime 88.5K", "Fake adventure"],
+            ["Switch-to-Reality", "일상 사진 난입", "FOMO 14.5K", "Invisible hangout"],
+        ],
+        "column_settings": [
+            {"is_wrapped": True},
+            {"is_wrapped": True},
+            {"is_wrapped": True},
+            {"is_wrapped": True},
+        ]
+    }
+)
+```
+
+Hard limits enforced by the validator (runtime rejection with an instructive error + bullet alternative):
+
+- ≥ 3 columns, ≥ 2 body rows (i.e. header + 2+ rows, minimum 3×3 shape)
+- ≤ 20 columns, ≤ 100 total rows (Slack API limits)
+- Cell values must be strings (raw_text)
+- `column_settings[i].align` ∈ {`left`, `center`, `right`}; `is_wrapped` bool
+
+The `message` field is still mandatory and becomes the mobile push / search / collapsed-thread-preview text — write a real one-line summary of what the table shows. The table itself is also mirrored into the session store as a plain-text grid so the LLM keeps context on subsequent turns.
+
+Hard rules from the Slack docs that bite you (validator surfaces them):
+- **Messages surface only** — not modals, not canvases, not home tabs.
+- **One table per message** — 2+ yields `invalid_attachments` + `only_one_table_allowed`.
+- **Appended as attachment at the bottom** of the message, not inline. Headers/prose go in `message`, table goes last.
+- **Cell content** is `raw_text` (plain text only — `**bold**` and `[link](url)` render as literal characters).
+
+For non-tarantino profiles or when the data does not meet the 3×3 minimum, fall back to the bullet / code-block patterns below.
+
+**Verifying the feature is live in your session** (do this before assuming it works):
+
+```python
+import os, sys
+os.environ['HERMES_PROFILE'] = 'tarantino'
+sys.path.insert(0, '/home/ubuntu/.hermes/hermes-agent')
+from tools.send_message_tool import SEND_MESSAGE_SCHEMA, _is_slack_table_enabled_for_current_profile
+assert _is_slack_table_enabled_for_current_profile()
+assert 'slack_table' in SEND_MESSAGE_SCHEMA['parameters']['properties']
+```
+
+If the assertion fails after a recent gateway restart, check:
+- Tarantino gateway PID start time vs. last commit time on `feat/slack-table-block-tarantino` / `main`. Schema is built at module import, so pre-commit gateway processes will not see it.
+- `SLACK_TABLE_ENABLED_PROFILES` allow-list in `tools/send_message_tool.py` still contains your profile.
+- `HERMES_PROFILE` env is correctly set in the runtime context (gateway subprocess sets it; one-off CLI runs may not).
+
+See `references/block-kit-table.md` for the full design rationale (why profile gating beats config flags in shared infra), the validator's instructive-error contract, and the rasterize-for-mirror pattern that prevents session-context loss for blocks-only messages.
 
 ## The #2 Pitfall: Wrapping the ENTIRE Message in Triple-Backticks
 
@@ -152,116 +272,21 @@ CPA           $3.20    -12%
 3. Decision gate: ratio ≥ 5% → scale
 ```
 
-## Threaded Replies: `send_message` Cannot Thread to Slack
+## Threaded Slack replies and same-message tables
 
-**Critical finding (2026-04-28, cron job)**: The Hermes `send_message` tool **does not support `thread_ts`** for Slack. The `slack:chat_id:thread_id` target format is rejected with `Could not resolve 'chat_id:thread_id' on slack` — `_parse_target_ref` in `tools/send_message_tool.py` only recognizes the `chat_id:thread_id` suffix for Telegram topics, Discord threads, and Feishu; Slack falls through to `resolve_channel_name` which doesn't know the `:thread_ts` syntax.
+Current tarantino behavior (2026-05-12+):
 
-Supported for Slack via `send_message`:
-- `slack` — home channel (from `SLACK_HOME_CHANNEL`) ✓ verified
-- `slack:C012345` — channel by ID (top-level post) ✓ verified
+- **Normal final answer in a Slack thread**: use the `slack-table` fenced directive. SlackAdapter attaches the table to the same final answer message and preserves the inbound thread via gateway metadata. No tool call needed.
+- **Proactive / separate send**: `send_message` now supports Slack threaded targets:
+  - `slack:C0123456789` — top-level channel/DM message
+  - `slack:C0123456789:1777331267.171749` — reply under that Slack thread (`thread_ts`)
+  - `slack:D0123456789:1777331267.171749` — reply under a DM thread
+- **Still not supported**: `slack:#channel-name` for Slack in this tool path. Use raw `C...`, `G...`, or `D...` IDs.
 
-**NOT supported** (confirmed 2026-04-29):
-- `slack:C012345:1777331267.171749` — threaded reply. Errors with `Could not resolve 'chat_id:thread_id' on slack`.
-- `slack:#channel-name` — hash-prefixed channel name. Errors with `Could not resolve '#channel-name' on slack`. Despite what the generic `send_message` docstring says about `#channel` formats, Slack specifically rejects this — use the raw `C...` ID or fall back to bare `slack` (home channel alias).
+Important Slack UI constraint:
+- The table is not inline between two paragraphs. Slack renders the Block Kit `table` block as an attachment-style block at the bottom of the **same message**. This is still much better than a separate top-level message: the table stays with the answer and stays inside the current thread.
 
-**Response shape for `thread_ts` capture** (confirmed 2026-04-29): `send_message` returns `{"success": true, "chat_id": "C...", "message_id": "1777417771.544779", ...}`. Use `response["message_id"]` as `thread_ts` for subsequent `chat.postMessage` calls.
-
-### Workaround: call Slack Web API directly
-
-For header+thread posting patterns (cron-style daily reports):
-
-```python
-import json, urllib.request
-
-# Load profile .env (not the root ~/.hermes/.env — each profile has a distinct token)
-env = {}
-with open('/home/ubuntu/.hermes/profiles/<profile>/.env') as f:
-    for line in f:
-        line = line.strip()
-        if not line or line.startswith('#') or '=' not in line: continue
-        k, v = line.split('=', 1)
-        # Strip inline comments — profile .env files often have `KEY=value  # description`
-        v = v.split('#', 1)[0].strip().strip('"').strip("'")
-        env[k] = v
-token = env['SLACK_BOT_TOKEN']
-
-# Step 1 — header via send_message (it auto-converts Markdown → mrkdwn)
-#   Capture `message_id` from the response → that's the `thread_ts`.
-# Step 2 — thread replies via direct chat.postMessage with thread_ts parameter.
-
-def post_thread(text, channel, thread_ts):
-    payload = {
-        "channel": channel, "thread_ts": thread_ts, "text": text,
-        "mrkdwn": True, "unfurl_links": False, "unfurl_media": False,
-    }
-    req = urllib.request.Request(
-        "https://slack.com/api/chat.postMessage",
-        data=json.dumps(payload).encode('utf-8'),
-        headers={"Authorization": f"Bearer {token}",
-                 "Content-Type": "application/json; charset=utf-8"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.loads(r.read())
-```
-
-### Formatting in direct-API thread replies
-
-Direct `chat.postMessage` does **NOT** run the gateway's Markdown→mrkdwn conversion. You **must** send native Slack mrkdwn syntax — not standard Markdown.
-
-**Correction (2026-04-29)**: An earlier version of this skill claimed `**bold**` and `[label](url)` "render OK in Slack's own parser on `mrkdwn=True` for most cases." That is **false** in current Slack. On direct `chat.postMessage` with `mrkdwn=True`:
-- `**bold**` renders as the literal text `**bold**` (asterisks visible)
-- `## Header` renders as the literal text `## Header`
-- `[label](url)` renders as the literal text `[label](url)`
-
-You must convert Markdown → mrkdwn yourself before the API call. Drop-in converter (verified working 2026-04-29):
-
-```python
-import re
-
-def md_to_mrkdwn(text: str) -> str:
-    """Convert standard Markdown to Slack mrkdwn for direct chat.postMessage."""
-    lines = text.split('\n')
-    out = []
-    in_code = False
-    for line in lines:
-        # Toggle code block; strip any language tag (Slack dislikes ```python)
-        if re.match(r'^\s*```', line):
-            out.append('```')
-            in_code = not in_code
-            continue
-        if in_code:
-            out.append(line)
-            continue
-        # ATX headers → bold line
-        m = re.match(r'^(#{1,6})\s+(.*)$', line)
-        if m:
-            out.append(f"*{m.group(2).strip()}*")
-            continue
-        new = line
-        # Order matters: triple-star first, then double, then link.
-        new = re.sub(r'\*\*\*(.+?)\*\*\*', r'*_\1_*', new)   # ***both***
-        new = re.sub(r'\*\*(.+?)\*\*', r'*\1*', new)           # **bold**
-        new = re.sub(r'~~(.+?)~~', r'~\1~', new)                # ~~strike~~
-        new = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<\2|\1>', new)  # [x](y)
-        # NOTE: single-asterisk italic (*x*) is intentionally left alone.
-        # Source rarely uses it, and converting would corrupt the just-made *bold*.
-        # If you need italic, write _x_ directly in the source — Slack treats _x_ as italic.
-        out.append(new)
-    return '\n'.join(out)
-```
-
-Pattern for header + thread (verified end-to-end, 2026-04-29):
-
-```python
-# Stage 1: header via send_message (gateway converts Markdown → mrkdwn)
-resp = send_message(action="send", target="slack", message=header_markdown)
-thread_ts = resp["message_id"]
-
-# Stage 2: thread replies via chat.postMessage (we convert Markdown → mrkdwn ourselves)
-for part_md in parts:
-    post_thread(md_to_mrkdwn(part_md), channel, thread_ts)
-```
+Direct Web API workaround is now rarely needed. Use it only for advanced custom `blocks` beyond the table helper.
 
 ### Token + channel pitfalls
 
@@ -271,14 +296,14 @@ for part_md in parts:
 ### Character limit for single chat.postMessage
 
 - Slack's hard cap is 40,000 chars for the `text` field, but message truncation shows up visually around ~4000 chars in the Slack UI.
-- For long reports, split into 3-4 replies of ~3500 chars each, all targeting the same `thread_ts`.
+- A same-message table reply sends one `chat.postMessage` call; keep the visible lead-in compact and put the structured content in the table.
 
 ## Verification Before Sending
 
 Scan the draft for:
 - **Is the entire message wrapped in an outer triple-backtick fence?** If yes, REMOVE the outer fence. Only inner tables / code / copy-paste prompts should be fenced.
 - Any `*single-asterisk*` emphasis → replace with `**double**`. Otherwise it renders as italic.
-- Any `| ... |` markdown table rows → convert to bullets or code block.
+- Any `| ... |` markdown table rows → convert to a `slack-table` directive if genuine ≥3×3 tabular data; otherwise bullets or code block.
 - Any `_italic_` used purely for emphasis → convert to `**bold**` (Minkyu's preference).
 - Any `<url|text>` written by hand → convert to `[text](url)` (let the gateway handle the transform).
 - Code blocks with language tags → strip the language tag.

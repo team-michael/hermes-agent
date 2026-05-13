@@ -168,6 +168,18 @@ Common interpretation:
 
 See `references/user-push-history-missing-device.md` for a compact SQL/Athena recipe from an investigated case.
 
+## Statistics / PA-style analysis request triage
+
+Use this path when a user asks whether Notifly can satisfy prospect requests for deep campaign performance analysis, e.g. brand/product/category/store/AOV breakdowns or PA/ad-hoc BI-like slicing.
+
+1. Separate **campaign attribution/reporting** from **free-form analytics**. Notifly can reasonably own campaign execution, conversion attribution, and fixed POC reports; arbitrary multi-dimensional exploration is closer to BI/PA.
+2. Check whether the requested metric is already in campaign statistics (`metric_type`, `conversion_type`, `count`, `sum`, `dimension_key`, `dimension_value`) or only available in raw event params/Athena.
+3. Remember the current conversion analytics path may be first-conversion-centric (`_getConversionEventStats()` uses `metrics[0]`) and event counter aggregation keeps only the first `segmentation_event_param_keys[0]`; do not promise arbitrary brand × product × store breakdowns as a standard console capability.
+4. Safe proposal shape: **4–6 week fixed-scope POC report** with pre-agreed dimensions/metrics, delivered as CSV/Google Sheet or managed analysis; route true ad-hoc exploration to the customer's BI/PA.
+5. Minimal implementation shape: purchase event contract (`amount`/`event_value` plus 1–2 dimensions such as `brand` or `category`) + one fixed breakdown export/query. Avoid arbitrary multi-dimension UI scope in first pass.
+
+See `references/pa-ad-hoc-analysis-vs-poc-reporting.md` for code evidence and customer-facing wording.
+
 ## High-signal files to cite
 
 - `services/server/web-console/src/models/campaignStatistics.ts`
@@ -193,7 +205,9 @@ See `references/user-push-history-missing-device.md` for a compact SQL/Athena re
 
 ## Output template
 
-Answer with three layers:
+For Slack product/sales advisory threads, keep the first answer concise and limited to the exact question. Avoid comprehensive frameworks unless asked; give a recommendation, 2–4 bullets of rationale/scope, and one safe customer-facing sentence if useful.
+
+For metric semantics debugging, answer with three layers:
 - **Raw event level:** what rows are written
 - **Campaign/statistics level:** what gets grouped into displayed metric
 - **Pipeline caveat:** legacy vs current behavior

@@ -34,3 +34,24 @@ Any ECS service whose log group contains mixed application logs + HTTP access lo
 - `ERROR` in user-generated content fields logged as part of a request
 
 **Remediation direction**: narrow the metric filter pattern so it does not match access logs, or move access logs to a separate log stream.
+
+## `FailedToUploadImageException` — Kakao image URL validation (web-console)
+
+**Alarm**: `/aws/ecs/notifly-services-prod/web-console console error`
+**Metric filter**: `%ERROR|Exception%`
+**Trigger log**: `[FailedToUploadImageException(유효하지 않은 URL입니다. : <url>)]`
+
+**Mechanism**: KakaoTalk channel image upload fails because the provided image URL is invalid or unreachable. The web-console logs this as an ERROR. The exception string does **not** exist in the `notifly-event` codebase — it originates from an external Kakao SDK or wrapper library.
+
+**Triage**: When the helper returns `can_answer_root_cause: false` and manual follow-up shows this signature in current trigger contexts, run a bounded Logs Insights query:
+
+```sql
+fields @timestamp, @message
+| filter @message like 'FailedToUploadImageException'
+| stats count() as cnt
+| limit 1
+```
+
+If the 30d count is single-digit and no other ERROR patterns exist, classify as `no_action` — this is a handled business rejection, not a service bug.
+
+See `references/web-console-kakao-image-upload-validation-error.md` for full triage and remediation direction.

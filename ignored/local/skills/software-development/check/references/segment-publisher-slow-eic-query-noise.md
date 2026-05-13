@@ -146,6 +146,41 @@ Evidence:
 
 Classification: `no_action` (publish completed, no DLQ/ECS failure, no customer impact).
 
+## 2026-05-12 session — `segment-publisher long running alam` recurrence
+
+Alarm: `segment-publisher long running alam`  
+Transition: `INSUFFICIENT_DATA -> ALARM` at 2026-05-12 11:51:05 UTC  
+Datapoint: `Sum=1.0` at 2026-05-12 11:46:00 UTC (metric period 300s)
+
+Evidence:
+- Trigger log (2026-05-12 11:50:32.098 UTC): `[WARN] Processing took longer than expected: 3077274.25 ms`
+- Same alarm-window window has **zero ERROR logs**; only the single WARN line.
+- 30-day metric history (`Custom/segment-publisher` / `SegmentPublisher.ExecutionTimeOverThreshold`, `Period=86400`, `Statistics=Sum`): exactly **1.0 every day** from 2026-04-12 through 2026-05-12 (31 consecutive days). No missed days.
+- Daily timing: consistently ~11:44–11:50 UTC (20:44–20:50 KST), durations ~2977–3150 s (~49.6–52.5 min).
+- Alarm history transitions are all `INSUFFICIENT_DATA -> ALARM` (no `OK` state), because `TreatMissingData: missing` and the metric only emits when the log line appears. Between daily runs the alarm lapses to `INSUFFICIENT_DATA`.
+- This matches the exact same Pattern B (`sqs_publisher.ts` batch-processing WARN) seen on 2026-05-08 through 2026-05-10.
+
+Scope note: the single WARN line in this window carries no explicit campaign or project ID because the log line is emitted from `sqs_publisher.ts:55` as a summary. Prior sessions on adjacent days have scoped this to `stepup/UL1T00` (`[만보기] 매일 적립 리마인드`). When the exact trigger log has no IDs but the daily baseline is stable and prior days are already scoped, it is acceptable to scope by prior-day evidence rather than forcing "unknown."
+
+Classification: `no_action`. The 31-day perfect-daily recurrence with no ERROR coexistence confirms this is expected batch-processing latency, not an incident signal.
+
+## 2026-05-12 session — `segment-publisher slow eic query` ALARM (ConsoleErrors)
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`  
+Transition: `OK -> ALARM` at 2026-05-12 11:51:39 UTC (KST 20:51)  
+Datapoint: `Sum=1.0` at 2026-05-12 11:50:00 UTC (metric period 60s)
+
+Evidence:
+- Trigger log (2026-05-12 11:50:32.098 UTC, stream `prod/segment-publisher/b5d7054cea2946828d9a1348907db758`): `[WARN] Processing took longer than expected: 3077274.25 ms`
+- Same-stream context: 18 batches, final count `campaignId: UL1T00, 883089 recipients published.`
+- Received event payload shows `schedule_type: "user_journey"`, id `UL1T00`, name `[만보기] 매일 적립 리마인드`.
+- Project explicit in stream: `project_id: 32d8d9d6294d52e7a5427c036b471f91` → DynamoDB `project` → product `stepup`.
+- The stream was found via stream-first tail check after the most-recent-by-`lastEventTimestamp` stream (`b23df5aa70da498eb30e23fb9dc138b8`) contained no trigger; `describe_log_streams` had reported `lastEventTimestamp=11:27:48` for `b5d7054cea2946828d9a1348907db758`, but `get_log_events` revealed events up to 11:50:32, exposing stale metadata.
+- Daily metric sum (`ConsoleErrors` `segment-publisher-prod slow eic query`, `Period=86400`): 79 total over 30 days, 12 over 7 days, 1 today. Baseline 1–7/day.
+- This is the same Pattern B (`sqs_publisher.ts` batch-processing WARN) that fired on the companion `Custom/segment-publisher` `segment-publisher long running alam` minutes earlier. Two alarms fire for the same benign log line.
+
+Classification: `no_action` — publish completed, no DLQ/ECS failure, no customer impact. The `ConsoleErrors` alarm is functionally redundant for Pattern B.
+
 ## 2026-05-11 session — `segment-publisher slow eic query` ALARM (Pattern A), 06:34 UTC
 
 Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`  
@@ -217,15 +252,15 @@ Investigation note:
 
 When the trigger is `EventCounterCteManager.extract:{project_id} took too long: {ms}ms`, the log line carries the `project_id` but often **no campaign or user-journey ID**. In the stream context, `campaign_id` may appear as `undefined` because the schedule is segment-condition-based rather than tied to a single campaign entity. Do not force a campaign scope when the log explicitly shows `campaign_id: undefined` and no `user_journey.id` is present in the payload. The correct scope is `project/unknown-campaign` (or `project/unknown-user-journey` when the payload shape suggests a journey).
 
-### Baseline assessment via daily metric datapoints
+If a single day jumps to >10 or the weekly total doubles versus the 30-day mean, treat it as `needs_fix` and inspect the dominant project in that window. Otherwise, `no_action` is appropriate. The 2026-05-12 count (1) is well within the 1–7 baseline.
 
-For this alarm, `get_metric_statistics` with `Period=86400` and `Statistics=['Sum']` across 30 days produces a stable 1–7 / day histogram. This is the quickest way to distinguish a baseline recurring pattern from a true anomaly. Example daily counts observed (updated 2026-05-11):
+Example daily counts observed (updated 2026-05-12):
 
 ```
-2026-04-11=1, 04-12=1, 04-13=7, 04-14=3, 04-15=2, 04-16=3, 04-17=4, 04-18=1,
+2026-04-12=1, 04-13=7, 04-14=3, 04-15=2, 04-16=3, 04-17=4, 04-18=1,
 04-19=1, 04-20=5, 04-21=3, 04-22=2, 04-23=3, 04-24=6, 04-25=2, 04-26=2,
 04-27=4, 04-28=3, 04-29=5, 04-30=2, 05-01=1, 05-02=3, 05-03=1, 05-04=2,
-05-05=1, 05-06=1, 05-07=3, 05-08=1, 05-09=1, 05-10=1, 05-11=4
+05-05=1, 05-06=1, 05-07=3, 05-08=1, 05-09=1, 05-10=1, 05-11=4, 05-12=1
 ```
 
 If a single day jumps to >10 or the weekly total doubles versus the 30-day mean, treat it as `needs_fix` and inspect the dominant project in that window. Otherwise, `no_action` is appropriate. The 2026-05-11 count (4) is within the 1–7 baseline range but higher than the recent 1–3/day trend, so monitor for sustained elevation rather than treating it as an isolated anomaly.

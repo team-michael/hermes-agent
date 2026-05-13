@@ -6,7 +6,7 @@ Notifly analytics Athena defaults: region `ap-northeast-2`, workgroup `primary`,
 §
 Notifly docs live site `docs.notifly.tech` is Mintlify-backed from `notifly-tech/notifly-docs`; old `team-michael/notifly-docs` is deprecated Docusaurus/GitHub Pages.
 §
-For Slack image/attachment questions, do not infer from text-only thread context that media is inaccessible; when channel_id/thread_ts are available, retrieve the Slack thread/root via Web API, inspect `messages[0].files[]`/attachments, download authorized images, and use vision analysis.
+Slack media Qs: if channel/thread IDs exist, fetch root/thread via Web API, inspect files/attachments, download authorized images, run vision.
 §
 CloudCheckr AU: for customer 2000841/account a4dcbb7d-0bb4-4f2c-a6c6-51a80586d728 use skill `cloudcheckr-service-cost-api-fetch`; user permits ending other sessions on MaxSessionsNotice.
 §
@@ -17,3 +17,5 @@ For `team-michael/cloudflare-containers` Access-protected endpoints, Cloudflare 
 For remote/container operations from Slack, Hermes terminal acts on local Hermes runtime unless explicit SSH/API target is established and verified; before filesystem/service mutation, verify target identity with hostname/whoami/pwd.
 §
 Notifly ECS SC: check `deployments[].serviceConnectConfiguration` (top-level may be null). Slack #engineering 2026-01-09: SC imposes 15s request timeout.
+§
+Notifly console: use `NOTIFLY_AUTH` email:password for `/ko/auth/login`; Michael Product is slug `michael` dashboard path.
