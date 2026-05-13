@@ -4019,3 +4019,74 @@ class TestSlashEphemeralAck:
         # the normal single-user case; the ContextVar path is the precise one.
         # The key invariant is: when the ContextVar IS set, it matches exactly.
         assert ctx is not None  # fallback path finds the entry
+
+
+# ---------------------------------------------------------------------------
+# TestSlackTableDirective
+# ---------------------------------------------------------------------------
+
+class TestSlackTableDirective:
+    """Native Slack table blocks embedded in the same final response message."""
+
+    @pytest.mark.asyncio
+    async def test_send_extracts_slack_table_directive_into_same_message(self, adapter, monkeypatch):
+        monkeypatch.setenv("HERMES_PROFILE", "tarantino")
+        adapter._app.client.chat_postMessage = AsyncMock(return_value={"ts": "ts_table"})
+        content = (
+            "**Repo 관리 범위**\n\n"
+            "```slack-table\n"
+            '{"headers":["파일","위치","repo 관리?"],'
+            '"rows":[["tools/send_message_tool.py","repo 안","관리됨"],'
+            '["tests/tools/test_send_message_slack_table.py","repo 안","관리됨"]],'
+            '"column_settings":[{"is_wrapped":true},{"is_wrapped":true},{"is_wrapped":true}]}'
+            "\n```"
+        )
+
+        result = await adapter.send("C123456789", content, metadata={"thread_id": "1778626719.373509"})
+
+        assert result.success is True
+        kwargs = adapter._app.client.chat_postMessage.call_args.kwargs
+        assert kwargs["channel"] == "C123456789"
+        assert kwargs["thread_ts"] == "1778626719.373509"
+        assert kwargs["text"].startswith("*Repo 관리 범위*")
+        assert "slack-table" not in kwargs["text"]
+        assert kwargs["mrkdwn"] is True
+        assert kwargs["blocks"][0]["type"] == "table"
+        assert kwargs["blocks"][0]["rows"][0][0] == {"type": "raw_text", "text": "파일"}
+        assert kwargs["blocks"][0]["rows"][1][2] == {"type": "raw_text", "text": "관리됨"}
+
+    @pytest.mark.asyncio
+    async def test_slack_table_directive_is_profile_gated(self, adapter, monkeypatch):
+        monkeypatch.setenv("HERMES_PROFILE", "boris")
+        adapter._app.client.chat_postMessage = AsyncMock(return_value={"ts": "ts1"})
+        content = (
+            "Visible\n\n"
+            "```slack-table\n"
+            '{"headers":["a","b","c"],"rows":[["1","2","3"],["4","5","6"]]}'
+            "\n```"
+        )
+
+        await adapter.send("C123456789", content)
+
+        kwargs = adapter._app.client.chat_postMessage.call_args.kwargs
+        assert "blocks" not in kwargs
+        assert "slack-table" in kwargs["text"]
+
+    @pytest.mark.asyncio
+    async def test_invalid_slack_table_directive_surfaces_error_without_blocks(self, adapter, monkeypatch):
+        monkeypatch.setenv("HERMES_PROFILE", "tarantino")
+        adapter._app.client.chat_postMessage = AsyncMock(return_value={"ts": "ts1"})
+        content = (
+            "Table attempt\n\n"
+            "```slack-table\n"
+            '{"headers":["a","b"],"rows":[["1","2"],["3","4"]]}'
+            "\n```"
+        )
+
+        await adapter.send("C123456789", content)
+
+        kwargs = adapter._app.client.chat_postMessage.call_args.kwargs
+        assert "blocks" not in kwargs
+        assert "Slack table render failed" in kwargs["text"]
+        assert "3 columns" in kwargs["text"]
+        assert "```slack-table" not in kwargs["text"]

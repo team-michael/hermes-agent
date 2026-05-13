@@ -321,6 +321,22 @@ class SlackAdapter(BasePlatformAdapter):
 
     MAX_MESSAGE_LENGTH = 39000  # Slack API allows 40,000 chars; leave margin
     supports_code_blocks = True  # Slack mrkdwn renders fenced code blocks
+    # Hidden final-response directive consumed by SlackAdapter.send():
+    #
+    #   ```slack-table
+    #   {"headers":[...],"rows":[...],"column_settings":[...]}
+    #   ```
+    #
+    # The fenced block is stripped from visible text and rendered as a native
+    # Slack Block Kit table in the *same* chat.postMessage call. Because send()
+    # already receives reply_to/metadata from the gateway, this lands inside the
+    # current thread instead of creating a new top-level message. Profile gating
+    # is delegated to tools.send_message_tool's allow-list so other profiles do
+    # not silently gain a new content syntax.
+    _SLACK_TABLE_FENCE_RE = re.compile(
+        r"(^|\n)```slack-table\s*\n(?P<json>.*?)\n```\s*(?=\n|$)",
+        re.DOTALL,
+    )
 
     def __init__(self, config: PlatformConfig):
         super().__init__(config, Platform.SLACK)
@@ -1157,6 +1173,52 @@ class SlackAdapter(BasePlatformAdapter):
             return self._team_clients[team_id]
         return self._app.client  # fallback to primary
 
+    def _extract_slack_table_from_content(self, content: str) -> tuple[str, Optional[dict], Optional[str]]:
+        """Extract one ```slack-table JSON``` directive from a final response.
+
+        Returns ``(cleaned_content, table_block, error)``. The directive lets an
+        agent put a native Block Kit table *inside the same Slack message* as
+        the final response instead of using the separate `send_message` tool.
+        Since SlackAdapter.send already receives gateway thread metadata, the
+        table lands in the current thread when the inbound message came from a
+        thread.
+
+        Only allow-listed profiles can use the directive; other profiles leave
+        the content untouched so the feature has zero blast radius.
+        """
+        if not content or "```slack-table" not in content:
+            return content, None, None
+        try:
+            from tools.send_message_tool import (
+                _is_slack_table_enabled_for_current_profile,
+                _validate_slack_table,
+                _build_slack_table_block,
+            )
+            if not _is_slack_table_enabled_for_current_profile():
+                return content, None, None
+        except Exception as exc:
+            logger.debug("[Slack] slack-table directive unavailable: %s", exc, exc_info=True)
+            return content, None, None
+
+        match = self._SLACK_TABLE_FENCE_RE.search(content)
+        if not match:
+            return content, None, None
+
+        cleaned = (content[:match.start()] + "\n" + content[match.end():]).strip()
+        raw = match.group("json").strip()
+        try:
+            table = json.loads(raw)
+        except Exception as exc:
+            return cleaned, None, f"Invalid slack-table JSON: {exc}"
+        ok, err = _validate_slack_table(table)
+        if not ok:
+            return cleaned, None, f"Invalid slack-table payload: {err}"
+        try:
+            block = _build_slack_table_block(table)
+        except Exception as exc:
+            return cleaned, None, f"Failed to build Slack table block: {exc}"
+        return cleaned or "(table)", block, None
+
     async def send(
         self,
         chat_id: str,
@@ -1181,11 +1243,16 @@ class SlackAdapter(BasePlatformAdapter):
                     content,
                 )
 
+            # Extract native Slack table directive before Markdown → mrkdwn.
+            # This allows final responses to attach a Block Kit table inside the
+            # same Slack message (and therefore the same thread) without using
+            # send_message to create a separate top-level message.
+            content, table_block, table_error = self._extract_slack_table_from_content(content)
+            if table_error:
+                content = f"{content}\n\n> Slack table render failed: {table_error}" if content else f"> Slack table render failed: {table_error}"
+
             # Convert standard markdown → Slack mrkdwn
             formatted = self.format_message(content)
-
-            # Split long messages, preserving code block boundaries
-            chunks = self.truncate_message(formatted, self.MAX_MESSAGE_LENGTH)
 
             thread_ts = self._resolve_thread_ts(reply_to, metadata)
             last_result = None
@@ -1194,19 +1261,37 @@ class SlackAdapter(BasePlatformAdapter):
             # Controlled via platform config: gateway.slack.reply_broadcast
             broadcast = self.config.extra.get("reply_broadcast", False)
 
-            for i, chunk in enumerate(chunks):
+            if table_block:
                 kwargs = {
                     "channel": chat_id,
-                    "text": chunk,
+                    "text": formatted or "(table)",
+                    "blocks": [table_block],
                     "mrkdwn": True,
+                    "unfurl_links": False,
+                    "unfurl_media": False,
                 }
                 if thread_ts:
                     kwargs["thread_ts"] = thread_ts
-                    # Only broadcast the first chunk of the first reply
-                    if broadcast and i == 0:
+                    if broadcast:
                         kwargs["reply_broadcast"] = True
-
                 last_result = await self._get_client(chat_id).chat_postMessage(**kwargs)
+            else:
+                # Split long messages, preserving code block boundaries
+                chunks = self.truncate_message(formatted, self.MAX_MESSAGE_LENGTH)
+
+                for i, chunk in enumerate(chunks):
+                    kwargs = {
+                        "channel": chat_id,
+                        "text": chunk,
+                        "mrkdwn": True,
+                    }
+                    if thread_ts:
+                        kwargs["thread_ts"] = thread_ts
+                        # Only broadcast the first chunk of the first reply
+                        if broadcast and i == 0:
+                            kwargs["reply_broadcast"] = True
+
+                    last_result = await self._get_client(chat_id).chat_postMessage(**kwargs)
 
             # Clear Slack Assistant status as soon as the final message is posted.
             if thread_ts:

@@ -26,8 +26,15 @@ _FEISHU_TARGET_RE = re.compile(r"^\s*((?:oc|ou|on|chat|open)_[-A-Za-z0-9]+)(?::(
 # because the API requires a conversation ID. To DM a user you must first call
 # conversations.open to obtain a D... ID. Without this gate, Slack IDs fall
 # through to channel-name resolution, which only matches by name and fails.
-_SLACK_TARGET_RE = re.compile(r"^\s*([CGDU][A-Z0-9]{8,})\s*$")
-# Session-derived Slack thread targets use "<conversation_id>:<thread_ts>".
+#
+# An optional `:thread_ts` suffix routes the post into an existing thread.
+# `thread_ts` is Slack's float-as-string timestamp (e.g. "1778610929.846749"),
+# captured from any earlier message in the thread (the parent's `ts` or any
+# reply's `thread_ts`). When present, `chat.postMessage` returns a reply rather
+# than a top-level channel message.
+_SLACK_TARGET_RE = re.compile(r"^\s*([CGDU][A-Z0-9]{8,})(?::([^\s:]+))?\s*$")
+# Slack threaded target: slack:C1234567890:1778626719.373509
+# The second component is the thread root `ts` value passed as `thread_ts`.
 _SLACK_THREAD_TARGET_RE = re.compile(r"^\s*([CGD][A-Z0-9]{8,}):([^\s:]+)\s*$")
 _WEIXIN_TARGET_RE = re.compile(r"^\s*((?:wxid|gh|v\d+|wm|wb)_[A-Za-z0-9_-]+|[A-Za-z0-9._-]+@chatroom|filehelper)\s*$")
 _YUANBAO_TARGET_RE = re.compile(r"^\s*((?:group|direct):[^:]+)\s*$")
@@ -123,36 +130,292 @@ async def _send_telegram_message_with_retry(bot, *, attempts: int = 3, **kwargs)
             await asyncio.sleep(delay)
 
 
-SEND_MESSAGE_SCHEMA = {
-    "name": "send_message",
-    "description": (
-        "Send a message to a connected messaging platform, or list available targets.\n\n"
-        "IMPORTANT: When the user asks to send to a specific channel or person "
-        "(not just a bare platform name), call send_message(action='list') FIRST to see "
-        "available targets, then send to the correct one.\n"
-        "If the user just says a platform name like 'send to telegram', send directly "
-        "to the home channel without listing first."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "action": {
-                "type": "string",
-                "enum": ["send", "list"],
-                "description": "Action to perform. 'send' (default) sends a message. 'list' returns all available channels/contacts across connected platforms."
-            },
-            "target": {
-                "type": "string",
-                "description": "Delivery target. Format: 'platform' (uses home channel), 'platform:#channel-name', 'platform:chat_id', or 'platform:chat_id:thread_id' for Telegram topics and Discord threads. Examples: 'telegram', 'telegram:-1001234567890:17585', 'discord:999888777:555444333', 'discord:#bot-home', 'slack:#engineering', 'signal:+155****4567', 'matrix:!roomid:server.org', 'matrix:@user:server.org', 'ntfy:alerts-channel' (explicit ntfy topic), 'yuanbao:direct:<account_id>' (DM), 'yuanbao:group:<group_code>' (group chat)"
-            },
-            "message": {
-                "type": "string",
-                "description": "The message text to send. To send an image or file, include MEDIA:<local_path> (e.g. 'MEDIA:/tmp/report.pdf') in the message — the platform will deliver it as a native media attachment."
-            }
+# ---------------------------------------------------------------------------
+# Slack Block Kit `table` block — profile-gated feature
+# ---------------------------------------------------------------------------
+#
+# Slack added a native Block Kit `table` block on 2025-08-14. Rendering genuine
+# tabular data (3+ cols × 3+ rows) as a native table is vastly nicer than the
+# fake ASCII / bullet workarounds, but:
+#
+#   1. The option is Slack-only. Other adapters have no analogue.
+#   2. LLMs tend to misuse tables for anything that could be bullets, which is
+#      catastrophic on mobile.
+#   3. The code base is shared across 6 profiles (tarantino / andrej / boris /
+#      csm / hashimoto / sdr), so the blast radius of a bad default is large.
+#
+# The mitigation is an allow-list of profiles that *explicitly opt in*. When
+# the current profile is not in the allow-list:
+#   - the `slack_table` parameter is omitted from the tool schema entirely,
+#     so the model never sees it and therefore cannot attempt to use it;
+#   - even if a caller sneaks `slack_table` into args (e.g. via programmatic
+#     invocation), the runtime gate silently ignores it and falls through to
+#     the plain-text path.
+#
+# Add a profile to the allow-list only after validating the feature in that
+# profile's Slack home channel.
+SLACK_TABLE_ENABLED_PROFILES = frozenset({"tarantino"})
+
+
+def _is_slack_table_enabled_for_current_profile() -> bool:
+    """Return True iff the active Hermes profile is allowed to use `slack_table`.
+
+    Resolution order (first non-empty wins):
+      1. ``HERMES_PROFILE`` environment variable (set by gateway subprocess
+         spawner and kanban_db) — authoritative when present.
+      2. ``hermes_cli.profiles.get_active_profile_name()`` which resolves via
+         ``HERMES_HOME`` → profile folder mapping.
+
+    Profile resolution failures fall back to ``False`` so the feature stays
+    off-by-default for every profile that hasn't opted in.
+    """
+    try:
+        env_profile = os.environ.get("HERMES_PROFILE") or os.environ.get("HERMES_PROFILE_NAME")
+        if env_profile:
+            return env_profile.strip() in SLACK_TABLE_ENABLED_PROFILES
+        try:
+            from hermes_cli.profiles import get_active_profile_name
+            return get_active_profile_name() in SLACK_TABLE_ENABLED_PROFILES
+        except Exception:
+            return False
+    except Exception:
+        return False
+
+
+def _build_send_message_schema() -> dict:
+    """Build the send_message tool schema, gating Slack-only extras by profile."""
+    properties = {
+        "action": {
+            "type": "string",
+            "enum": ["send", "list"],
+            "description": "Action to perform. 'send' (default) sends a message. 'list' returns all available channels/contacts across connected platforms."
         },
-        "required": []
+        "target": {
+            "type": "string",
+            "description": "Delivery target. Format: 'platform' (uses home channel), 'platform:#channel-name', 'platform:chat_id', or 'platform:chat_id:thread_id' for Telegram topics and Discord threads. Examples: 'telegram', 'telegram:-1001234567890:17585', 'discord:999888777:555444333', 'discord:#bot-home', 'slack:#engineering', 'signal:+155****4567', 'matrix:!roomid:server.org', 'matrix:@user:server.org', 'yuanbao:direct:<account_id>' (DM), 'yuanbao:group:<group_code>' (group chat)"
+        },
+        "message": {
+            "type": "string",
+            "description": "The message text to send. To send an image or file, include MEDIA:<local_path> for a file under a Hermes media cache or HERMES_MEDIA_ALLOW_DIRS — the platform will deliver it as a native media attachment."
+        }
     }
-}
+
+    if _is_slack_table_enabled_for_current_profile():
+        properties["slack_table"] = {
+            "type": "object",
+            "description": (
+                "SLACK ONLY, RARELY USED. Render a native Slack Block Kit table block. "
+                "Use ONLY when the data is genuinely tabular AND meaningfully benefits from "
+                "column alignment — minimum 3 columns × 3 rows (header + 2+ data rows) of "
+                "parallel structured data that a reader will want to scan column-by-column. "
+                "DO NOT use for: 2-column key/value lists, bulletable comparisons, short "
+                "lists, or anything that reads naturally as '- **Key** — value' bullets. "
+                "Bullets render better on mobile and in thread previews. "
+                "The `message` field is still required — it becomes the fallback text for "
+                "mobile push notifications, search indexing, and collapsed thread previews, "
+                "so make it a real one-line summary of what the table contains. "
+                "Cells are `raw_text` (plain text only — markdown like **bold** renders as "
+                "literal asterisks in Slack). Max 100 rows, 20 columns per row. One table "
+                "per message. Non-Slack targets ignore this field."
+            ),
+            "properties": {
+                "headers": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Column headers (row 0). Must be non-empty and match the column count of every row in `rows`."
+                },
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {"type": "string"}
+                    },
+                    "description": "Body rows. Each row is an array of plain-text cell strings with the same length as `headers`."
+                },
+                "column_settings": {
+                    "type": "array",
+                    "description": "Optional per-column settings. Each entry: {is_wrapped?: bool, align?: 'left'|'center'|'right'}. Use `null` to leave a column at defaults.",
+                    "items": {
+                        "type": ["object", "null"],
+                        "properties": {
+                            "is_wrapped": {"type": "boolean"},
+                            "align": {"type": "string", "enum": ["left", "center", "right"]}
+                        }
+                    }
+                }
+            },
+            "required": ["headers", "rows"]
+        }
+
+    return {
+        "name": "send_message",
+        "description": (
+            "Send a message to a connected messaging platform, or list available targets.\n\n"
+            "IMPORTANT: When the user asks to send to a specific channel or person "
+            "(not just a bare platform name), call send_message(action='list') FIRST to see "
+            "available targets, then send to the correct one.\n"
+            "If the user just says a platform name like 'send to telegram', send directly "
+            "to the home channel without listing first."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": properties,
+            "required": []
+        }
+    }
+
+
+SEND_MESSAGE_SCHEMA = _build_send_message_schema()
+
+
+# Slack Block Kit table block hard limits (docs.slack.dev/reference/block-kit/blocks/table-block)
+_SLACK_TABLE_MAX_ROWS = 100
+_SLACK_TABLE_MAX_COLS = 20
+_SLACK_TABLE_MIN_COLS = 3
+_SLACK_TABLE_MIN_BODY_ROWS = 2  # header + body, so total rows >= 3
+
+
+def _validate_slack_table(table: dict) -> tuple[bool, str]:
+    """Validate a slack_table payload. Returns (ok, error_message).
+
+    Intentionally strict on minimums: below the minimum size, the table is
+    objectively worse than a bullet list in Slack (especially on mobile), so we
+    reject with an instructive error message that shows the bullet alternative.
+    """
+    if not isinstance(table, dict):
+        return False, "slack_table must be an object with headers/rows."
+
+    headers = table.get("headers")
+    rows = table.get("rows")
+
+    if not isinstance(headers, list) or not headers:
+        return False, "slack_table.headers must be a non-empty array of strings."
+    if not isinstance(rows, list):
+        return False, "slack_table.rows must be an array of row arrays."
+
+    col_count = len(headers)
+    if col_count < _SLACK_TABLE_MIN_COLS:
+        return False, (
+            f"slack_table requires at least {_SLACK_TABLE_MIN_COLS} columns "
+            f"(got {col_count}). For 2-column data, use a bullet list in the "
+            f"`message` field instead, e.g.:\n"
+            f"- **Key A** — value A\n- **Key B** — value B"
+        )
+    if col_count > _SLACK_TABLE_MAX_COLS:
+        return False, (
+            f"slack_table columns exceed Slack limit of {_SLACK_TABLE_MAX_COLS} "
+            f"(got {col_count}). Reduce columns or split into multiple messages."
+        )
+    if len(rows) < _SLACK_TABLE_MIN_BODY_ROWS:
+        return False, (
+            f"slack_table requires at least {_SLACK_TABLE_MIN_BODY_ROWS} data "
+            f"rows (plus headers; got {len(rows)} data rows). For short lists, "
+            f"use a bullet list in the `message` field."
+        )
+    total_rows = len(rows) + 1  # +1 for header row in the rendered block
+    if total_rows > _SLACK_TABLE_MAX_ROWS:
+        return False, (
+            f"slack_table total rows (header + body = {total_rows}) exceeds "
+            f"Slack limit of {_SLACK_TABLE_MAX_ROWS}. Split into multiple messages."
+        )
+
+    for idx, row in enumerate(rows):
+        if not isinstance(row, list):
+            return False, f"slack_table.rows[{idx}] must be an array."
+        if len(row) != col_count:
+            return False, (
+                f"slack_table.rows[{idx}] has {len(row)} cells but headers has "
+                f"{col_count}. Every row must have the same number of cells as headers."
+            )
+        for cidx, cell in enumerate(row):
+            if not isinstance(cell, str):
+                return False, (
+                    f"slack_table.rows[{idx}][{cidx}] must be a string. "
+                    f"Cells are plain text (Slack `raw_text`)."
+                )
+
+    col_settings = table.get("column_settings")
+    if col_settings is not None:
+        if not isinstance(col_settings, list):
+            return False, "slack_table.column_settings must be an array or null."
+        if len(col_settings) > _SLACK_TABLE_MAX_COLS:
+            return False, (
+                f"slack_table.column_settings exceeds {_SLACK_TABLE_MAX_COLS} entries."
+            )
+        for i, s in enumerate(col_settings):
+            if s is None:
+                continue
+            if not isinstance(s, dict):
+                return False, f"slack_table.column_settings[{i}] must be an object or null."
+            align = s.get("align")
+            if align is not None and align not in ("left", "center", "right"):
+                return False, (
+                    f"slack_table.column_settings[{i}].align must be one of "
+                    f"'left', 'center', 'right' (got {align!r})."
+                )
+            is_wrapped = s.get("is_wrapped")
+            if is_wrapped is not None and not isinstance(is_wrapped, bool):
+                return False, (
+                    f"slack_table.column_settings[{i}].is_wrapped must be a boolean."
+                )
+
+    return True, ""
+
+
+def _build_slack_table_block(table: dict) -> dict:
+    """Convert a validated slack_table dict into a Slack Block Kit `table` block."""
+    headers = table["headers"]
+    rows = table["rows"]
+
+    rendered_rows = [
+        [{"type": "raw_text", "text": str(h)} for h in headers]
+    ]
+    for row in rows:
+        rendered_rows.append([{"type": "raw_text", "text": str(cell)} for cell in row])
+
+    block = {"type": "table", "rows": rendered_rows}
+
+    col_settings = table.get("column_settings")
+    if col_settings:
+        cleaned = []
+        for s in col_settings:
+            if s is None:
+                cleaned.append({})  # Slack treats {} as "default column"
+            else:
+                entry = {}
+                if "is_wrapped" in s:
+                    entry["is_wrapped"] = bool(s["is_wrapped"])
+                if "align" in s:
+                    entry["align"] = s["align"]
+                cleaned.append(entry)
+        block["column_settings"] = cleaned
+
+    return block
+
+
+def _rasterize_slack_table_for_mirror(table: dict) -> str:
+    """Render a slack_table into a plain-text grid for session mirror / logs.
+
+    The live Slack message uses the native Block Kit table, but the gateway
+    mirror (`gateway.mirror.mirror_to_session`) stores text. Without this
+    rasterization the session row is effectively empty, which breaks
+    cross-turn context for the LLM.
+    """
+    headers = [str(h) for h in table["headers"]]
+    rows = [[str(c) for c in row] for row in table["rows"]]
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i, cell in enumerate(row):
+            if i < len(widths):
+                widths[i] = max(widths[i], len(cell))
+
+    def _fmt(row):
+        return " | ".join(cell.ljust(widths[i]) for i, cell in enumerate(row))
+
+    lines = [_fmt(headers), "-+-".join("-" * w for w in widths)]
+    for row in rows:
+        lines.append(_fmt(row))
+    return "\n".join(lines)
 
 
 def send_message_tool(args, **kw):
@@ -178,6 +441,15 @@ def _handle_send(args):
     """Send a message to a platform target."""
     target = args.get("target", "")
     message = args.get("message", "")
+    slack_table = args.get("slack_table")
+
+    # Runtime gate: silently drop slack_table for profiles that haven't opted in.
+    # The schema already hides the parameter from the model, but a programmatic
+    # caller or a cached tool definition from a multi-profile client could still
+    # include it. Dropping (rather than erroring) preserves backward-compat.
+    if slack_table is not None and not _is_slack_table_enabled_for_current_profile():
+        slack_table = None
+
     if not target or not message:
         return tool_error("Both 'target' and 'message' are required when action='send'")
 
@@ -191,6 +463,35 @@ def _handle_send(args):
         chat_id, thread_id, is_explicit = _parse_target_ref(platform_name, target_ref)
     else:
         is_explicit = False
+
+    # Auto-inherit the current Slack thread when the model didn't pin one.
+    # If we're answering inside a Slack thread (gateway sets HERMES_SESSION_*),
+    # and the caller is targeting the same chat_id (or just the bare platform),
+    # default thread_ts to that thread so tabular replies land inside the
+    # conversation instead of as a fresh top-level message. The model can
+    # always pin an explicit `:thread_ts` to override or escape the thread.
+    if platform_name == "slack" and not thread_id:
+        try:
+            from gateway.session_context import get_session_env
+            if get_session_env("HERMES_SESSION_PLATFORM", "") == "slack":
+                session_chat = get_session_env("HERMES_SESSION_CHAT_ID", "")
+                session_thread = get_session_env("HERMES_SESSION_THREAD_ID", "")
+                # Resolve home channel once so a bare `slack` target also matches
+                # the current session's chat_id.
+                effective_chat = chat_id
+                if not effective_chat:
+                    try:
+                        from gateway.config import load_gateway_config, Platform as _Platform
+                        _cfg = load_gateway_config()
+                        _home = _cfg.get_home_channel(_Platform.SLACK)
+                        if _home:
+                            effective_chat = _home.chat_id
+                    except Exception:
+                        pass
+                if session_thread and session_chat and effective_chat == session_chat:
+                    thread_id = session_thread
+        except Exception:
+            logger.debug("Slack thread auto-inherit failed", exc_info=True)
 
     # Resolve human-friendly channel names to numeric IDs
     if target_ref and not is_explicit:
@@ -291,6 +592,7 @@ def _handle_send(args):
     if platform_name == "slack" and chat_id and chat_id.startswith("U"):
         try:
             import aiohttp
+
             async def _open_slack_dm(token, user_id):
                 url = "https://slack.com/api/conversations.open"
                 headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -308,6 +610,61 @@ def _handle_send(args):
                 return json.dumps({"error": f"Could not open DM with Slack user {chat_id}. Check bot permissions (im:write)."})
         except Exception as e:
             return json.dumps({"error": f"Failed to open Slack DM: {e}"})
+
+    # Slack Block Kit table block path — slack_table is profile-gated and
+    # applies ONLY when the target platform is slack. For any other platform,
+    # fall through to the regular text path and ignore the field.
+    if slack_table is not None and platform_name == "slack":
+        ok, err = _validate_slack_table(slack_table)
+        if not ok:
+            return tool_error(f"slack_table invalid: {err}")
+        try:
+            table_block = _build_slack_table_block(slack_table)
+        except Exception as e:
+            return tool_error(f"slack_table build failed: {e}")
+        slack_token = pconfig.token or os.getenv("SLACK_BOT_TOKEN", "").strip()
+        if not slack_token:
+            return tool_error("Slack token unavailable for slack_table send.")
+        try:
+            from model_tools import _run_async
+            result = _run_async(
+                _send_slack_with_blocks(
+                    slack_token,
+                    chat_id,
+                    cleaned_message,
+                    [table_block],
+                    thread_id=thread_id,
+                )
+            )
+        except Exception as e:
+            return json.dumps(_error(f"Send failed: {e}"))
+        if used_home_channel and isinstance(result, dict) and result.get("success"):
+            result["note"] = f"Sent to {platform_name} home channel (chat_id: {chat_id})"
+
+        # Mirror: render the table as a plain-text grid so session history has
+        # real content (the Block Kit payload doesn't survive into the session DB).
+        if isinstance(result, dict) and result.get("success"):
+            try:
+                from gateway.mirror import mirror_to_session
+                from gateway.session_context import get_session_env
+                rasterized = _rasterize_slack_table_for_mirror(slack_table)
+                mirror_body = f"{mirror_text}\n\n{rasterized}" if mirror_text else rasterized
+                source_label = get_session_env("HERMES_SESSION_PLATFORM", "cli")
+                user_id = get_session_env("HERMES_SESSION_USER_ID", "") or None
+                if mirror_to_session(
+                    platform_name,
+                    chat_id,
+                    mirror_body,
+                    source_label=source_label,
+                    thread_id=thread_id,
+                    user_id=user_id,
+                ):
+                    result["mirrored"] = True
+            except Exception:
+                logger.debug("slack_table mirror failed", exc_info=True)
+        if isinstance(result, dict) and "error" in result:
+            result["error"] = _sanitize_error_text(result["error"])
+        return json.dumps(result)
 
     try:
         from model_tools import _run_async
@@ -372,13 +729,12 @@ def _parse_target_ref(platform_name: str, target_ref: str):
         match = _SLACK_TARGET_RE.fullmatch(target_ref)
         if match:
             chat_id = match.group(1)
-            # Slack user IDs (U...) and workspace IDs (W...) are NOT valid
-            # explicit send targets — chat.postMessage rejects them. A DM
-            # must be opened first via conversations.open to get a D...
-            # conversation ID. Caller still gets the chat_id so the U→D
-            # resolution path in send_message() can run.
-            is_explicit = chat_id[0] not in {"U", "W"}
-            return chat_id, None, is_explicit
+            thread_id = match.group(2)
+            # Slack user IDs (U...) are accepted as explicit tool targets, but
+            # must be opened later via conversations.open to get a D...
+            # conversation ID before chat.postMessage.
+            is_explicit = True
+            return chat_id, thread_id, is_explicit
     if platform_name == "matrix":
         trimmed = target_ref.strip()
         split_idx = trimmed.rfind(":$")
@@ -781,7 +1137,7 @@ async def _send_to_platform(platform, pconfig, chat_id, message, thread_id=None,
     last_result = None
     for chunk in chunks:
         if platform == Platform.SLACK:
-            result = await _send_slack(pconfig.token, chat_id, chunk, thread_ts=thread_id)
+            result = await _send_slack(pconfig.token, chat_id, chunk, thread_id=thread_id)
         elif platform == Platform.WHATSAPP:
             result = await _send_whatsapp(pconfig.extra, chat_id, chunk)
         elif platform == Platform.SIGNAL:
@@ -1061,7 +1417,228 @@ async def _send_telegram(token, chat_id, message, media_files=None, thread_id=No
         return _error(f"Telegram send failed: {e}")
 
 
-async def _send_slack(token, chat_id, message, thread_ts=None):
+def _derive_forum_thread_name(message: str) -> str:
+    """Derive a thread name from the first line of the message, capped at 100 chars."""
+    first_line = message.strip().split("\n", 1)[0].strip()
+    # Strip common markdown heading prefixes
+    first_line = first_line.lstrip("#").strip()
+    if not first_line:
+        first_line = "New Post"
+    return first_line[:100]
+
+
+# Process-local cache for Discord channel-type probes.  Avoids re-probing the
+# same channel on every send when the directory cache has no entry (e.g. fresh
+# install, or channel created after the last directory build).
+_DISCORD_CHANNEL_TYPE_PROBE_CACHE: Dict[str, bool] = {}
+
+
+def _remember_channel_is_forum(chat_id: str, is_forum: bool) -> None:
+    _DISCORD_CHANNEL_TYPE_PROBE_CACHE[str(chat_id)] = bool(is_forum)
+
+
+def _probe_is_forum_cached(chat_id: str) -> Optional[bool]:
+    return _DISCORD_CHANNEL_TYPE_PROBE_CACHE.get(str(chat_id))
+
+
+async def _send_discord(token, chat_id, message, thread_id=None, media_files=None):
+    """Send a single message via Discord REST API (no websocket client needed).
+
+    Chunking is handled by _send_to_platform() before this is called.
+
+    When thread_id is provided, the message is sent directly to that thread
+    via the /channels/{thread_id}/messages endpoint.
+
+    Media files are uploaded one-by-one via multipart/form-data after the
+    text message is sent (same pattern as Telegram).
+
+    Forum channels (type 15) reject POST /messages — a thread post is created
+    automatically via POST /channels/{id}/threads.  Media files are uploaded
+    as multipart attachments on the starter message of the new thread.
+
+    Channel type is resolved from the channel directory first, then a
+    process-local probe cache, and only as a last resort with a live
+    GET /channels/{id} probe (whose result is memoized).
+    """
+    try:
+        import aiohttp
+    except ImportError:
+        return {"error": "aiohttp not installed. Run: pip install aiohttp"}
+    try:
+        from gateway.platforms.base import resolve_proxy_url, proxy_kwargs_for_aiohttp
+        _proxy = resolve_proxy_url(platform_env_var="DISCORD_PROXY")
+        _sess_kw, _req_kw = proxy_kwargs_for_aiohttp(_proxy)
+        auth_headers = {"Authorization": f"Bot {token}"}
+        json_headers = {**auth_headers, "Content-Type": "application/json"}
+        media_files = media_files or []
+        last_data = None
+        warnings = []
+
+        # Thread endpoint: Discord threads are channels; send directly to the thread ID.
+        if thread_id:
+            url = f"https://discord.com/api/v10/channels/{thread_id}/messages"
+        else:
+            # Check if the target channel is a forum channel (type 15).
+            # Forum channels reject POST /messages — create a thread post instead.
+            # Three-layer detection: directory cache → process-local probe
+            # cache → GET /channels/{id} probe (with result memoized).
+            _channel_type = None
+            try:
+                from gateway.channel_directory import lookup_channel_type
+                _channel_type = lookup_channel_type("discord", chat_id)
+            except Exception:
+                pass
+
+            if _channel_type == "forum":
+                is_forum = True
+            elif _channel_type is not None:
+                is_forum = False
+            else:
+                cached = _probe_is_forum_cached(chat_id)
+                if cached is not None:
+                    is_forum = cached
+                else:
+                    is_forum = False
+                    try:
+                        info_url = f"https://discord.com/api/v10/channels/{chat_id}"
+                        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15), **_sess_kw) as info_sess:
+                            async with info_sess.get(info_url, headers=json_headers, **_req_kw) as info_resp:
+                                if info_resp.status == 200:
+                                    info = await info_resp.json()
+                                    is_forum = info.get("type") == 15
+                                    _remember_channel_is_forum(chat_id, is_forum)
+                    except Exception:
+                        logger.debug("Failed to probe channel type for %s", chat_id, exc_info=True)
+
+            if is_forum:
+                thread_name = _derive_forum_thread_name(message)
+                thread_url = f"https://discord.com/api/v10/channels/{chat_id}/threads"
+
+                # Filter to readable media files up front so we can pick the
+                # right code path (JSON vs multipart) before opening a session.
+                valid_media = []
+                for media_path, _is_voice in media_files:
+                    if not os.path.exists(media_path):
+                        warning = f"Media file not found, skipping: {media_path}"
+                        logger.warning(warning)
+                        warnings.append(warning)
+                        continue
+                    valid_media.append(media_path)
+
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60), **_sess_kw) as session:
+                    if valid_media:
+                        # Multipart: payload_json + files[N] creates a forum
+                        # thread with the starter message plus attachments in
+                        # a single API call.
+                        attachments_meta = [
+                            {"id": str(idx), "filename": os.path.basename(path)}
+                            for idx, path in enumerate(valid_media)
+                        ]
+                        starter_message = {"content": message, "attachments": attachments_meta}
+                        payload_json = json.dumps({"name": thread_name, "message": starter_message})
+
+                        form = aiohttp.FormData()
+                        form.add_field("payload_json", payload_json, content_type="application/json")
+
+                        # Buffer file bytes up front — aiohttp's FormData can
+                        # read lazily and we don't want handles closing under
+                        # it on retry.
+                        try:
+                            for idx, media_path in enumerate(valid_media):
+                                with open(media_path, "rb") as fh:
+                                    form.add_field(
+                                        f"files[{idx}]",
+                                        fh.read(),
+                                        filename=os.path.basename(media_path),
+                                    )
+                            async with session.post(thread_url, headers=auth_headers, data=form, **_req_kw) as resp:
+                                if resp.status not in {200, 201}:
+                                    body = await resp.text()
+                                    return _error(f"Discord forum thread creation error ({resp.status}): {body}")
+                                data = await resp.json()
+                        except Exception as e:
+                            return _error(_sanitize_error_text(f"Discord forum thread upload failed: {e}"))
+                    else:
+                        # No media — simple JSON POST creates the thread with
+                        # just the text starter.
+                        async with session.post(
+                            thread_url,
+                            headers=json_headers,
+                            json={
+                                "name": thread_name,
+                                "message": {"content": message},
+                            },
+                            **_req_kw,
+                        ) as resp:
+                            if resp.status not in {200, 201}:
+                                body = await resp.text()
+                                return _error(f"Discord forum thread creation error ({resp.status}): {body}")
+                            data = await resp.json()
+
+                thread_id_created = data.get("id")
+                starter_msg_id = (data.get("message") or {}).get("id", thread_id_created)
+                result = {
+                    "success": True,
+                    "platform": "discord",
+                    "chat_id": chat_id,
+                    "thread_id": thread_id_created,
+                    "message_id": starter_msg_id,
+                }
+                if warnings:
+                    result["warnings"] = warnings
+                return result
+
+            url = f"https://discord.com/api/v10/channels/{chat_id}/messages"
+
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30), **_sess_kw) as session:
+            # Send text message (skip if empty and media is present)
+            if message.strip() or not media_files:
+                async with session.post(url, headers=json_headers, json={"content": message}, **_req_kw) as resp:
+                    if resp.status not in {200, 201}:
+                        body = await resp.text()
+                        return _error(f"Discord API error ({resp.status}): {body}")
+                    last_data = await resp.json()
+
+            # Send each media file as a separate multipart upload
+            for media_path, _is_voice in media_files:
+                if not os.path.exists(media_path):
+                    warning = f"Media file not found, skipping: {media_path}"
+                    logger.warning(warning)
+                    warnings.append(warning)
+                    continue
+                try:
+                    form = aiohttp.FormData()
+                    filename = os.path.basename(media_path)
+                    with open(media_path, "rb") as f:
+                        form.add_field("files[0]", f, filename=filename)
+                        async with session.post(url, headers=auth_headers, data=form, **_req_kw) as resp:
+                            if resp.status not in {200, 201}:
+                                body = await resp.text()
+                                warning = _sanitize_error_text(f"Failed to send media {media_path}: Discord API error ({resp.status}): {body}")
+                                logger.error(warning)
+                                warnings.append(warning)
+                                continue
+                            last_data = await resp.json()
+                except Exception as e:
+                    warning = _sanitize_error_text(f"Failed to send media {media_path}: {e}")
+                    logger.error(warning)
+                    warnings.append(warning)
+
+        if last_data is None:
+            error = "No deliverable text or media remained after processing"
+            if warnings:
+                return {"error": error, "warnings": warnings}
+            return {"error": error}
+
+        result = {"success": True, "platform": "discord", "chat_id": chat_id, "message_id": last_data.get("id")}
+        if warnings:
+            result["warnings"] = warnings
+        return result
+    except Exception as e:
+        return _error(f"Discord send failed: {e}")
+
+
+async def _send_slack(token, chat_id, message, thread_id=None):
     """Send via Slack Web API."""
     try:
         import aiohttp
@@ -1075,13 +1652,69 @@ async def _send_slack(token, chat_id, message, thread_ts=None):
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30), **_sess_kw) as session:
             payload = {"channel": chat_id, "text": message, "mrkdwn": True}
-            if thread_ts:
-                payload["thread_ts"] = thread_ts
+            if thread_id:
+                payload["thread_ts"] = thread_id
             async with session.post(url, headers=headers, json=payload, **_req_kw) as resp:
                 data = await resp.json()
                 if data.get("ok"):
-                    return {"success": True, "platform": "slack", "chat_id": chat_id, "message_id": data.get("ts")}
+                    result = {"success": True, "platform": "slack", "chat_id": chat_id, "message_id": data.get("ts")}
+                    if thread_id:
+                        result["thread_id"] = thread_id
+                    return result
                 return _error(f"Slack API error: {data.get('error', 'unknown')}")
+    except Exception as e:
+        return _error(f"Slack send failed: {e}")
+
+
+async def _send_slack_with_blocks(token, chat_id, message, blocks, thread_id=None):
+    """Send a Slack message that carries Block Kit `blocks` (e.g. a table block).
+
+    `message` is used as the top-level `text` fallback — critical for mobile
+    push notifications, search indexing, and collapsed thread previews when
+    the client can't render blocks. It is NOT a duplicate of the block content.
+
+    Slack API errors are surfaced verbatim (e.g. `invalid_blocks`,
+    `only_one_table_allowed`) so the caller / LLM can react.
+    """
+    try:
+        import aiohttp
+    except ImportError:
+        return {"error": "aiohttp not installed. Run: pip install aiohttp"}
+    try:
+        from gateway.platforms.base import resolve_proxy_url, proxy_kwargs_for_aiohttp
+        _proxy = resolve_proxy_url()
+        _sess_kw, _req_kw = proxy_kwargs_for_aiohttp(_proxy)
+        url = "https://slack.com/api/chat.postMessage"
+        req_headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        payload = {
+            "channel": chat_id,
+            "text": message or "(attachment)",
+            "blocks": blocks,
+            "mrkdwn": True,
+            "unfurl_links": False,
+            "unfurl_media": False,
+        }
+        if thread_id:
+            payload["thread_ts"] = thread_id
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30), **_sess_kw) as session:
+            async with session.post(url, headers=req_headers, json=payload, **_req_kw) as resp:
+                data = await resp.json()
+                if data.get("ok"):
+                    return {
+                        "success": True,
+                        "platform": "slack",
+                        "chat_id": chat_id,
+                        "message_id": data.get("ts"),
+                        "mode": "blocks",
+                        **({"thread_id": thread_id} if thread_id else {}),
+                    }
+                meta = data.get("response_metadata") or {}
+                err_code = data.get("error", "unknown")
+                detail = ""
+                messages = meta.get("messages") or []
+                if messages:
+                    detail = " | " + "; ".join(str(m) for m in messages[:3])
+                return _error(f"Slack API error: {err_code}{detail}")
     except Exception as e:
         return _error(f"Slack send failed: {e}")
 
