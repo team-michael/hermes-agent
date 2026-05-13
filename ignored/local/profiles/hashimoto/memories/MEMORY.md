@@ -10,8 +10,6 @@ Notifly `anomaly-delivery-monitoring lambda error` means routine inspection logs
 §
 Notifly Lambda `ConsoleErrors` alarms can false-positive on broad `%ERROR|Status: timeout%` filters, including receiptHandle/base64 substrings, deprecation warnings, and expected external-provider rejections; runtime Lambda Errors=0 changes the interpretation materially.
 §
-For DLQ alerts, useful triage includes directly inspecting DLQ message bodies/attributes and summarizing project, campaign/user journey, metadata, queue lifecycle, and retry context; post-redrive/purge verification should show no visible/not-visible messages.
+NHN Cloud template limit (`The maximum number of registered templates.`) in web-console campaign/user_journey saves → not AWS SES (6,269/10,000). Resolution: GitHub workflow `cleanup-nhncloud-unused-templates.yml` for manual NHN Cloud unused template cleanup.
 §
 Lambda `invalid input syntax for type json` scope workflow: parse `delivery_result_<project_id>` table suffix → extract `campaign_id` from VALUES tuple → map `project_id` via DynamoDB `project` → read PostgreSQL `where`/`detail` for broken surrogate. Skill `notifly-lambda-json-surrogate-error` created.
-§
-Linear API key is not configured in the current Hermes environment; LINEAR_API_KEY environment variable is empty. Linear triage/issue creation requests will fail with 401 until the key is set.

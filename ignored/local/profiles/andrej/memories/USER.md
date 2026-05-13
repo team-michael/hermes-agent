@@ -6,4 +6,6 @@ User is studying Notifly infra and is AWS/ECS Service Connect–unfamiliar; pref
 §
 In DMs, user wants infra explanations tailored to their Mobile/iOS + SDK Eng background: use iOS/SDK analogies only when mechanisms truly match, and flag SDK-side implications for contracts, retries, offline behavior, telemetry, or DX.
 §
-For Notion planning docs, user prefers medium-density readable sections; when asked to adjust verbosity/format, show one representative item before applying changes if requested.
+Slack product/sales: concise, exact-question answers; no comprehensive frameworks unless asked. Notion docs: medium-density; sample before bulk format changes.
+§
+For MSP/Zendesk support ticket creation, user wants the drafted ticket body shown for confirmation before creating the ticket.

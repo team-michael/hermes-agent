@@ -426,6 +426,58 @@ Avoid spending budget on single-word competitor names that produce 1 result (`"B
 
 **Recurrence log**: 2026-05-08 run hit this exact failure mode again (9/10 Top-10 at q=1) despite the skill warning being in place. The issue is that **the cron prompt owns the query list**, not this skill, so adding the warning here doesn't prevent the next session from firing disjoint queries. If you're editing a cron prompt that invokes this skill, the query list itself must ship semantic-family clusters of 3-5; a simple flat "pick 18 promising keywords" list will always produce q=1-dominant output. When writing daily reports, include a "next-run query set" section in the warnings post so the cron prompt can be patched before the next tick.
 
+## Clix Pilot Format-Research Workflow (when to fire this whole pipeline)
+
+This skill isn't only for ad-hoc "find viral videos" asks. When a Clix customer joins with a **KPI shaped like "Top-N videos average ≥ X views"** (e.g. Zaispace 2026-05-12: "top 12 영상의 평균 조회수가 1K를 넘는지"), the right response is NOT to speculate format ideas from the Yeti weekly report alone. Yeti tells you the *category emotional fingerprint*; it does NOT give you per-video share/like ratios, which is what actually predicts FYP amplification. You MUST run the full measurement pipeline below and build format recommendations on top of DOM-verified engagement data.
+
+Signal to fire the pipeline:
+- User asks "어떤 viral format을 만들어야 하냐" / "this app's characteristics → what format wins"
+- A Yeti weekly report already exists for the customer (e.g. `just-went-viral.com/r/<app>/<week>/`) — read it first as the **category emotional baseline**, but treat its per-video view counts as ordinal hints only. Share/like is not in the Yeti report; you have to generate it.
+- Pilot KPI is view-count- or engagement-shaped, and the customer has product mechanics rich enough to map formats onto (avatar, AI generation, before/after UI moment, etc.)
+
+### Pipeline stages
+
+1. **Read the Yeti report first** (if one exists). Extract:
+   - Category-level emotional promise (e.g. "raw vulnerability about friendship difficulty")
+   - Top format clusters Yeti found + their reference videos
+   - Yeti's proposed experiments (P1..P5) — these become the *hypotheses* you're about to test against real share/like data
+2. **Design semantic-family query clusters** (3-5 near-synonyms each). This skill's "Query-Design Rule: Semantic-Family Overlap" section explains why. Cover:
+   - Core ICP emotional keywords (lonely / texting anxiety / social anxiety / etc.)
+   - Competitor category keywords (AI companion / Character AI / Replika / etc.)
+   - Adjacent wedge positions (introvert / avatar customization / Bitmoji / etc.)
+   - Direct brand name as a cheap check (usually 0 results, that's fine)
+3. **Run the Google scrape loop** (`scripts/scrape_google_loop.py`). Expect Q14-ish block on `hl=ko` — skill's pitfalls section. Order queries by priority so the tail is what you lose.
+4. **Parse + dedupe + tag with clusters** — use `scripts/parse_rank_clusters.py`. Edit the `CLUSTERS` dict at the top to match your query families. Outputs `ranked.json` with top25_by_views + multi_query slices.
+5. **Pick top ~10 by SERP-leaked views, DOM-verify** — use `scripts/dom_verify_top10.py`. Reads `ranked.json`, captures like / share / comment / favorite. Aborts cleanly on TikTok captcha.
+6. **Compute share/like and save/like ratios, rank by share/like DESC.** This is the single most important output of the whole pipeline. A 32K-view video with s/l 44% beats a 428K-view video with s/l 2% as a format template to copy — see "Virality Scoring" section.
+7. **Read the top 3-5 share/like winners' snippets deeply.** What's the hook structure? Is it a plan/framework, a before-after reveal, a confession, a reply-to format, a listicle? The format label matters more than the topic.
+8. **Map each winning format to the customer's app mechanics.** For every format you recommend, name the specific app feature that supplies the "reveal" or "payoff" moment. A format without an app-mechanic anchor is speculation, not a proposal.
+
+### Output shape for Clix format-research deliverables
+
+Deliver in this order:
+1. **Top-10 ranked by share/like table** — rank / s/l% / save% / views / likes / shares / age / handle / title. This is the evidence base.
+2. **3-5 insights the data directly shows** — at least one should be a finding that contradicts or refines the Yeti report ("Yeti said confession wins, but the s/l data shows plan/framework wins"). Yeti and DOM-verified data diverge on share vs watch signals; call that divergence out explicitly.
+3. **Signature format proposals** (3-5), each with: a viral reference, a 10-20 second script skeleton, the specific app mechanic it relies on, a KPI priority (save / share / completion), a realistic view estimate, and a risk.
+4. **22-edit calendar or format-to-volume mapping** sized to the pilot KPI.
+5. **Methodology / data-quality note** — always list which queries got `/sorry/`-blocked, which clusters are undocumented, whether Reels was covered, link to raw JSONs in `~/.hermes/profiles/tarantino/work/<app>/scrape/`.
+
+### Zaispace run baseline (2026-05-12)
+
+- 18 queries / 13 clean / Q14 `"rate my avatar"` blocked (avatar-customization cluster undocumented — recoverable next day via tail recovery)
+- 112 unique videos / 90 with view signal / Top 10 DOM-verified 100% success (no TikTok captcha)
+- Top s/l winner: `@helpmeharlan` 44.7% on "Lonely College Plan: Choosing Your Path" — the *plan/framework* format beat pure emotional confession (Emily, Remy ~1% s/l) despite similar view counts
+- Single strongest positioning reference: `@orangeejulius` 163K, s/l 2.6% — hook structure "Social Anxiety ruined a date, then an app fixed it!" is a direct template for any app whose mechanic solves a first-move anxiety problem
+- Character.AI complaint video (406K, s/l 3.5%) signaled an adjacent opportunity market for any "AI-for-real-people" positioned app
+
+When the customer is Zaispace-shaped (social app, avatar, AI-generated shared experiences), the share/like winners cluster is:
+- **Plan/framework** > pure emotional confession
+- **"Replying to @"** save rates 28-43% (highest save-engine in the category)
+- **Before-after app reveal** s/l 2-3%, medium view, high install signal
+- **Emotional confession alone** = click magnet, NOT share magnet — use as seed only
+
+See `references/clix-pilot-format-research-zaispace-20260512.md` for the full measurement snapshot.
+
 ## Output Template
 Deliver as a table (rank, views, URL, one-line hook) plus a pattern-analysis section that surfaces:
 - dominant content format (listicle / single-app tutorial / comparison / couple-game)

@@ -2,6 +2,8 @@
 
 Alarm family: `/aws/ecs/notifly-services-prod/web-console/sentry alert` (metric namespace `ConsoleErrors`).
 
+**Alarm name auto-detection pitfall**: The alarm name is literally the CloudWatch log group path suffixed with ` alert`. When Slack delivers only this path as the alert text, the helper text parser returns `detected.alarm_name: null` because there is no `CloudWatch Alarm | <name>` marker. Pass `--alarm-name '/aws/ecs/notifly-services-prod/web-console/sentry alert'` explicitly. This is a Terraform-generated metric-filter alarm where the alarm name equals the log group name.
+
 ## Root cause
 
 The `ops-email-receiver` Lambda receives Sentry alert emails via SES and writes them
@@ -19,7 +21,13 @@ Lambda itself is operating correctly.
 1. The helper may return `current_trigger_contexts: []` because Logs Insights
    indexing lags behind metric-filter ingestion, especially for very recent
    alarms (within 5–10 min of the metric datapoint).
-2. Fall back to `aws logs filter-log-events` on the exact log group with a
+2. The helper may also report `count_7d: 0` and `count_30d: 0` even when the
+   alarm fires routinely. This log group has low volume and Logs Insights may
+   return zero matches for the broad `%ERROR%` pattern while `filter-log-events`
+   finds the actual events. Do not treat zero helper log counts as evidence of
+   an absence; always fall back to `filter-log-events` bounded by the alarm
+   datapoint time when this alarm fires.
+3. Fall back to `aws logs filter-log-events` on the exact log group with a
    narrow time window (±5 min around the breaching datapoint timestamp):
    ```bash
    aws logs filter-log-events \
@@ -27,10 +35,27 @@ Lambda itself is operating correctly.
      --start-time <epoch-ms> --end-time <epoch-ms> \
      --limit 5 --region ap-northeast-2
    ```
-3. If a candidate stream is known, fetch the exact event with
+4. If a candidate stream is known, fetch the exact event with
    `aws logs get-log-events --log-stream-name <stream>`.
-4. Inspect the `@message` JSON for `sentryAlert.issue.title`,
+5. Inspect the `@message` JSON for `sentryAlert.issue.title`,
    `sentryAlert.level`, and `sentryAlert.request.url`.
+
+6. Cross-check `AWS/Lambda Errors` for `ops-email-receiver` to confirm the Lambda itself is healthy:
+   ```bash
+   aws cloudwatch get-metric-statistics \
+     --namespace AWS/Lambda --metric-name Errors \
+     --dimensions Name=FunctionName,Value=ops-email-receiver \
+     --start-time <start> --end-time <end> --period 3600 --statistics Sum \
+     --region ap-northeast-2
+   ```
+   If `Errors = 0`, the alarm is purely metric-filter noise, not a Lambda crash.
+
+7. **Alarm state transitions**: This alarm uses `TreatMissingData: missing` and
+   sparse data. It typically transitions `INSUFFICIENT_DATA → ALARM →
+   INSUFFICIENT_DATA` without ever reaching `OK`. `describe-alarm-history` may
+   show `StateValue: null` with `HistorySummary` text like `"Alarm updated from
+   INSUFFICIENT_DATA to ALARM"`. Count transitions via `HistorySummary` text or
+   daily metric datapoint sums rather than naive `OK→ALARM` transition counts.
 
 ## Scoping technique
 
@@ -70,6 +95,11 @@ scope.
 - `ops-email-receiver` Lambda is healthy; the alarm is a noisy metric filter.
 - The actual errors are `web-console` (Next.js) issues already tracked in Sentry
   (`greybox` organization).
+- Common payload errors seen through this pipeline include:
+  - `SyntaxError` — Next.js client-side JSON parse failures.
+  - `FailedToUploadImageException` / `InvalidImageFormatException` — Kakao
+    Bizmessage image upload validation rejections (external provider, not our
+    code). See `references/web-console-kakao-image-upload-validation-error.md`.
 - This pattern fires routinely (baseline ~1–2×/day, up to ~10×/day on busy
   Sentry days).
 - Default status: `no_action` unless recurrence is sharply increasing or the

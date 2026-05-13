@@ -127,6 +127,7 @@ Interpret response:
 
 ## Practical notes
 
+- In Notifly Slack work, treat Slack permalinks as structured Slack data, not ordinary web links. Browser login pages are **not** evidence that content is inaccessible. First parse channel/ts, call Slack Web API (`conversations.replies` for threads, `conversations.history` for nearby context), and only say content is inaccessible after an API-level failure (`channel_not_found`, `not_in_channel`, `missing_scope`, `ok:false`, etc.). If the Slack content links to Google Docs/Sheets/Drive, follow with authenticated Google Workspace access before giving product/sales conclusions.
 - For long-range Slack support/CS Q&A dataset extraction, use the same `conversations.history` + `conversations.replies` pattern but make the export resumable, persist raw JSONL, categorize threads into coarse topic CSVs, and validate category row totals before packaging. See `references/bulk-channel-qa-dataset-export.md`.
 - `app_mention` only gives messages pertinent to the app; do not rely on it for full thread context.
 - For private channels, “scope exists” is not enough; membership is usually the real blocker.

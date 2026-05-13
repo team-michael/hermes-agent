@@ -18,6 +18,34 @@ Especially relevant when the root message was posted by:
 - CloudWatch alarm notifications
 - other Slack apps/bots that render content in `attachments` or `blocks`
 
+## Direct permalink/context retrieval before declaring access failure
+
+When a user provides a Slack permalink and asks for the linked/thread context, do not rely on browser navigation as the primary access test. A browser result such as `You need to sign in to see this page` only proves the browser session is unauthenticated; it does **not** prove Hermes lacks Slack access.
+
+Required sequence:
+
+1. Parse channel and timestamp from the permalink.
+   - Example `/archives/C06B39NC2AW/p1778573602772609` → channel `C06B39NC2AW`, ts `1778573602.772609`.
+2. Load the profile env without printing secrets and call Slack Web API with `SLACK_BOT_TOKEN`.
+3. Use `conversations.replies` for thread permalinks; use `conversations.history` if only a channel/time window is needed.
+4. Only claim an access limitation after an API-level failure such as `channel_not_found`, `not_in_channel`, `missing_scope`, or `ok:false`; report the exact limitation.
+5. If the Slack message links to Google Docs/Drive, then load the Google Workspace skill and retrieve that linked doc before giving substantive business/product recommendations.
+
+Safe command shape:
+
+```bash
+set -a; . /home/ubuntu/.hermes/profiles/sdr/.env >/dev/null 2>&1; set +a
+curl -fsS -G \
+  -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
+  --data-urlencode channel=C06B39NC2AW \
+  --data-urlencode ts=1778573602.772609 \
+  --data-urlencode limit=20 \
+  'https://slack.com/api/conversations.replies' \
+| jq '{ok,error,has_more,messages:[(.messages // [])[] | {ts,user,bot_id,subtype,text,reply_count}]}'
+```
+
+Do not echo, print, or include token prefixes in logs or answers.
+
 ## Core diagnosis
 
 If Hermes can reply in the thread but says it cannot see the root message, the failure is usually **not** missing LLM skill or missing reasoning. It is usually an **ingress/gateway parsing problem** in the Slack adapter.
