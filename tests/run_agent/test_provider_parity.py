@@ -74,9 +74,6 @@ def _make_agent(monkeypatch, provider, api_mode="chat_completions", base_url="ht
         kwargs["model"] = model
     elif provider == "nous":
         kwargs["model"] = "gpt-5"
-    base_url="https://openrouter.ai/api/v1",
-    api_key="test-key",
-    base_url="https://openrouter.ai/api/v1",
     return AIAgent(**kwargs)
 
 
@@ -1027,8 +1024,11 @@ class TestAuxiliaryClientProviderPriority:
             "scope": "inference:invoke",
         }
         with patch("agent.auxiliary_client._read_nous_auth", return_value=nous_auth), \
-             patch("agent.auxiliary_client.OpenAI") as mock, \
-             patch("hermes_cli.models.get_nous_recommended_aux_model", return_value=None):
+             patch(
+                 "hermes_cli.models.get_nous_recommended_aux_model",
+                 return_value="google/gemini-3-flash-preview",
+             ), \
+             patch("agent.auxiliary_client.OpenAI") as mock:
             client, model = get_text_auxiliary_client()
         assert model == "google/gemini-3-flash-preview"
 
