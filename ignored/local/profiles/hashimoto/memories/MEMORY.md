@@ -12,4 +12,4 @@ Notifly Lambda `ConsoleErrors` alarms can false-positive on broad `%ERROR|Status
 §
 NHN Cloud template limit (`The maximum number of registered templates.`) in web-console campaign/user_journey saves → not AWS SES (6,269/10,000). Resolution: GitHub workflow `cleanup-nhncloud-unused-templates.yml` for manual NHN Cloud unused template cleanup.
 §
-Lambda `invalid input syntax for type json` scope workflow: parse `delivery_result_<project_id>` table suffix → extract `campaign_id` from VALUES tuple → map `project_id` via DynamoDB `project` → read PostgreSQL `where`/`detail` for broken surrogate. Skill `notifly-lambda-json-surrogate-error` created.
+Projects with names starting with `notifly-` (e.g., notifly-gamelog, notifly-test, notifly-internal, etc.) are Notifly internal testing/demo projects. Alerts or errors tied to these projects indicate synthetic/test data or internal tooling gaps, not customer-facing production issues. When scoping alerts, explicitly flag `notifly-` prefixed projects as internal to avoid misrepresenting customer impact.
