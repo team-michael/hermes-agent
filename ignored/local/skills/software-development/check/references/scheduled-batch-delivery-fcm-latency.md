@@ -29,8 +29,13 @@ The alarm name contains `-P2-` (priority tier), but the actual Lambda function i
 1. **Alarm definition** — confirm dimensions (`outcome`, `channel`) and threshold
 2. **Lambda runtime** — check `AWS/Lambda` `Errors`, `Throttles`, `Duration` for the actual mapped function (`scheduled-batch-delivery`)
 3. **SQS queues** — inspect `scheduled-batch-push-notification-queue` visible/in-flight counts and DLQ depth
-4. **Metric datapoints** — fetch `Maximum` on `FCMSendLatency` around the alert window as p99 proxy
-5. **Logs** — if needed, check `/aws/lambda/scheduled-batch-delivery` for FCM response latency lines
+4. **Metric datapoints** — fetch `Maximum` on `FCMSendLatency` around the alert window as p99 proxy, or use `get-metric-data` with `ExtendedStatistics=['p99']`
+5. **Lambda logs ( External-latency verification )** — quick empty-filter confirmation:
+   - `filter-log-events` on `/aws/lambda/scheduled-batch-delivery` with `filterPattern='ERROR'` → expect zero results
+   - `filter-log-events` with `filterPattern='timeout'` → expect zero results
+   - `filter-log-events` with `filterPattern='REPORT'` → typical duration 200–900 ms, max memory ~226 MB, all `Status=success`
+   If all three hold, the latency root cause is external (FCM API), not Lambda execution failure.
+6. **Logs** — if needed, check `/aws/lambda/scheduled-batch-delivery` for FCM response latency lines. Note that `FCMSendLatency` is emitted as EMF (Embedded Metric Format) `INFO` lines; these confirm metric source but do not explain *why* FCM was slow.
 
 ## Fast-path `no_action` criteria
 
@@ -43,9 +48,13 @@ If **all** of these hold, classify `no_action`:
 
 Effect: push delivery may be delayed by seconds to tens of seconds, but no message loss.
 
+**Rapid recurrence note**: This alarm often shows rapid recurrence (multiple OK→ALARM transitions within 10 minutes). Rapid recurrence alone does not override `no_action` when Lambda is healthy and metric values recover quickly. The p99 can spike to 4–6 seconds and drop back below 2 seconds within the next period. Treat each spike as a transient external latency burst unless the p99 sustains > threshold across 3+ consecutive periods or queue backlog grows.
+
 ## When to escalate
 
-- `needs_fix`: recurrence is materially increasing vs 7d/30d baseline, or p99 sustains > threshold for > 2 consecutive periods with queue backlog
+- `needs_fix`: recurrence is materially increasing vs 7d/30d baseline, or p99 sustains > threshold for > 2 consecutive periods with queue backlog. Concrete targets:
+  1. `services/lambda/scheduled-batch-delivery/lib/send_push_v1_api.js` — review `batchSize`, `maxRetries`, and FCM HTTP client timeout.
+  2. `infra/terraform/prod/ap-northeast-2/lambda/functions.tf` alarm block for `ScheduledBatchDelivery-P2-FCMLatencyP99` — evaluate whether threshold/period tuning is appropriate given normal FCM variance.
 - `urgent`: Lambda Errors > 0, DLQ growing, or `outcome != success` metrics firing concurrently
 
 ## Related Notifly pattern

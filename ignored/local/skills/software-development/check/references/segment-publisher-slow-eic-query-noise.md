@@ -164,6 +164,23 @@ Scope note: the single WARN line in this window carries no explicit campaign or 
 
 Classification: `no_action`. The 31-day perfect-daily recurrence with no ERROR coexistence confirms this is expected batch-processing latency, not an incident signal.
 
+## 2026-05-13 session — `segment-publisher long running alam` recurrence
+
+Alarm: `segment-publisher long running alam`  
+Transition: `INSUFFICIENT_DATA -> ALARM` at 2026-05-13 11:52:05 UTC  
+Datapoint: `Sum=1.0` at 2026-05-13 11:47:00 UTC (metric period 300s)
+
+Evidence:
+- Trigger log (2026-05-13 11:51:28.295 UTC, stream `prod/segment-publisher/c9fe3be5756443f1939616fc2d870d19`): `[WARN] Processing took longer than expected: 3104158.19 ms`
+- Same-stream context: 18 batches, final `campaignId: UL1T00, 883481 recipients published.`
+- Stream context also shows other campaigns processed in the same batch window: `6329de`, `97jnMs`, `KcYBdd`, `RcwWiz`, `XTFSnB`, `Yo1ztf`, `z1IGNh`.
+- Project explicit in stream via `Used user property names in segments/message` blocks: `project_id: bcf172129f80521a9a3b2d72b58ecb29` → DynamoDB `project` → product `proudp`.
+- Zero ERROR logs in the entire alarm window (2026-05-13 10:55–11:57 UTC); only the single WARN line.
+- Daily recurrence continues: 30d=30, 7d=7, 1d=1 exactly at ~11:47–11:52 UTC each day. Durations ~2977–3150 s.
+- Helper reproduced the literal-substring gap: `logs.skipped: "no stable filter terms inferred"` for metric filter pattern `Processing took longer than expected`. Manual `filter-log-events` with the exact literal string confirmed the trigger.
+
+Classification: `no_action`. WARN threshold (30 min) is lower than actual large-batch processing time (~51 min). No delivery failure or DLQ signal.
+
 ## 2026-05-12 session — `segment-publisher slow eic query` ALARM (ConsoleErrors)
 
 Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`  
@@ -180,6 +197,23 @@ Evidence:
 - This is the same Pattern B (`sqs_publisher.ts` batch-processing WARN) that fired on the companion `Custom/segment-publisher` `segment-publisher long running alam` minutes earlier. Two alarms fire for the same benign log line.
 
 Classification: `no_action` — publish completed, no DLQ/ECS failure, no customer impact. The `ConsoleErrors` alarm is functionally redundant for Pattern B.
+
+## 2026-05-13 session — `segment-publisher slow eic query` ALARM (ConsoleErrors)
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`  
+Transition: `OK -> ALARM` at 2026-05-13 11:52:39 UTC (KST 20:52)  
+Datapoint: `Sum=1.0` at 2026-05-13 11:51:00 UTC (metric period 60s)
+
+Evidence:
+- Trigger log (2026-05-13 11:51:28 UTC, stream `prod/segment-publisher/c9fe3be5756443f1939616fc2d870d19`): `[WARN] Processing took longer than expected: 3104158.19 ms`
+- Same-stream context: 18 batches, final count `campaignId: UL1T00, 883481 recipients published.`
+- Received event payload shows `schedule_type: "user_journey"`, id `UL1T00`, name `[만보기] 매일 적립 리마인드`.
+- Project explicit in stream: `project_id: 32d8d9d6294d52e7a5427c036b471f91` → DynamoDB `project` → product `stepup`.
+- Stream discovery note: `describe_log_streams` reported `lastEventTimestamp=2026-05-13T11:23:19Z` for this stream, but `get_log_events` revealed events up to 11:51:28 UTC — a ~28-minute metadata lag. The stream was found only by scanning all streams with `lastEventTimestamp >= 11:00 UTC` and checking tails, not by examining the top 1–3 most recent streams (which had `lastEventTimestamp` up to 11:49:35 UTC but did not contain the trigger).
+- Daily metric sum (`ConsoleErrors` `segment-publisher-prod slow eic query`, `Period=86400`): 2026-05-13=1, 05-12=3, 05-11=5. 30-day baseline remains 1–7/day.
+- This is unequivocally Pattern B (`sqs_publisher.ts` batch-processing WARN), not Pattern A (slow EIC query).
+
+Classification: `no_action` — publish completed, no DLQ/ECS failure, no customer impact.
 
 ## 2026-05-11 session — `segment-publisher slow eic query` ALARM (Pattern A), 06:34 UTC
 
@@ -254,18 +288,17 @@ When the trigger is `EventCounterCteManager.extract:{project_id} took too long: 
 
 If a single day jumps to >10 or the weekly total doubles versus the 30-day mean, treat it as `needs_fix` and inspect the dominant project in that window. Otherwise, `no_action` is appropriate. The 2026-05-12 count (1) is well within the 1–7 baseline.
 
-Example daily counts observed (updated 2026-05-12):
+Example daily counts observed (updated 2026-05-13):
 
 ```
-2026-04-12=1, 04-13=7, 04-14=3, 04-15=2, 04-16=3, 04-17=4, 04-18=1,
+2026-04-13=7, 04-14=3, 04-15=2, 04-16=3, 04-17=4, 04-18=1,
 04-19=1, 04-20=5, 04-21=3, 04-22=2, 04-23=3, 04-24=6, 04-25=2, 04-26=2,
 04-27=4, 04-28=3, 04-29=5, 04-30=2, 05-01=1, 05-02=3, 05-03=1, 05-04=2,
-05-05=1, 05-06=1, 05-07=3, 05-08=1, 05-09=1, 05-10=1, 05-11=4, 05-12=1
+05-05=1, 05-06=1, 05-07=3, 05-08=1, 05-09=1, 05-10=1, 05-11=5, 05-12=3,
+05-13=1
 ```
 
-If a single day jumps to >10 or the weekly total doubles versus the 30-day mean, treat it as `needs_fix` and inspect the dominant project in that window. Otherwise, `no_action` is appropriate. The 2026-05-11 count (4) is within the 1–7 baseline range but higher than the recent 1–3/day trend, so monitor for sustained elevation rather than treating it as an isolated anomaly.
-
-## Helper / investigation gap
+If a single day jumps to >10 or the weekly total doubles versus the 30-day mean, treat it as `needs_fix` and inspect the dominant project in that window. Otherwise, `no_action` is appropriate. The 2026-05-11 count (5) is within the 1–7 baseline range but higher than the recent 1–3/day trend, so monitor for sustained elevation rather than treating it as an isolated anomaly. The 2026-05-13 count (1) is normal baseline.
 
 The `check` helper derives Logs Insights filter terms from the alarm/metric name (`slow eic query`) rather than the metric filter pattern (`took too long`). This causes `count_7d` and `count_30d` to return 0 even when actual matches exist. Use the bounded manual trace in `references/ecs-log-manual-trace.md` with the exact metric filter pattern `took too long` when the helper reports empty current trigger contexts for this alarm.
 

@@ -103,6 +103,28 @@ Read the workflow file and inspect:
 
 This often explains why logs look sparse.
 
+## 5. Compare against the previous red baseline
+When `main` is already red, do not treat the current run's full failure list as caused by the latest change. First compare failed test IDs against the nearest prior `main` failure:
+
+```bash
+cache="$HOME/.hermes/cache/gha-compare-$NEW_RUN"
+mkdir -p "$cache"
+gh run view "$NEW_RUN" --repo "$OWNER/$REPO" --job "$NEW_JOB" --log > "$cache/new.log"
+gh run view "$OLD_RUN" --repo "$OWNER/$REPO" --job "$OLD_JOB" --log > "$cache/old.log"
+grep -E 'FAILED tests/.*::' "$cache/new.log" | sed -E 's/.*FAILED (tests\/[^ ]+).*/\1/' | sort -u > "$cache/new.tests"
+grep -E 'FAILED tests/.*::' "$cache/old.log" | sed -E 's/.*FAILED (tests\/[^ ]+).*/\1/' | sort -u > "$cache/old.tests"
+comm -13 "$cache/old.tests" "$cache/new.tests"   # newly introduced failures
+comm -23 "$cache/old.tests" "$cache/new.tests"   # resolved/disappeared failures
+```
+
+Report new vs pre-existing failures separately. Fix the newly introduced failures first; if the run still fails only because of pre-existing baseline failures, say so explicitly instead of implying the latest patch is fully green.
+
+### CI flake pattern: monotonic-time debounce
+Tests that call debounce/rate-limit helpers soon after process start can fail if production code uses `dict.get(key, 0.0)` and compares `time.monotonic() - last < cooldown`: missing state looks like a timestamp at process start, so early tests think the first event is still cooling down. Prefer `last = store.get(key)` and check `last is not None` before applying the cooldown. In tests, monkeypatch `time.monotonic` to a small fixed value to prove missing state is still sendable.
+
+### CI drift pattern: live recommendation defaults
+If tests are meant to verify routing/credential selection, mock live model recommendation functions. Otherwise changing service-side defaults (e.g. provider recommended auxiliary model rotating from one model ID to another) makes unrelated tests fail. Keep separate tests for the actual recommendation path.
+
 ## Practical pattern from Cloudflare preview debugging
 If logs show:
 - env contains masked Cloudflare token/account id

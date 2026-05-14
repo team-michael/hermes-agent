@@ -73,10 +73,26 @@ Recipe:
    scheduler's 3-minute interrupt does not kill a background child you spawned via
    `terminal(background=True)` — but SIGPIPE from a bad pipe does (see Pitfalls).
 3. Raise the blocked Chrome window to the noVNC viewport's visible area so the
-   human landing over VNC sees the challenge page immediately:
+   human landing over VNC sees the challenge page immediately. **Do NOT use the
+   pipe-to-`tail -n1` shortcut** — it silently produces empty `WID` when xdotool's
+   internal window list isn't ready or the title-based search doesn't match (race
+   observed 2026-05-13: `xdotool search --name 'Chrome'` returned empty even
+   though a Chrome tab was visible on the display, because the only matching
+   window's title was the URL string with `- Google Chrome` as a suffix — and
+   the search ran while the tab was still loading the `/sorry/` redirect, so
+   the title was momentarily different). Use the enumerate-then-filter form:
    ```bash
-   WID=$(DISPLAY=:1 XAUTHORITY=/home/ubuntu/.Xauthority \
-     xdotool search --name 'Chrome' 2>/dev/null | tail -n1)
+   # List all windows and their titles, then pick by URL substring
+   DISPLAY=:1 XAUTHORITY=/home/ubuntu/.Xauthority \
+     xdotool search --name '.' 2>/dev/null | while read wid; do
+       title=$(DISPLAY=:1 XAUTHORITY=/home/ubuntu/.Xauthority \
+         xdotool getwindowname $wid 2>/dev/null)
+       echo "$wid | $title"
+     done
+   # Pick the WID whose title contains your blocked URL or 'Google Chrome'.
+   # The root 'google-chrome' window has title literal 'google-chrome' — skip it.
+   # The real tab has title '<url> - Google Chrome'.
+   WID=<picked id>
    DISPLAY=:1 XAUTHORITY=/home/ubuntu/.Xauthority bash -c "
      xdotool windowactivate $WID
      xdotool windowraise   $WID
@@ -85,6 +101,17 @@ Recipe:
    "
    ```
    Verify with `xdotool getwindowname $WID` — title should reference the blocked URL.
+
+   If you embed the promote step inside the probe script's `finally` block (so it
+   runs automatically on block), be aware that **calling `os.system()` with a
+   `tail -n1` recipe inside the script also fails the same way** — the search
+   may run before the window manager has stable focus on the tab. Two practical
+   fixes: (a) sleep 1-2s before the xdotool call, or (b) accept that the
+   in-script promotion may noop and do it manually after the handoff post.
+   Today's session (2026-05-13) hit (a) failure mode — the script logged a
+   cascade of "There are no windows in the stack" / "Invalid window '%1'"
+   errors from xdotool because `$WID` was empty. The post-script manual
+   enumerate+promote worked instantly.
 4. Post a handoff message to the governing Slack location (if the cron job has a
    pinned `thread_ts`, post to that thread; otherwise to the channel it delivers to)
    using the profile's bot token. A ready-to-run template lives in the
