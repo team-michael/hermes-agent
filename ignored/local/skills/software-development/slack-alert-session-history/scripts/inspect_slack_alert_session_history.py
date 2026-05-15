@@ -5,8 +5,29 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-HERMES_HOME = Path.home() / '.hermes'
-SESSIONS_DIR = HERMES_HOME / 'sessions'
+def resolve_sessions_dir() -> Path:
+    """Resolve Hermes sessions dir across legacy and profile-scoped layouts."""
+    legacy_dir = Path.home() / '.hermes' / 'sessions'
+    if (legacy_dir / 'sessions.json').exists():
+        return legacy_dir
+
+    # Skill lives under ~/.hermes/profiles/<profile>/skills/... in modern Hermes.
+    # Check the symlink path first, then resolved path; resolving can point into
+    # hermes-agent/ignored/local and hide the active profile directory.
+    checked = []
+    for base in (Path(__file__).absolute(), Path(__file__).resolve()):
+        for parent in base.parents:
+            if parent in checked:
+                continue
+            checked.append(parent)
+            candidate = parent / 'sessions'
+            if (candidate / 'sessions.json').exists():
+                return candidate
+
+    return legacy_dir
+
+
+SESSIONS_DIR = resolve_sessions_dir()
 SESSIONS_INDEX = SESSIONS_DIR / 'sessions.json'
 DEFAULT_KEYWORDS = [
     'alert', '알람', 'cloudwatch', 'amazon q', 'cpu', 'writer', 'reader',
@@ -16,6 +37,24 @@ DEFAULT_KEYWORDS = [
 
 def normalize_ws(text: str) -> str:
     return re.sub(r'\s+', ' ', text or '').strip()
+
+
+def redact_sensitive(text: str) -> str:
+    """Redact common secrets from Slack/log snippets before printing."""
+    if not text:
+        return text
+    text = re.sub(r'("token"\s*:\s*")[^"]+(")', r'\1[REDACTED]\2', text)
+    text = re.sub(r'(?i)(authorization:\s*bearer\s+)[A-Za-z0-9._\-]+', r'\1[REDACTED]', text)
+    text = re.sub(r'xox[baprs]-[A-Za-z0-9\-]+', 'xox*-[REDACTED]', text)
+    text = re.sub(r'(?i)((?:api[_-]?key|secret|password)\s*[:=]\s*)[^\s,;]+', r'\1[REDACTED]', text)
+    return text
+
+
+def clip(text: str, limit: int) -> str:
+    text = redact_sensitive(text)
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + f'\n... [truncated {len(text) - limit} chars]'
 
 
 def message_text(message: Dict[str, Any]) -> str:
@@ -92,9 +131,10 @@ def strip_leading_speaker_prefix(text: str) -> str:
 def extract_first_user_ask(text: str) -> str:
     stripped = strip_leading_speaker_prefix(text)
     stripped = re.sub(
-        r'^\[Thread context — prior messages in this thread \(not yet in conversation history\):\]\s*.*?\s*\[End of thread context\]\s*',
+        r'^.*?\[Thread context — prior messages in this thread \(not yet in conversation history\):\]\s*.*?\s*\[End of thread context\]\s*',
         '',
         stripped,
+        count=1,
         flags=re.S,
     )
     return stripped.strip()
@@ -166,7 +206,7 @@ def print_session_list(rows: List[Dict[str, Any]]) -> None:
         if sf.exists():
             try:
                 data = json.loads(sf.read_text())
-                snippet = normalize_ws(extract_first_user_ask(first_user_message(data.get('messages', []))))[:140]
+                snippet = clip(normalize_ws(extract_first_user_ask(first_user_message(data.get('messages', [])))), 140)
             except Exception:
                 snippet = ''
         print(f"- {row.get('created_at')} | session_id={sid} | thread_ts={row.get('thread_ts')} | user_id={row.get('user_id')} | {snippet}")
@@ -198,19 +238,19 @@ def inspect_session(row: Dict[str, Any], query: Optional[str]) -> None:
 
     print('# Injected thread context')
     if thread_context:
-        print(thread_context)
+        print(clip(thread_context, 4000))
     else:
         print('(No injected [Thread context ...] block found in the first user message)')
     print()
 
     print('# First user ask')
-    print(first_ask or '(empty)')
+    print(clip(first_ask, 2000) or '(empty)')
     print()
 
     print('# Assistant findings')
     if findings:
         for item in findings:
-            print(f"[assistant#{item['idx']}] {item['text'][:1600]}")
+            print(f"[assistant#{item['idx']}] {clip(item['text'], 1600)}")
             print()
     else:
         print('(No assistant findings matched)')
@@ -220,7 +260,7 @@ def inspect_session(row: Dict[str, Any], query: Optional[str]) -> None:
         print(f'# Query matches: {query}')
         if query_matches:
             for item in query_matches:
-                print(f"[{item['role']}#{item['idx']}] {item['text'][:1000]}")
+                print(f"[{item['role']}#{item['idx']}] {clip(item['text'], 1000)}")
                 print()
         else:
             print('(No transcript snippets matched the query)')
