@@ -1,8 +1,8 @@
-Slack: profile `.env` has SLACK_BOT_TOKEN; use Slack Web API for permalinks/threads without printing tokens. Google Workspace: use `google-workspace` skill + `gws` CLI with `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` from profile `.env`.
+Slack: profile `.env` has SLACK_BOT_TOKEN; use Web API for permalinks/threads without printing tokens. Google Workspace: use `google-workspace` skill + `gws` CLI with config dir from profile `.env`.
 §
 Notifly project lookup convention: when a `project_id` is found, map it through the DynamoDB `project` table and include the corresponding product_id/name; PostgreSQL per-project tables follow the `table_name_${project_id}` naming pattern.
 §
-Notifly analytics Athena defaults: region `ap-northeast-2`, workgroup `primary`, database `notifly_analytics`, result output `s3://raw-events-query-logs/athena-query-results/`; key tables include `notifly_event_logs` and `notifly_message_events`, commonly filtered by `dt`, `h`, `project_id`, and `pre_conversion`.
+Notifly Athena defaults: ap-northeast-2/primary/notifly_analytics, results `s3://raw-events-query-logs/athena-query-results/`; key tables `notifly_event_logs`, `notifly_message_events`; filter by `dt,h,project_id,pre_conversion`.
 §
 Notifly docs live site `docs.notifly.tech` is Mintlify-backed from `notifly-tech/notifly-docs`; old `team-michael/notifly-docs` is deprecated Docusaurus/GitHub Pages.
 §
@@ -19,3 +19,5 @@ For remote/container operations from Slack, Hermes terminal acts on local Hermes
 Notifly ECS SC: check `deployments[].serviceConnectConfiguration` (top-level may be null). Slack #engineering 2026-01-09: SC imposes 15s request timeout.
 §
 Notifly console: use `NOTIFLY_AUTH` email:password for `/ko/auth/login`; Michael Product is slug `michael` dashboard path.
+§
+Hermes `tarantino`: profile `/home/ubuntu/.hermes/profiles/tarantino`; related to `just-went-viral.com`; dashboard host `dashboard.just-went-viral.com`.

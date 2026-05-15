@@ -370,6 +370,54 @@ rm -f /home/ubuntu/.hermes/profiles/tarantino/Tarantino/SingletonLock \
 
 After manual solve in VNC, if the user reports "풀었음" the cookies are persisted even if the parked probe is still running — you can kill the parked probe and `create_driver()` on the next tick without re-solving. So the kill-then-spawn sequence does NOT lose session state.
 
+### Stale handoff — Chrome dies, Python keeps sleeping (verified 2026-05-13)
+
+The parked-Python pattern (`time.sleep(86400)` after detecting block) assumes Chrome
+stays attached for the full sleep. **It doesn't always.** Observed failure mode:
+
+- Probe script posts the VNC handoff to Slack.
+- User arrives over noVNC hours later → sees an empty desktop, no Chrome window.
+- `ps` shows: parent Python alive (`STAT=S`, ETIME hours), `chromedriver` as
+  `<defunct>` zombie, **zero `chrome`/`google-chrome` processes**.
+- The handoff post still says "차단 페이지 열린 상태" but the page is gone.
+
+Causes (any of these): chromedriver crashed on the `/sorry/` redirect and took
+Chrome with it; Chrome OOM-killed; renderer process bug on the captcha page.
+Python doesn't notice because it's not interacting with the driver during sleep.
+
+**Recovery (no need to wait for next cron tick):**
+
+1. Confirm the failure mode:
+   ```bash
+   ps -p <handoff_pid> -o pid,stat,etime,cmd       # parent Python alive
+   pgrep -af 'chrome|chromedriver' | grep -v grep  # only zombies / nothing
+   ```
+2. Kill the parked Python (reaps the zombie chromedriver) + sweep any stragglers
+   using the **enumerate-then-kill** form from the SingletonLock section. Never
+   `pkill -f chrome` (self-terminates the bash wrapper).
+3. Clear SingletonLock/Cookie/Socket.
+4. Relaunch Chrome **directly to the original blocked URL** via the wrapper —
+   no Selenium, no probe re-run. The `/sorry/` page reappears and the user can
+   solve in the same Tarantino profile so cookies still seed correctly:
+   ```bash
+   # Use terminal(background=True), NOT shell `&`/`disown` (the agent shell
+   # rejects nohup/disown/setsid wrappers).
+   DISPLAY=:1 XAUTHORITY=/home/ubuntu/.Xauthority \
+     /home/ubuntu/.hermes/profiles/tarantino/bin/chrome '<original /sorry/ URL>'
+   ```
+5. Wait ~5-6s, enumerate windows, find the WID whose title contains the search
+   query or the `/sorry/` URL fragment, promote it to `(0,0) 1600×1000`.
+6. Reply in the Slack handoff thread that Chrome is back up — do NOT post a
+   fresh top-level handoff (it's the same incident).
+
+This is faster than waiting a full cron interval and avoids re-running the probe
+just to re-trigger the block.
+
+**Hardening for future probes** (not yet implemented but worth doing): make the
+park loop poll `len(driver.window_handles)` every N seconds and exit if Chrome
+disappeared, so the handoff post auto-corrects with a "Chrome died, relaunch
+needed" follow-up instead of leaving a stale "open and ready" claim.
+
 Do this instead of trying to attach to the existing window:
 
 ```bash

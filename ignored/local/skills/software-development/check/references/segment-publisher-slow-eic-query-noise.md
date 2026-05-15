@@ -304,6 +304,153 @@ The `check` helper derives Logs Insights filter terms from the alarm/metric name
 
 A second gap was observed for `segment-publisher long running alam` (filter pattern `Processing took longer than expected`): the helper reported `logs.skipped: "no stable filter terms inferred"` even though the pattern is a stable literal substring. When this happens, use the exact literal string in a bounded Logs Insights query rather than treating zero helper counts as absence of logs.
 
-## Related skill
+## 2026-05-14 session — `segment-publisher long running alam` recurrence (class101 multi-campaign batch)
+
+Alarm: `segment-publisher long running alam`  
+Transition: `INSUFFICIENT_DATA -> ALARM` at 2026-05-14 06:30:05 UTC  
+Datapoint: `Sum=1.0` at 2026-05-14 06:23:00 UTC (metric period 300s)
+
+Evidence:
+- Trigger log (2026-05-14 06:29:34 UTC, stream `prod/segment-publisher/dd5861af15ce4d9e87e45630a860ced6`): `[WARN] Processing took longer than expected: 1807631.93 ms`
+- Same-stream context: 49 batches total for 10 parallel campaigns (CNGJjd, 3KWfBG, HxbGSr, WPE9J6, VMyJo5, IdxUZt, a84kiE, FQgbL9, sOk5Yk, C5Zpf0). Final batch: `campaignId: 3KWfBG, 617 recipients published. (batch index: 49)`.
+- Project explicit in stream `Received event` payload: `project_id: b2b4a8f879a75673b755bff42fc1deb6` → DynamoDB `project` → product `class101`.
+- Zero ERROR logs in the alarm window; only the single WARN line.
+- Daily recurrence: 30d=31, 7d=8, 1d=2. Continues the exact daily 1-dp pattern from 2026-04-14 through 2026-05-14 with no missed days. Timing today shifted earlier (~06:23 UTC) compared to the usual ~11:47 UTC window.
+
+Scope note: this is the first observed Pattern B instance where the triggering batch contains **10 concurrent small campaigns** rather than a single large user journey (e.g., stepup `UL1T00`). The WARN comes from total parallel processing time in `sqs_publisher.ts`, not from a slow `event_intermediate_counts` query. When multiple campaign IDs are present and no single campaign dominates the batch, scope should be reported as `project/<multiple campaigns>` rather than forcing a single campaign.
+
+Classification: `no_action`. Publish completed normally, no DLQ/ECS failure.
+
+## 2026-05-14 session — mixed-pattern day (`slow eic query` triggers twice, Pattern A + Pattern B)
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`  
+Transition 1: `OK -> ALARM` at 2026-05-14 03:59:39 UTC (KST 12:59), recovered 04:00:39 UTC  
+Datapoint 1: `Sum=1.0` at 2026-05-14 03:58:00 UTC  
+Transition 2: `OK -> ALARM` at 2026-05-14 06:30:39 UTC (KST 15:30), recovered 06:31:39 UTC  
+Datapoint 2: `Sum=1.0` at 2026-05-14 06:29:00 UTC
+
+Evidence — Transition 1 (Pattern A):
+- Trigger log (2026-05-14 03:58:13.920 UTC, stream `prod/segment-publisher/280ff091-7ae7-4723-b5b2-bc8a6bf1afad`): `EventCounterCteManager.extract:031b18009978590188e49e6777447fc2 took too long: 60929ms`
+- Project: `031b18009978590188e49e6777447fc2` → DynamoDB `project` → product `munice`
+- This is an actual slow EIC query (Pattern A).
+
+Evidence — Transition 2 (Pattern B, the Slack-delivered alert):
+- Trigger log (2026-05-14 06:29:34.929 UTC, stream `prod/segment-publisher/dd5861af15ce4d9e87e45630a860ced6`): `[WARN] Processing took longer than expected: 1807631.93 ms`
+- Same-stream context: 49 batches across 10 concurrent campaigns (CNGJjd, 3KWfBG, HxbGSr, WPE9J6, VMyJo5, IdxUZt, a84kiE, FQgbL9, sOk5Yk, C5Zpf0). Final batch: `campaignId: 3KWfBG, 617 recipients published. (batch index: 49)`.
+- Project explicit in `Received event` payload: `project_id: b2b4a8f879a75673b755bff42fc1deb6` → DynamoDB `project` → product `class101`.
+- Zero ERROR logs in the alarm window; only the single WARN line.
+- This is **Pattern B** (batch-processing WARN in `sqs_publisher.ts`), not Pattern A.
+- Memory pressure observed: rss peaked at **3616 MB** during the batch, exceeding the ECS task memory limit of **3072 MB** (`taskDefinition: segment-publisher-prod` revision 5). The container did not OOM-kill, suggesting swap usage.
+
+### Redundancy with `segment-publisher long running alam`
+- The dedicated `segment-publisher long running alam` (namespace `Custom/segment-publisher`, metric `SegmentPublisher.ExecutionTimeOverThreshold`) also transitioned `INSUFFICIENT_DATA -> ALARM` at 06:30:05 UTC for the same underlying WARN line.
+- The `ConsoleErrors` `slow eic query` alarm caught the same log via the metric filter `took too long`, because CloudWatch substring tokenization matches `too` inside `took` and `long` inside `longer`.
+- This confirms the `ConsoleErrors` alarm is functionally redundant for Pattern B and adds metric-filter noise.
+
+### Mixed-pattern day triage rule
+When a broad metric-filter alarm fires **more than once on the same day**, always verify the **exact log line that maps to the most recent datapoint** before classifying. Do not assume the most recent transition shares the same pattern as the first transition of the day. The `slow eic query` alarm on 2026-05-14 had one Pattern A episode and one Pattern B episode; conflating them would misattribute root cause and scope.
+
+Classification (Transition 2, Slack alert): `no_action` — publish completed normally, no DLQ/ECS failure, dedicated `long running alam` already covers the same signal.
+
+## 2026-05-14 session — `segment-publisher slow eic query` ALARM (Pattern A, munice), 15:46 KST
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`  
+Transition: `OK -> ALARM` at 2026-05-14 06:46:39 UTC (KST 15:46)  
+Datapoint: `Sum=1.0` at 2026-05-14 06:45:00 UTC (metric period 60s)
+
+Evidence:
+- Manual `filter-log-events` with `"took" "too" "long"` in the 06:45–07:00 UTC window found **3 Pattern A matches**, all for the same project:
+  - `EventCounterCteManager.extract:031b18009978590188e49e6777447fc2 took too long: 64239ms` (06:45:01 UTC)
+  - `EventCounterCteManager.extract:031b18009978590188e49e6777447fc2 took too long: 66915ms` (06:46:18 UTC)
+  - `EventCounterCteManager.extract:031b18009978590188e49e6777447fc2 took too long: 63772ms` (06:47:55 UTC)
+- Project mapping: `project_id: 031b18009978590188e49e6777447fc2` → DynamoDB `project` → product `munice`.
+- Stream context shows `campaign_id: undefined` (segment-condition-driven schedule, not a named campaign entity).
+- Zero ERROR logs in the alarm window.
+- The `check` helper returned `can_answer_root_cause: false` because it derived filter terms from the alarm name (`slow eic query`) rather than the metric filter pattern (`took too long`), yielding zero Logs Insights matches. The trigger was recovered only by the bounded manual trace with the three-term filter.
+- 30-day metric sum (`ConsoleErrors` `segment-publisher-prod slow eic query`, `Period=86400`, `Statistics=Sum`): 81 total. Daily count for 2026-05-14 is **5.0 total**, confirming three additional transitions on this day besides the two already documented above.
+- This alarm window contained **no Pattern B** (`[WARN] Processing took longer than expected`) matches.
+
+Investigation note — `describe_log_streams` stale timestamp pitfall:
+- The top 5 most-recent streams by `lastEventTimestamp` all had first/last timestamps near **2026-05-14 06:48–06:49 UTC** (i.e., *after* the 06:45 alarm window), because the Fargate task restarted and created new streams. Streams active during 06:45–07:00 were no longer in the top-N by the time of investigation (~06:48 UTC).
+- The actual trigger streams (`24a8a452...`, `5a9ddbd5...`, `a70d6cc6...`) were discovered only by scanning a broader set of streams and checking tail events.
+
+### 2026-05-14 daily count reconciliation
+The Slack-delivered alert (this session, 15:46 KST) and the prior session's Transition 2 (06:30 KST) are **separate transitions on the same day** for the same alarm. The `slow eic query` alarm on 2026-05-14 fired at least 3 times:
+1. 03:59:39 UTC — Pattern A (munice)
+2. 06:30:39 UTC — Pattern B (class101, documented in prior session)
+3. 06:46:39 UTC — Pattern A (munice, this session)
+
+**Updated daily counts** (2026-05-14 added):
+
+```
+2026-04-13=7, 04-14=3, 04-15=2, 04-16=0, 04-17=4, 04-18=1,
+04-19=1, 04-20=5, 04-21=3, 04-22=2, 04-23=3, 04-24=6, 04-25=2, 04-26=2,
+04-27=4, 04-28=3, 04-29=5, 04-30=2, 05-01=1, 05-02=3, 05-03=1, 05-04=2,
+05-05=1, 05-06=1, 05-07=3, 05-08=1, 05-09=1, 05-10=1, 05-11=5, 05-12=3,
+05-13=1, 05-14=5
+```
+
+Classification: `no_action` — queries completed, batch publishing finished normally (recipient counts 351→5752), no ECS failure or DLQ signal. The 3 munice Pattern A occurrences are within the 1–7/day baseline.
+
+## 2026-05-14 session — `segment-publisher slow eic query` ALARM (Pattern B, stepup), 20:52 KST
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`  
+Transition: `OK -> ALARM` at 2026-05-14 11:53:39 UTC (KST 20:53)  
+Datapoint: `Sum=1.0` at 2026-05-14 11:52:00 UTC (metric period 60s)
+
+Evidence:
+- Trigger log (2026-05-14 11:52:52.241 UTC, stream `prod/segment-publisher/e74d180bca4f4e0fbf7cfdd91c8cf92d`): `[WARN] Processing took longer than expected: 3213874.92 ms`
+- Same-stream context: 18 batches, final `campaignId: UL1T00, 884366 recipients published.`
+- Received event payload shows `schedule_type: "user_journey"`, id `UL1T00`, name `[만보기] 매일 적립 리마인드`.
+- Project explicit in stream: `project_id: 32d8d9d6294d52e7a5427c036b471f91` → DynamoDB `project` → product `stepup`.
+- **2026-05-14 re-check note**: A later manual trace of the same trigger stream (`e74d180b...`) from 11:30–11:58 UTC found only `campaignId: UL1T00` lines and no `project_id` or `Received event`. The `project_id` may have been in an earlier part of the stream (<11:30 UTC) or a different concurrent stream. Because prior-day evidence for `UL1T00` is inconsistent (`stepup` on 05-08/10/12, `proudp` on 05-13), treat project scope for `UL1T00` as unreliable unless explicitly present in the current alarm window.
+- Zero ERROR logs in the alarm window.
+- `describe_log_streams` stale-metadata pitfall reproduced: the trigger stream (`e74d180b...`) had `lastEventTimestamp=11:31:27` in the API response, ~21 minutes behind its actual final event at 11:52:52. Scanning `limit=10` streams and checking tails with `get_log_events` found it at position #9.
+- Daily recurrence continues: exact same Pattern B (`sqs_publisher.ts` batch-processing WARN) as the 2026-05-08 through 2026-05-13 stepup triggers. Durations ~2977–3214 s.
+- The `segment-publisher long running alam` (namespace `Custom/segment-publisher`) also transitioned `INSUFFICIENT_DATA -> ALARM` at 11:52:05 UTC for the same underlying WARN line, confirming the two alarms are redundant for Pattern B.
+
+Classification: `no_action` — publish completed, no DLQ/ECS failure, no customer impact.
+
+## 2026-05-14 session — `segment-publisher long running alam` recurrence (Pattern B), 20:53 KST
+
+Alarm: `segment-publisher long running alam`  
+Transition: `INSUFFICIENT_DATA -> ALARM` at 2026-05-14 11:53:05 UTC (KST 20:53)  
+Datapoint: `Sum=1.0` at 2026-05-14 11:46:00 UTC (metric period 300s)
+
+Evidence:
+- Trigger log (2026-05-14 11:52:52.241 UTC, stream `prod/segment-publisher/e74d180bca4f4e0fbf7cfdd91c8cf92d`): `[WARN] Processing took longer than expected: 3213874.92 ms`
+- Same-stream context: 18 batches (index 10→18), final `campaignId: UL1T00, 884366 recipients published.`
+- Zero ERROR logs in the alarm window; only the single WARN line.
+- Memory pressure: rss ~318 MB, well below ECS task memory limit 3072 MB. No OOM or swap signal.
+
+Scope note — **project_id missing in trigger stream, prior-day evidence inconsistent**:
+- The trigger stream (`e74d180b...`) contained only `campaignId: UL1T00` batch lines from 11:31:27 to 11:52:52 UTC. **No `project_id` or `Received event` payload was present in this stream.**
+- Other concurrent streams in the same log group carried `project_id` values such as `bcf172129f80521a9a3b2d72b58ecb29` (product `proudp`) and `e7239ea653e251ed8b0ae4aff9d9d859`, but Logs Insights confirmed those streams handled different campaigns, not UL1T00.
+- Prior-day evidence for `UL1T00` is **inconsistent**:
+  - 2026-05-08, 05-10, 05-12: `stepup` (`32d8d9d6294d52e7a5427c036b471f91`)
+  - 2026-05-13: `proudp` (`bcf172129f80521a9a3b2d72b58ecb29`)
+- Because the same `campaignId` appears under different projects on different days, **prior-day scoping is unreliable for `UL1T00`**. When the current trigger stream lacks an explicit `project_id`, the safe scope is `project unknown for campaign UL1T00`.
+
+Daily recurrence: 30d=31, 7d=8, 1d=2, 10m=1. Continues the exact daily 1-dp pattern, though today had a second earlier occurrence at 06:23 UTC (class101, see above).
+
+Classification: `no_action` — publish completed, no DLQ/ECS failure, no customer impact.
+
+## 2026-05-14 session — `segment-publisher slow eic query` ALARM (Pattern A, munice), 21:41 KST
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`  
+Transition: `OK -> ALARM` at 2026-05-14 12:41:39 UTC (KST 21:41)  
+Datapoint: `Sum=1.0` at 2026-05-14 12:41:00 UTC (metric period 60s)  
+Recovery: `ALARM -> OK` at 2026-05-14 12:42:39 UTC
+
+Evidence:
+- Trigger log (2026-05-14 12:40:42.452 UTC, stream `prod/segment-publisher/621b157cbd7749dca0f8e3eab4804b4e`): `EventCounterCteManager.extract:031b18009978590188e49e6777447fc2 took too long: 63711ms`
+- Project mapping: `project_id: 031b18009978590188e49e6777447fc2` → DynamoDB `project` → product `munice`.
+- Stream context: `Schedule context setup completed 6003c9499873432ba7ea54cae333694c`, then standard publishing batches (950→9,507 recipients, 8 batches).
+- `campaign_id: undefined` in log; schedule is segment-condition-driven, not a named campaign entity.
+- Zero ERROR logs in the alarm window.
+- 30-day metric sum (`ConsoleErrors` `segment-publisher-prod slow eic query`, `Period=86400`, `Statistics=Sum`): 82 total. Daily count for 2026-05-14 is 1.0 so far (05-13 was 9.0, peak day).
+- Helper reproduced the name-vs-pattern false-negative (`filter_terms: ["slow eic query"]`), returning zero Logs Insights matches. Manual `filter-log-events` with `"took" "too" "long"` recovered the trigger.
+
+Classification: `no_action` — query completed, batch publishing finished normally, no ECS failure or DLQ signal. The munice Pattern A occurrence is within the 1–7/day baseline and followed by normal recipient publishing.
 
 For deeper project segment extraction, EIC Large Scale conversion workflows, and user-journey session analysis, see `notifly-segment-publisher-alarm-analysis`.
