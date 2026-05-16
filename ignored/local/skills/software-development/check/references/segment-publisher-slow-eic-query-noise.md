@@ -54,10 +54,12 @@ The metric filter pattern `took too long` has **no quotes** in the filter config
 
 This means `filter_log_events` with a quoted phrase `"took too long"` returns **zero** matches for the WARN line, while `"took" "too" "long"` returns the match. In manual traces, always test with the separate-term form when the metric filter pattern is unquoted.
 
-## Known recurrence
+### Known recurrence
 
-- Pattern B: roughly daily around the same campaign window (stepup `UL1T00`). Project `32d8d9d6294d52e7a5427c036b471f91` (product `stepup`) is explicitly noted in code comments as dominating this alert.
-- Pattern A: observed 2026-05-07 for project `b57754a9497a545ab9b0e4aadd6f53b6` (product `regather`). EIC aggregation on `event_intermediate_counts_b57754a9497a545ab9b0e4aadd6f53b6` took ~128 s.
+- Pattern B: roughly daily. Two distinct daily windows observed:
+  - Stepup UL1T00 (`[만보기] 매일 적립 리마인드`) at ~11:47 UTC (20:47 KST), project `32d8d9d6294d52e7a5427c036b471f91` (product `stepup`). Typically 18 batches, ~880K recipients, durations ~2977–3214 s.
+  - Class101 multi-campaign batch at ~06:30 UTC (15:30 KST), project `b2b4a8f879a75673b755bff42fc1deb6` (product `class101`). Ten parallel campaigns (CNGJjd, 3KWfBG, HxbGSr, WPE9J6, VMyJo5, IdxUZt, a84kiE, FQgbL9, sOk5Yk, C5Zpf0), ~49 batches, durations ~1807–1882 s. Observed 2026-05-14 and 2026-05-15; see reference entries below.
+- Pattern A: observed sporadically for munice (`031b18009978590188e49e6777447fc2`) and regather (`b57754a9497a545ab9b0e4aadd6f53b6`).
 
 ## Triage rule
 
@@ -69,7 +71,8 @@ Determine which pattern triggered the current alarm before classifying.
 - The EIC table size/index health for that project is the concrete next lookup target.
 
 **If Pattern B (plain `[WARN] Processing took longer than expected`):**
-- Scope to the campaign in the log (e.g., `stepup/UL1T00`).
+- Scope to the campaign(s) in the log. When multiple parallel campaigns are present (class101 batch), report `project/<multiple campaigns>` rather than forcing a single campaign.
+- **Redundancy check:** Verify `segment-publisher long running alam` (namespace `Custom/segment-publisher`, metric `SegmentPublisher.ExecutionTimeOverThreshold`) state. If it transitioned to ALARM within the same minute, the `ConsoleErrors` `slow eic query` alarm is catching the same benign log line.
 - Classify as `no_action` because it is a known recurring pattern with no delivery failure or data loss.
 - Note the metric-filter name mismatch in the final answer when it helps explain the noise.
 
@@ -452,5 +455,22 @@ Evidence:
 - Helper reproduced the name-vs-pattern false-negative (`filter_terms: ["slow eic query"]`), returning zero Logs Insights matches. Manual `filter-log-events` with `"took" "too" "long"` recovered the trigger.
 
 Classification: `no_action` — query completed, batch publishing finished normally, no ECS failure or DLQ signal. The munice Pattern A occurrence is within the 1–7/day baseline and followed by normal recipient publishing.
+
+## 2026-05-15 session — `segment-publisher slow eic query` ALARM (Pattern B, class101)
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`
+Transition: `OK -> ALARM` at 2026-05-15 06:31:10 UTC (KST 15:31)
+Datapoint: `Sum=1.0` at 2026-05-15 06:30:00 UTC (metric period 60s)
+Companion alarm: `segment-publisher long running alam` transitioned `INSUFFICIENT_DATA -> ALARM` at 2026-05-15 06:31:05 UTC.
+
+Evidence:
+- Trigger log (2026-05-15 06:30:46 UTC, stream `prod/segment-publisher/d1757014940b44d491486cce6cfbe9e1`): `[WARN] Processing took longer than expected: 1882927.67 ms`
+- Same-stream context: 49 batches across 10 concurrent campaigns (CNGJjd, 3KWfBG, HxbGSr, WPE9J6, VMyJo5, IdxUZt, a84kiE, FQgbL9, sOk5Yk, C5Zpf0). Final batch indices 48 and 49.
+- Received event payload (stream head): `project_id: b2b4a8f879a75673b755bff42fc1deb6` → DynamoDB `project` → product `class101`.
+- `describe_log_streams` reported `lastEventTimestamp=2026-05-15T06:27:48Z` for this stream, but `get_log_events` revealed events up to 06:30:46 UTC — a ~3-minute metadata lag.
+- Zero ERROR logs in the alarm window (06:00–07:00 UTC).
+- Daily recurrence: 30d=12, 7d=12, 1d=1. 2026-05-14 had the identical class101 10-campaign batch. This confirms a second daily Pattern B window (~06:30 UTC for class101) distinct from the stepup UL1T00 window (~11:47 UTC).
+
+Classification: `no_action` — publish completed, no DLQ/ECS failure, companion `long running alam` already covers same signal.
 
 For deeper project segment extraction, EIC Large Scale conversion workflows, and user-journey session analysis, see `notifly-segment-publisher-alarm-analysis`.

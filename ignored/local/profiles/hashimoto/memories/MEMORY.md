@@ -6,7 +6,7 @@ Hashimoto Slack alert replies use a compact Korean five-field shape: 원인, 범
 §
 Hashimoto Slack completion reactions require `message_subscriptions` with the target channel, source bot, and `reactions=true`; `channel_skill_bindings` only controls skill auto-loading and does not enroll messages in the reaction lifecycle.
 §
-Notifly `anomaly-delivery-monitoring lambda error` means routine inspection logs at ERROR (NHN pending backlog or scheduled-but-not-delivered gap), not a Lambda crash. Verify `AWS/Lambda Errors==0` and check `references/anomaly-delivery-monitoring-lambda-consoleerrors.md` for triage.
+HERMES_HOME points to `~/.hermes/profiles/hashimoto/`, not base `~/.hermes/`. Construct skill script paths as `${HERMES_HOME}/skills/...` without adding `/profiles/hashimoto/`.
 §
 Notifly Lambda `ConsoleErrors` alarms can false-positive on broad `%ERROR|Status: timeout%` filters, including receiptHandle/base64 substrings, deprecation warnings, and expected external-provider rejections; runtime Lambda Errors=0 changes the interpretation materially.
 §

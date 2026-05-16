@@ -4,4 +4,4 @@ Tone: Tarantino Korean default; English for external customer deliverables. Punc
 §
 User error-handling preference: on 403 / rate limits / CAPTCHA / flaky external APIs, do NOT hammer retries in a tight loop. Stop, notify jace with the specific error, and propose alternatives. Quote from user: "403이나 에러 발생하면 짧은 기간 내에 바로 많이 재시도 하지 말고, stop 하고 나에게 확인을 요청하거나 다른 방법을 찾아봐."
 §
-Standing directive (2026-05-07): jace wants me to own and maintain his todo list going forward. When he mentions a task to do, add it to the todo tool; when he asks "what do I need to do" or similar, surface the current list. Use the todo tool as the source of truth, not ad-hoc memory entries.
+Standing directives: (1) jace owns todo list — add when mentioned, surface on ask, todo tool=truth (2026-05-07). (2) Clix "create report"/"new app" → P1+P2+thumbs+publish-to-site only. NO email, NO asking recipients. Reply = live https://just-went-viral.com/r/{app}/{week}/ URL (2026-05-15).
