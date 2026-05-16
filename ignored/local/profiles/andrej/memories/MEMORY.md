@@ -1,4 +1,4 @@
-Slack: profile `.env` has SLACK_BOT_TOKEN; use Web API for permalinks/threads without printing tokens. Google Workspace: use `google-workspace` skill + `gws` CLI with config dir from profile `.env`.
+Notifly andrej `.env`: `SLACK_BOT_TOKEN`, `LINEAR_API_KEY`; Google Workspace uses `google-workspace` skill + `gws` CLI config dir from profile `.env`.
 §
 Notifly project lookup convention: when a `project_id` is found, map it through the DynamoDB `project` table and include the corresponding product_id/name; PostgreSQL per-project tables follow the `table_name_${project_id}` naming pattern.
 §

@@ -567,6 +567,10 @@ Do not chase the `channel_not_found` unless the body post is *also* missing from
 
 ### Agent-side posting recipe (use this, not `send_message`)
 
+**Cron contexts do NOT have `send_message` available.** Verified 2026-05-15 cron run: the tool set in scheduled cron jobs is restricted to `terminal`, `write_file`, `read_file`, `skill_view`, `process`, etc. — `send_message` is missing entirely. Any cron prompt that says "post the header via `send_message`, then reply with `chat.postMessage`" is wrong in this runtime. Both the header (top-level) AND the thread replies must go through direct `chat.postMessage`. The header call simply omits `thread_ts`; the response's `ts` field becomes the thread anchor for subsequent replies. Same token, same payload shape, just one extra call.
+
+For interactive (non-cron) sessions where `send_message` IS available, you can still use it for the header — but the universally-portable path is "all `chat.postMessage`, no `send_message` dependency." Default to that when authoring cron prompts.
+
 `send_message(action='send', ...)` cannot pin a post to an arbitrary `thread_ts` — it's channel-level. For this pattern, post everything via `chat.postMessage` directly:
 
 ```python

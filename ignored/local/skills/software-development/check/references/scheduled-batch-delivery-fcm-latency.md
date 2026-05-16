@@ -30,7 +30,9 @@ The alarm name contains `-P2-` (priority tier), but the actual Lambda function i
 2. **Lambda runtime** — check `AWS/Lambda` `Errors`, `Throttles`, `Duration` for the actual mapped function (`scheduled-batch-delivery`)
 3. **SQS queues** — inspect `scheduled-batch-push-notification-queue` visible/in-flight counts and DLQ depth
 4. **Metric datapoints** — fetch `Maximum` on `FCMSendLatency` around the alert window as p99 proxy, or use `get-metric-data` with `ExtendedStatistics=['p99']`
-5. **Lambda logs ( External-latency verification )** — quick empty-filter confirmation:
+5. **Volume stability check** — fetch `Sum` on `FCMSendBatch` (success + error) for the same window. Stable volume with a stable ~3–5% error rate means the latency spike is external variance, not a traffic surge or new failure mode.
+6. **DbInsert error cross-check** — query `DbInsert` with `outcome=error` for `delivery_result` and `delivery_failure_log`. Zero error counts during the latency window confirms no database write failures are accompanying the FCM slowdown.
+7. **Lambda logs ( External-latency verification )** — quick empty-filter confirmation:
    - `filter-log-events` on `/aws/lambda/scheduled-batch-delivery` with `filterPattern='ERROR'` → expect zero results
    - `filter-log-events` with `filterPattern='timeout'` → expect zero results
    - `filter-log-events` with `filterPattern='REPORT'` → typical duration 200–900 ms, max memory ~226 MB, all `Status=success`
@@ -59,4 +61,15 @@ Effect: push delivery may be delayed by seconds to tens of seconds, but no messa
 
 ## Related Notifly pattern
 
-May 2026 evidence: this alarm fired multiple times daily. Daily `Maximum` values ranged from ~15s to ~45s. Lambda remained healthy, DLQ empty, and alerts consistently self-recovered.
+May 2026 evidence: this alarm fired multiple times daily. Daily `Maximum` values ranged from ~8s to ~57s (30-day span). Lambda remained healthy, DLQ empty, and alerts consistently self-recovered.
+
+Concrete baseline observed (2026-04-21 to 2026-05-15):
+- 30-day ALARM transitions: ~75 (nearly daily)
+- 7-day ALARM transitions: ~21
+- 1-day ALARM transitions: ~4–9
+- 10-minute rapid recurrence: common (2–3 transitions within 10 minutes)
+- Daily FCM batch volume (success): ~600K–800K batches/day, stable
+- Error batch rate: ~3–5% of total, stable
+- No concurrent `DbInsert outcome=error` spikes during latency windows (cross-check `delivery_result` and `delivery_failure_log` metrics)
+
+These baselines confirm the alarm is a threshold-vs-normal-variance mismatch rather than a worsening or new regression.
