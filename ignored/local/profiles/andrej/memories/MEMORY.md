@@ -2,22 +2,24 @@ Notifly andrej `.env`: `SLACK_BOT_TOKEN`, `LINEAR_API_KEY`; Google Workspace use
 §
 Notifly project lookup convention: when a `project_id` is found, map it through the DynamoDB `project` table and include the corresponding product_id/name; PostgreSQL per-project tables follow the `table_name_${project_id}` naming pattern.
 §
-Notifly Athena defaults: ap-northeast-2/primary/notifly_analytics, results `s3://raw-events-query-logs/athena-query-results/`; key tables `notifly_event_logs`, `notifly_message_events`; filter by `dt,h,project_id,pre_conversion`.
+Notifly API data default: PG ETL/read-model aggregations first for LLM statistics/events/messages; Athena/S3 raw ledger only explicit fallback/debug/audit. Athena tables `notifly_event_logs`,`notifly_message_events`; filter `dt,h,project_id`.
 §
 Notifly docs live site `docs.notifly.tech` is Mintlify-backed from `notifly-tech/notifly-docs`; old `team-michael/notifly-docs` is deprecated Docusaurus/GitHub Pages.
 §
 Slack media Qs: if channel/thread IDs exist, fetch root/thread via Web API, inspect files/attachments, download authorized images, run vision.
 §
-CloudCheckr AU: for customer 2000841/account a4dcbb7d-0bb4-4f2c-a6c6-51a80586d728 use skill `cloudcheckr-service-cost-api-fetch`; user permits ending other sessions on MaxSessionsNotice.
+CloudCheckr AU 2000841/a4dcbb7d uses `cloudcheckr-service-cost-api-fetch`; MaxSessionsNotice may end sessions; parallel backfills can OIDC `invalid_grant`, retry sequentially.
 §
 Git commit identity used in prior Notifly agent work: `Andrej Karpathy <team@greyboxhq.com>`.
 §
 For `team-michael/cloudflare-containers` Access-protected endpoints, Cloudflare Access service-token headers `cf-access-client-id` and `cf-access-client-secret` can be used when available; their values are secrets and should not be stored or printed.
 §
-For remote/container operations from Slack, Hermes terminal acts on local Hermes runtime unless explicit SSH/API target is established and verified; before filesystem/service mutation, verify target identity with hostname/whoami/pwd.
+Remote/container ops: local Hermes isn't target; verify hostname/whoami/pwd before filesystem/service mutations.
 §
 Notifly ECS SC: check `deployments[].serviceConnectConfiguration` (top-level may be null). Slack #engineering 2026-01-09: SC imposes 15s request timeout.
 §
 Notifly console: use `NOTIFLY_AUTH` email:password for `/ko/auth/login`; Michael Product is slug `michael` dashboard path.
 §
 Hermes `tarantino`: profile `/home/ubuntu/.hermes/profiles/tarantino`; related to `just-went-viral.com`; dashboard host `dashboard.just-went-viral.com`.
+§
+Notifly web/demo: English IDs; Korean docs; prod-like events; SDK projectId/username, password dummy; no public password env; `.env.example` not gate.

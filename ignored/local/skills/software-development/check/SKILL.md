@@ -126,11 +126,13 @@ Resolve scope in this order:
    - If mapping fails or the item is missing, report the full `project_id` and the exact failure reason from `projects[].mapping_failure_reason` or `scope_attribution.project_mapping_failures`.
    - If a project name appears in logs without a `project_id` (e.g., `Failed to execute payment for <name>`), scan DynamoDB `project` table with `FilterExpression '#n = :val'` on the `name` attribute to resolve the `project_id`.
 3. For campaign or user_journey IDs, use read-only DynamoDB/Postgres/Athena lookups to map names and owning project/product when available.
+   - **Pitfall — empty `campaigns_*` table does not mean deleted**: When a candidate campaign ID is not found in `campaigns_<project_id>`, do not conclude it was deleted. It may be a user journey ID stored in `user_journeys_<project_id>`. Check the `resource_type` field in `delivery_result_<project_id>` or `message_events_<project_id>` if the alarm logs include DB insert lines. If `resource_type = 'user_journey'`, query `user_journeys_<project_id>` for the ID and report user journey scope instead. See `references/email-delivery-bounce-rate-triage.md` for a concrete example where `ifrxyr` existed in `user_journeys_*` but not in `campaigns_*`.
 4. For Postgres table names, infer project from the `table_$project_id` suffix and then map that project.
 5. For log lines containing both `Project Id` and `Campaign Id`, treat the pair as the primary campaign scope. Current alarm-window pairs outrank 7d/30d historical signatures.
    - Also treat log-style `campaign_id: <id>, project_id: <id>` and `project_id: <id>, campaign_id: <id>` as primary project/campaign pairs.
    - Also treat compact ECS log lines such as `campaignId: UL1T00` (with or without accompanying `projectId`) as primary scope evidence when they appear in the current alarm-window stream.
    - Also treat structured api-service `error-response` logs containing `"projectId":"<id>"` as project scope evidence when they appear in the current alarm-window stream.
+   - Also treat `segment-publisher` `Received event` JSON payloads containing a `user_journeys` array (with `schedule_type: "user_journey"`) as user journey scope evidence; the `campaign_id` field in the same stream then refers to the user journey ID.
    - Never combine a standalone campaign ID with an unrelated sharded table suffix from another log line. IDs from `relation "<table>_<project_id>" does not exist` are table references, not campaign ownership evidence, unless that table error is the actual current trigger and no stronger project/campaign pair exists.
 6. For DB alerts, Performance Insights SQL statements are scope evidence: `event_intermediate_counts_$project_id`, `users_$project_id`, `delivery_result_$project_id`, `message_events_$project_id`, etc. mean the project is known and must not be reported as unknown.
 7. For campaign/user_journey scope, first check whether the SQL/table family can carry `campaign_id`, `resource_type`, or `user_journey_id`. If yes, run a read-only aggregate around the alarm/PI window to find the top campaign or user-journey contributor. If campaign evidence exists, stop there and do not also report user journey. If not available because the query is parameterized or the table family has no campaign/user_journey column, say that specific reason.
@@ -217,10 +219,16 @@ python "${HERMES_HOME:-$HOME/.hermes}/skills/software-development/check/scripts/
 
 **Pitfall — bracket service prefix in alarm name**: Alarm names starting with a service bracket prefix such as `[api-service]` or `[web-console]` may not be parsed by the helper text detector because the brackets break word-boundary heuristics. Pass `--alarm-name` explicitly when `detected.alarm_name` is null but the pasted text clearly contains a bracketed service name.
 
-**Pitfall — bracket prefix breaks AWS CLI `--alarm-names` JSON parsing**: When an alarm name starts with `[` (e.g., `[api-service] 4xx ...`), the AWS CLI `--alarm-names` parameter interprets the leading bracket as the start of a JSON array and throws `ParamValidation: Invalid JSON`. This can make the helper fail with `missing_required_context: alarm_metadata` even when the alarm exists. Reliable workarounds, in order of preference:
-1. Use `--alarm-name-prefix` with a unique substring (e.g., `--alarm-name-prefix 'api-service 4xx'`).
-2. Use Python `boto3` directly (the SDK does not have this JSON-parsing quirk).
-3. Write the alarm name to a file and use `--alarm-names file:///tmp/alarm.txt`.
+**Pitfall — bracket prefix breaks AWS CLI `--alarm-names` JSON parsing**: When an alarm name starts with `[` (e.g., `[api-service] 4xx ...`), the AWS CLI `--alarm-names` parameter interprets the leading bracket as the start of a JSON array and throws `ParamValidation: Invalid JSON`. The helper uses `--alarm-names` internally, so passing `--alarm-name '[api-service] ...'` to the helper will also fail with `missing_required_context: alarm_metadata` even when the alarm exists. Do not pass the raw bracketed name to `--alarm-name`. Reliable workarounds, in order of preference:
+1. Use `--alarm-name-prefix` with a unique substring (e.g., `--alarm-name-prefix 'api-service 4xx'`). Note: the helper does not currently expose `--alarm-name-prefix`, so for helper failures fall back to direct AWS CLI or Python boto3.
+2. Use direct AWS CLI with `--query` matching (the CLI field selector is not affected by bracket parsing):
+   ```bash
+   aws cloudwatch describe-alarms --region ap-northeast-2 \
+     --query 'MetricAlarms[?contains(AlarmName, `api-service`) && contains(AlarmName, `4xx`)].{Name:AlarmName,Namespace:Namespace,MetricName:MetricName,Statistic:Statistic,Period:Period,Threshold:Threshold,ComparisonOperator:ComparisonOperator,StateValue:StateValue,StateReason:StateReason,StateReasonData:StateReasonData}' \
+     --output json
+   ```
+3. Use Python `boto3` directly (the SDK does not have this JSON-parsing quirk).
+4. Write the alarm name to a file and use `--alarm-names file:///tmp/alarm.txt`.
 Do not retry the same bare quoted string; the CLI JSON parser will reject it regardless of shell quoting.
 
 **Pitfall — DLQ creation alarm names**: alarm names matching the literal pattern `<queue-name>-dlq has been created` are not auto-detected because `has been created` is prose, not a metric. Pass `--alarm-name` explicitly, e.g. `--alarm-name 'kinesis-record-dispatcher-queue-dlq has been created'`.
