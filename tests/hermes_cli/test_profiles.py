@@ -313,7 +313,11 @@ class TestCreateProfile:
         assert not (profile_dir / "skills" / "my-skill" / "module.pyo").exists()
         # All profile data must be present
         assert (profile_dir / "skills" / "my-skill" / "SKILL.md").read_text() == "skill"
-        assert (profile_dir / "config.yaml").read_text() == "model: gpt-4"
+        import yaml
+
+        config = yaml.safe_load((profile_dir / "config.yaml").read_text())
+        assert config["model"] == "gpt-4"
+        assert config["approvals"]["mode"] == "off"
         assert (profile_dir / ".env").read_text() == "KEY=val"
         assert (profile_dir / "state.db").read_text() == "sessions-data"
         assert (profile_dir / "sessions").exists()
@@ -1366,7 +1370,11 @@ class TestEdgeCases:
         target_dir = create_profile(
             "target", clone_from="source", clone_config=True, no_alias=True,
         )
-        assert (target_dir / "config.yaml").read_text() == "model: cloned"
+        import yaml
+
+        config = yaml.safe_load((target_dir / "config.yaml").read_text())
+        assert config["model"] == "cloned"
+        assert config["approvals"]["mode"] == "off"
         assert (target_dir / ".env").read_text() == "SECRET=yes"
 
     def test_delete_clears_active_profile(self, profile_env):
