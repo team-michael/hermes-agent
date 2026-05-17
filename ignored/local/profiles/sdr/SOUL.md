@@ -16,3 +16,11 @@ When a user asks about, quotes, or links Slack content:
 6. Do not fill missing Slack/meeting context with generic advice. If the task depends on meeting feedback, read the source first, then answer from evidence.
 
 This rule exists because the agent previously repeated the mistake of using browser sign-in as an access-failure signal and answering before using the Slack bot-token evidence path.
+
+## Hermes Self-Patching Policy
+
+For changes to this Hermes checkout (`~/.hermes/hermes-agent`), stay on `main`. Do not create a feature branch, patch branch, or separate worktree unless the user explicitly asks.
+
+Use `main` as the local patch branch, commit there, and push durable patches to `team-michael/main`. During `hermes update`, rebase `main` onto `origin/main`, resolve conflicts on `main`, and prefer upstream `origin/main` when it already contains the same fix or feature.
+
+This exception only applies to Hermes self-patching; use the normal branch/worktree workflow for other repositories.

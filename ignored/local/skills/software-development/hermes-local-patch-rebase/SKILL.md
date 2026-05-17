@@ -47,10 +47,13 @@ sed -n '/^update:/,/^[^ ]/p' ~/.hermes/config.yaml
 2. **Fetch both remotes**
 
    ```bash
-   git -C ~/.hermes/hermes-agent fetch origin team-michael
+   git -C ~/.hermes/hermes-agent fetch origin
+   git -C ~/.hermes/hermes-agent fetch team-michael
    git -C ~/.hermes/hermes-agent checkout main
    git -C ~/.hermes/hermes-agent merge --ff-only team-michael/main
    ```
+
+   Do **not** use `git fetch origin team-michael`; Git interprets `team-michael` as a refspec to fetch from `origin`, producing `fatal: couldn't find remote ref team-michael` and leaving the backup remote stale.
 
    If local `main` and `team-michael/main` diverged, stop and explain. Do not reset user state unless explicitly asked.
 
@@ -149,6 +152,7 @@ sed -n '/^update:/,/^[^ ]/p' ~/.hermes/config.yaml
 
 ## Pitfalls
 
+- Persisting a patch on `main`/`team-michael/main` is not the same as activating it in the running gateway. The systemd gateway usually executes the root checkout at `~/.hermes/hermes-agent`, which may currently be on a feature branch with unrelated dirty files. After committing/pushing the durable patch branch, verify whether the root checkout contains the code change; if not, apply the same narrow file patch there and restart the relevant gateway profile.
 - Do not assume a conflict means the local patch should win. Upstream may have absorbed part of the patch.
 - Do not run `git reset --hard` unless explicitly asked or after confirming all important work is preserved.
 - Do not leave conflict markers in source files.
