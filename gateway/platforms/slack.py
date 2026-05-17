@@ -2816,31 +2816,55 @@ class SlackAdapter(BasePlatformAdapter):
 
         original_text = event.get("text", "")
 
-        # Slack blocks native slash commands inside threads ("/queue is not
-        # supported in threads. Sorry!").  As a workaround, recognise a
-        # leading ``!`` as an alternate command prefix and rewrite it to
-        # ``/`` so the rest of the pipeline (MessageType.COMMAND tagging,
-        # gateway dispatcher) handles it like a normal slash command.  Only
-        # rewrite when the first token resolves to a known gateway command
-        # so casual messages like "!nice work" pass through unchanged.
-        if original_text.startswith("!"):
+        def _rewrite_known_bang_command(value: str) -> str:
+            """Rewrite ``!cmd`` to ``/cmd`` when cmd is a known Hermes command.
+
+            Slack treats leading ``/`` as native slash-command syntax, which is
+            especially awkward in threads.  ``!stop`` is our plain-message
+            escape hatch.  Keep the rewrite tightly scoped to registered
+            gateway commands so casual messages like ``!nice work`` remain
+            normal user text.
+            """
+            if not value.startswith("!"):
+                return value
             try:
                 from hermes_cli.commands import is_gateway_known_command
 
-                first_token = original_text[1:].split(maxsplit=1)[0]
+                first_token = value[1:].split(maxsplit=1)[0]
                 # Strip "@suffix" the same way get_command() does, so
                 # forms like ``!stop@hermes`` still resolve.
                 cmd_name = first_token.split("@", 1)[0].lower()
-                if (
-                    cmd_name
-                    and "/" not in cmd_name
-                    and is_gateway_known_command(cmd_name)
-                ):
-                    original_text = "/" + original_text[1:]
+                if cmd_name and "/" not in cmd_name and is_gateway_known_command(cmd_name):
+                    return "/" + value[1:]
             except Exception:  # pragma: no cover - defensive
-                pass
+                return value
+            return value
 
+        # Bare thread-friendly commands can be normalized immediately.  Mention
+        # prefixed commands (``<@bot> !stop``) are normalized after the mention
+        # is stripped below.
+        original_text = _rewrite_known_bang_command(original_text)
         text = original_text
+
+        def _is_known_gateway_command_text(value: str) -> bool:
+            """Return True when *value* starts with a registered Hermes command.
+
+            Slack thread context is prepended before the generic gateway
+            MessageEvent sees the message.  If we prepend it to control-plane
+            text like ``/stop`` or the thread-friendly ``!stop`` rewrite, the
+            later active-session bypass no longer sees a leading slash and the
+            command is queued as natural language.
+            """
+            if not value.startswith("/"):
+                return False
+            try:
+                from hermes_cli.commands import is_gateway_known_command
+
+                first_token = value[1:].split(maxsplit=1)[0]
+                cmd_name = first_token.split("@", 1)[0].lower()
+                return bool(cmd_name and "/" not in cmd_name and is_gateway_known_command(cmd_name))
+            except Exception:  # pragma: no cover - defensive
+                return False
 
         # Extract quoted/forwarded content from Slack blocks.
         # Slack's modern composer embeds forwarded messages in the ``blocks``
@@ -3088,8 +3112,11 @@ class SlackAdapter(BasePlatformAdapter):
                     return
 
         if is_mentioned:
-            # Strip the bot mention from the text
-            text = text.replace(f"<@{bot_uid}>", "").strip()
+            # Strip the bot mention from the text.  Then normalize Slack's
+            # thread-friendly bang form: ``@Hermes !stop`` should become the
+            # same control-plane command as ``@Hermes /stop``.
+            text = text.replace(f"<@{bot_uid}>", "", 1).strip()
+            text = _rewrite_known_bang_command(text)
             # Register this thread so all future messages auto-trigger the bot.
             # Skipped in strict mode: strict_mention=true bots must be
             # re-mentioned every turn, so remembering the thread would
@@ -3103,14 +3130,24 @@ class SlackAdapter(BasePlatformAdapter):
                     for t in to_remove:
                         self._mentioned_threads.discard(t)
 
+        is_gateway_command_text = _is_known_gateway_command_text(text)
+
         # When entering a thread for the first time (no existing session),
         # fetch thread context so the agent understands the conversation.
+        # Do not prepend that context to recognized commands: control-plane
+        # messages must still begin with "/" so active-session bypass can
+        # dispatch /stop, /new, /approve, etc. immediately.
         media_urls: list[str] = []
         media_types: list[str] = []
-        if is_thread_reply and not self._has_active_session_for_thread(
-            channel_id=channel_id,
-            thread_ts=event_thread_ts,
-            user_id=user_id,
+        if (
+            is_thread_reply
+            and not is_gateway_command_text
+            and not self._has_active_session_for_thread(
+                channel_id=channel_id,
+                thread_ts=event_thread_ts,
+                user_id=user_id,
+                chat_type="dm" if is_dm else "group",
+            )
         ):
             thread_context = await self._fetch_thread_context(
                 channel_id=channel_id,
@@ -3130,7 +3167,7 @@ class SlackAdapter(BasePlatformAdapter):
 
         # Determine message type
         msg_type = MessageType.TEXT
-        if inline_command_name or (text or "").startswith("/"):
+        if text.startswith("/"):
             msg_type = MessageType.COMMAND
 
         # Handle file attachments
@@ -4140,6 +4177,7 @@ class SlackAdapter(BasePlatformAdapter):
         channel_id: str,
         thread_ts: str,
         user_id: str,
+        chat_type: str = "group",
     ) -> bool:
         """Check if there's an active session for a thread.
 
@@ -4161,7 +4199,7 @@ class SlackAdapter(BasePlatformAdapter):
             source = SessionSource(
                 platform=Platform.SLACK,
                 chat_id=channel_id,
-                chat_type="group",
+                chat_type=chat_type,
                 user_id=user_id,
                 thread_id=thread_ts,
             )

@@ -1170,6 +1170,98 @@ class TestBangPrefixCommands:
         assert msg_event.source.thread_id == "1111111111.000001"
 
     @pytest.mark.asyncio
+    async def test_bang_thread_command_skips_context_prelude(self, adapter):
+        """Thread context must not hide a control-plane command.
+
+        Without this guard, ``!stop`` is rewritten to ``/stop`` and then
+        prefixed with ``[Thread context ...]``.  The generic MessageEvent parser
+        then no longer sees a leading slash, so busy-session handling queues it
+        as natural language instead of dispatching /stop immediately.
+        """
+        adapter._fetch_thread_context = AsyncMock(return_value="[Thread context]\n\n")
+        adapter._has_active_session_for_thread = MagicMock(return_value=False)
+
+        evt = self._make_event("!stop", thread_ts="1111111111.000001")
+        await adapter._handle_slack_message(evt)
+
+        msg_event = adapter.handle_message.call_args[0][0]
+        assert msg_event.text == "/stop"
+        assert msg_event.get_command() == "stop"
+        assert msg_event.message_type == MessageType.COMMAND
+        adapter._fetch_thread_context.assert_not_awaited()
+        adapter._has_active_session_for_thread.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_mention_slash_thread_command_skips_context_prelude(self, adapter):
+        """``@Hermes /stop`` must remain a command after mention stripping.
+
+        Slack app_mention events arrive as ``<@bot> /stop``.  If command
+        detection runs before the mention is stripped, the thread context
+        prelude can be prepended and hide the slash from MessageEvent.
+        """
+        adapter._fetch_thread_context = AsyncMock(return_value="[Thread context]\n\n")
+        adapter._has_active_session_for_thread = MagicMock(return_value=False)
+
+        evt = self._make_event("<@U_BOT> /stop", thread_ts="1111111111.000001")
+        await adapter._handle_slack_message(evt)
+
+        msg_event = adapter.handle_message.call_args[0][0]
+        assert msg_event.text == "/stop"
+        assert msg_event.get_command() == "stop"
+        assert msg_event.message_type == MessageType.COMMAND
+        adapter._fetch_thread_context.assert_not_awaited()
+        adapter._has_active_session_for_thread.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_mention_bang_thread_command_is_rewritten(self, adapter):
+        """``@Hermes !stop`` is the Slack-thread-safe spelling of /stop."""
+        adapter._fetch_thread_context = AsyncMock(return_value="[Thread context]\n\n")
+        adapter._has_active_session_for_thread = MagicMock(return_value=False)
+
+        evt = self._make_event("<@U_BOT> !stop", thread_ts="1111111111.000001")
+        await adapter._handle_slack_message(evt)
+
+        msg_event = adapter.handle_message.call_args[0][0]
+        assert msg_event.text == "/stop"
+        assert msg_event.get_command() == "stop"
+        assert msg_event.message_type == MessageType.COMMAND
+        adapter._fetch_thread_context.assert_not_awaited()
+        adapter._has_active_session_for_thread.assert_not_called()
+
+    def test_dm_thread_session_lookup_uses_dm_session_key(self, adapter):
+        """DM threads are keyed as ``slack:dm:<channel>:<thread>``, not group.
+
+        The context-fetch gate used to probe the session store with
+        ``chat_type='group'`` even for DM threads, so it failed to detect an
+        existing DM thread session and kept prepending thread context on every
+        reply.
+        """
+        from gateway.session import SessionSource, build_session_key
+
+        thread_ts = "1111111111.000001"
+        session_key = build_session_key(
+            SessionSource(
+                platform=Platform.SLACK,
+                chat_id="D123",
+                chat_type="dm",
+                user_id="U_USER",
+                thread_id=thread_ts,
+            )
+        )
+        store = MagicMock()
+        store.config.group_sessions_per_user = True
+        store.config.thread_sessions_per_user = False
+        store._entries = {session_key: object()}
+        adapter._session_store = store
+
+        assert adapter._has_active_session_for_thread(
+            channel_id="D123",
+            thread_ts=thread_ts,
+            user_id="U_USER",
+            chat_type="dm",
+        ) is True
+
+    @pytest.mark.asyncio
     async def test_bang_unknown_token_passes_through_unchanged(self, adapter):
         """``!nice work`` is just a casual message — must NOT be rewritten."""
         await adapter._handle_slack_message(self._make_event("!nice work"))
