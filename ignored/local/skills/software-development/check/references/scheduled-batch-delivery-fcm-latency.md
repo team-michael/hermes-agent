@@ -63,13 +63,32 @@ Effect: push delivery may be delayed by seconds to tens of seconds, but no messa
 
 May 2026 evidence: this alarm fired multiple times daily. Daily `Maximum` values ranged from ~8s to ~57s (30-day span). Lambda remained healthy, DLQ empty, and alerts consistently self-recovered.
 
-Concrete baseline observed (2026-04-21 to 2026-05-15):
+Concrete baseline observed (2026-04-21 to 2026-05-16):
 - 30-day ALARM transitions: ~75 (nearly daily)
-- 7-day ALARM transitions: ~21
+- 7-day ALARM transitions: ~21–25
 - 1-day ALARM transitions: ~4–9
 - 10-minute rapid recurrence: common (2–3 transitions within 10 minutes)
 - Daily FCM batch volume (success): ~600K–800K batches/day, stable
 - Error batch rate: ~3–5% of total, stable
 - No concurrent `DbInsert outcome=error` spikes during latency windows (cross-check `delivery_result` and `delivery_failure_log` metrics)
+- Daily `Maximum` (FCMSendLatency) observed 2026-05-09 to 2026-05-16: 39491ms → 14227ms → 23977ms → 8727ms → 47069ms → 56997ms → 14727ms → 11455ms. Average remains stable at ~350ms, confirming extreme variance is tail-only.
 
 These baselines confirm the alarm is a threshold-vs-normal-variance mismatch rather than a worsening or new regression.
+
+## EMF log scope extraction
+
+`FCMSendLatency` is emitted as EMF `INFO` lines in `/aws/lambda/scheduled-batch-delivery`. Each line carries `project_id` and `campaign_id`, so per-project/campaign scope attribution is possible when needed.
+
+Example CloudWatch Logs Insights query:
+```
+fields @timestamp, @message
+| filter @message like 'FCMSendLatency'
+| parse @message "\"FCMSendLatency\":" as lat
+| parse @message "\"project_id\":\"*\"" as project_id
+| parse @message "\"campaign_id\":\"*\"" as campaign_id
+| filter lat > 3000
+| stats count() as cnt, max(lat) as max_lat by project_id, campaign_id
+| sort max_lat desc
+```
+
+In the 2026-05-16 13:35 KST window, the dominant contributor was `project_id=02a3660e1b675689a0757409e5c1efaa` (`cosmo`) / `campaign_id=4SQbit` with entries at 3049ms, 1631ms, 1480ms, 1441ms, 1403ms, and 1252ms. Other campaigns showed normal sub-second latency. This confirms the p99 spike is driven by a small number of high-latency batches rather than a broad FCM degradation.
