@@ -4199,7 +4199,7 @@ class SlackAdapter(BasePlatformAdapter):
             source = SessionSource(
                 platform=Platform.SLACK,
                 chat_id=channel_id,
-                chat_type=chat_type,
+                chat_type=chat_type or "group",
                 user_id=user_id,
                 thread_id=thread_ts,
             )
