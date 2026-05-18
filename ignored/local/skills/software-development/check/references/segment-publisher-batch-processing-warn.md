@@ -1,0 +1,92 @@
+# segment-publisher batch processing WARN triage
+
+Alarm: `segment-publisher long running alam`
+
+## Alarm shape
+
+- **Name**: `segment-publisher long running alam` (bare name, no `/aws/ecs/.../` prefix).
+- **Namespace**: `Custom/segment-publisher`
+- **Metric**: `SegmentPublisher.ExecutionTimeOverThreshold`
+- **Filter pattern**: `Processing took longer than expected`
+- **Statistic**: `Sum`, period 300, threshold 1.0, `EvaluationPeriods=1`
+- **TreatMissingData**: `missing`
+- **Transition pattern**: `INSUFFICIENT_DATA → ALARM → INSUFFICIENT_DATA` (never reaches `OK`).
+
+## Known recurrence
+
+Daily `Sum=1.0` at roughly the same clock time for ~30 days (verified via `get_metric_statistics Period=86400`):
+- Typical window: ~11:45–11:50 UTC (≈ 20:45–20:50 KST).
+- Since 2026-05-14 an additional window appeared at ~06:25–06:30 UTC (≈ 15:25–15:30 KST).
+- 2026-05-14 had `Sum=2.0` because both windows fired.
+
+Alarm-history `OK → ALARM` counts are **zero** by design; the helper may report `alarm_count_7d: 0`. Use daily metric `Sum` for frequency instead.
+
+## Root cause
+
+A single large-batch `segment-publisher` ECS task processes a heavy campaign (e.g. 800k+ recipients) and the total batch duration exceeds an internal threshold. The emitted log is:
+
+```
+[WARN] Processing took longer than expected: <duration_ms> ms
+```
+
+preceded by:
+
+```
+Total processing time: <duration_ms> ms
+```
+
+- No ERROR logs co-occur.
+- Memory (`[MEMORY USAGE REPORT] rss`) is typically well under the ECS task limit (3072 MB), though the report may not appear in every stream.
+- The task continues publishing recipients normally; batch index increments.
+
+## Scope extraction
+
+The triggering stream varies per invocation (different ECS tasks handle different batches). To find the campaign/project:
+
+1. Identify the active stream around the alarm-datapoint time via `describe_log_streams(orderBy='LastEventTime', descending=True)`. For large-batch tasks the trigger stream may be ranked 5th–10th because it finishes earlier than smaller active tasks; see the `ecs-log-manual-trace.md` reference.
+2. Use `get_log_events` on that stream bounded to the alarm window (±5 min).
+3. Look for:
+   - `campaignId: <id>` lines.
+   - `Received event` JSON containing the project_id key and a `user_journeys` array (when `schedule_type` is `"user_journey"`, the `campaignId` refers to the user journey ID).
+   - `project_id` and `campaign_id` in structured `Used user property names in message:` or `Used user property names in segments:` logs.
+4. Map `project_id` via DynamoDB `project` table.
+
+When the `Received event` payload contains `"schedule_type": "user_journey"` and a `user_journeys` array, report the scope as **user journey** (mutually exclusive with campaign), using the ID from the array.
+
+Observed projects/campaigns in recent triggers:
+- `melting` / `k6bkO6` (2026-05-15 06:30 UTC, ~31.4 min)
+- `proudp` / `UL1T00` (2026-05-14 11:52 UTC, ~53.6 min, 884k recipients)
+- `stepup` / `UL1T00` (2026-05-16 11:47 UTC, ~52.3 min, 885k recipients, **user journey** `[만보기] 매일 적립 리마인드`)
+
+## Classification
+
+- **`no_action`** — predictable scheduled-batch latency. The alarm is a batch-duration canary, not a failure signal.
+- Only elevate to `needs_fix` if:
+  - Durations start trending upward over multiple days (e.g. consistently > 60 min).
+  - ERROR logs or OOM-kills appear alongside the WARN.
+  - The second daily window (~06:30 UTC) continues to grow in frequency beyond the known two-a-day pattern.
+
+## Investigation commands
+
+```bash
+# Verify daily recurrence (use Sum because alarm history lacks OK→ALARM)
+aws cloudwatch get-metric-statistics \
+  --namespace Custom/segment-publisher \
+  --metric-name SegmentPublisher.ExecutionTimeOverThreshold \
+  --start-time 2026-05-08T00:00:00Z \
+  --end-time 2026-05-15T07:00:00Z \
+  --period 86400 --statistics Sum --region ap-northeast-2
+
+# Find recent streams
+aws logs describe-log-streams \
+  --log-group-name /aws/ecs/notifly-services-prod/segment-publisher \
+  --order-by LastEventTime --descending --limit 10 \
+  --region ap-northeast-2 --query 'logStreams[].logStreamName'
+
+# Read exact stream events when filter_log_events returns empty
+aws logs get-log-events \
+  --log-group-name /aws/ecs/notifly-services-prod/segment-publisher \
+  --log-stream-name <stream> \
+  --start-time <epoch_ms> --end-time <epoch_ms> --limit 100 \
+  --region ap-northeast-2
+```

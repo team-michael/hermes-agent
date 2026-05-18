@@ -61,6 +61,13 @@ This means `filter_log_events` with a quoted phrase `"took too long"` returns **
   - Class101 multi-campaign batch at ~06:30 UTC (15:30 KST), project `b2b4a8f879a75673b755bff42fc1deb6` (product `class101`). Ten parallel campaigns (CNGJjd, 3KWfBG, HxbGSr, WPE9J6, VMyJo5, IdxUZt, a84kiE, FQgbL9, sOk5Yk, C5Zpf0), ~49 batches, durations ~1807–1882 s. Observed 2026-05-14 and 2026-05-15; see reference entries below.
 - Pattern A: observed sporadically for munice (`031b18009978590188e49e6777447fc2`) and regather (`b57754a9497a545ab9b0e4aadd6f53b6`).
 
+### Scope-attribution caveat for `UL1T00`
+The user-journey ID `UL1T00` has been observed under **multiple projects**:
+- `stepup` (`32d8d9d6294d52e7a5427c036b471f91`) on 2026-05-08, 05-10, 05-12, 05-17
+- `proudp` (`bcf172129f80521a9a3b2d72b58ecb29`) on 2026-05-13
+
+This means `UL1T00` is **not globally unique**; different projects' `user_journeys_*` shards can contain the same ID. Always use the `project_id` from the **current alarm window's** `Received event` payload or `Used user property names` block. Prior-day scoping by journey ID alone will misattribute the project when multiple customers share the same journey ID.
+
 ## Triage rule
 
 Determine which pattern triggered the current alarm before classifying.
@@ -470,6 +477,31 @@ Evidence:
 - `describe_log_streams` reported `lastEventTimestamp=2026-05-15T06:27:48Z` for this stream, but `get_log_events` revealed events up to 06:30:46 UTC — a ~3-minute metadata lag.
 - Zero ERROR logs in the alarm window (06:00–07:00 UTC).
 - Daily recurrence: 30d=12, 7d=12, 1d=1. 2026-05-14 had the identical class101 10-campaign batch. This confirms a second daily Pattern B window (~06:30 UTC for class101) distinct from the stepup UL1T00 window (~11:47 UTC).
+
+Classification: `no_action` — publish completed, no DLQ/ECS failure, companion `long running alam` already covers same signal.
+
+## 2026-05-17 session — `segment-publisher slow eic query` ALARM (Pattern B, stepup)
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`
+Transition: `OK -> ALARM` at 2026-05-17 11:53:10 UTC (KST 20:53)
+Datapoint: `Sum=1.0` at 2026-05-17 11:52:00 UTC (metric period 60s)
+Companion alarm: `segment-publisher long running alam` transitioned `INSUFFICIENT_DATA -> ALARM` at 2026-05-17 11:52:05 UTC.
+
+Evidence:
+- Trigger log (2026-05-17 11:52:15 UTC, stream `prod/segment-publisher/d7e39f2d0d674abb997451750946bebd`): `[WARN] Processing took longer than expected: 3179257.95 ms`
+- Same-stream context: 18 batches, final `campaignId: UL1T00, 885924 recipients published. (batch index: 18)`
+- Received event payload (stream head, 2026-05-17 11:39:15 UTC) shows `schedule_type: "user_journey"`, id `UL1T00`, name `[만보기] 매일 적립 리마인드`
+- Project explicit in stream via `Received event`: `project_id: 32d8d9d6294d52e7a5427c036b471f91` → DynamoDB `project` → product `stepup`
+- Zero ERROR logs in the alarm window (2026-05-17 11:40–12:00 UTC); only the single WARN line.
+- Alarm history pitfall reproduced: `describe-alarm-history` returned ~150 entries with `StateValue: null` and `Summary: null` over the 30-day window. ALARM transitions are countable only by parsing `HistoryData` JSON (`newState.stateValue`). 30d ALARM transitions = 25; daily recurrence continues.
+- `filter-log_events` with `took too long` (unquoted three-term form) found exactly one match in the 11:40–12:00 UTC window, confirming the trigger.
+- `describe_log_streams` stale-metadata pitfall reproduced: the trigger stream had `lastEventTimestamp=11:49:29` in the API response, but `get_log_events` revealed the final WARN event at 11:52:15 — a ~3-minute metadata lag.
+
+Daily recurrence update:
+- 30-day metric sum (`ConsoleErrors` `segment-publisher-prod slow eic query`, `Period=86400`, `Statistics=Sum`): 81 total over 30 days, ~1–6/day baseline.
+- Today's count (2026-05-17) is 1.0.
+
+Scope note: This session confirms `UL1T00` can appear under `stepup` on some days and `proudp` on others (see 2026-05-13 evidence). The current alarm window explicitly shows `project_id: 32d8d9d6294d52e7a5427c036b471f91` (stepup), resolving the ambiguity for this transition. Journey IDs are not globally unique across projects.
 
 Classification: `no_action` — publish completed, no DLQ/ECS failure, companion `long running alam` already covers same signal.
 
