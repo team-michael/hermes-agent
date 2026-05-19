@@ -164,6 +164,12 @@ Then: `aws logs get-query-results --region ap-northeast-2 --query-id <queryId>`
 
 ## Recent live verification
 
+2026-05-18 alarm window (16:56–17:06 UTC / 01:56–02:06 KST):
+- Total `error-response` with status ≥ 400: **~1,775**
+- `/authenticate` 400: **1,762** (99%)
+- Levels: **100% `warn`**; `error` level count: **0**
+- Secondary signatures: 6 `POST /track-event` 401, 3 `POST .../campaigns/{cid}/send` 400, 1 `GET /user-state/{pid}/{uid}` 400, 1 `POST /messages/kakao-alimtalk` 401, 1 `POST /set-user-properties` 401
+
 2026-05-17 alarm window (16:56–17:06 UTC / 01:56–02:06 KST):
 - Total `error-response` with status ≥ 400: **~1,600**
 - `/authenticate` 400: **1,554** (97%)
@@ -177,6 +183,10 @@ Then: `aws logs get-query-results --region ap-northeast-2 --query-id <queryId>`
 - Secondary signatures: 21 `DELETE /projects/{pid}/messages/text-message/blockservice/recipients/removes` 400, 4 `POST /track-event` 401, 2 `GET /users` 401
 
 Result: consistent with the known weekday **~02:11 KST** `Apache-HttpClient/5.3.1 (Java/17.0.19)` authentication rejection burst.
+
+## Logs Insights query note — `parse` field collision
+
+When writing manual aggregate queries for `api-service` `error-response` logs, prefer auto-extracted JSON fields (`status`, `message`) directly. Do not add `parse @message '\"status\":*' as status` because `status` is already a top-level JSON field; this raises `MalformedQueryException: Ephemeral field is already defined: status`. Use the auto-extracted field directly, or rename the parsed alias (e.g., `as parsed_status`) when extraction is required.
 
 ## Pitfall — log ingestion lag hides current trigger
 

@@ -505,4 +505,60 @@ Scope note: This session confirms `UL1T00` can appear under `stepup` on some day
 
 Classification: `no_action` — publish completed, no DLQ/ECS failure, companion `long running alam` already covers same signal.
 
+## 2026-05-18 session — `segment-publisher long running alam` recurrence (class101 multi-campaign batch)
+
+Alarm: `segment-publisher long running alam`
+Transition: `INSUFFICIENT_DATA -> ALARM` at 2026-05-18 06:30:05 UTC (KST 15:30)
+Datapoint: `Sum=1.0` at 2026-05-18 06:23:00 UTC (metric period 300s)
+
+Evidence:
+- Trigger log (2026-05-18 06:29:47.379 UTC, stream `prod/segment-publisher/007da2262cb04e1cb6c2a44082ec03e7`): `[WARN] Processing took longer than expected: 1814721.12 ms`
+- Same-stream context: 49 batches total for 10 parallel campaigns (CNGJjd, 3KWfBG, HxbGSr, WPE9J6, VMyJo5, IdxUZt, a84kiE, FQgbL9, sOk5Yk, C5Zpf0). Final batch indices 48 and 49.
+- Memory pressure: rss peaked at **3965.73 MB** during the batch, exceeding the ECS task memory limit of **3072 MB** (`taskDefinition: segment-publisher-prod` revision 5). The container did not OOM-kill, suggesting swap usage.
+- Project explicit in stream `Received event` payload: `project_id: b2b4a8f879a75673b755bff42fc1deb6` → DynamoDB `project` → product `class101`.
+- Zero ERROR logs in the alarm window; only the single WARN line.
+- Daily recurrence: 30d=33, 7d=10, 1d=2. Today had two Pattern B occurrences: class101 at ~06:23 UTC and stepup UL1T00 at ~11:52 UTC (see separate Slack alert).
+- `describe_log_streams` stale-metadata pitfall reproduced: the trigger stream had `lastEventTimestamp=06:12:57` in the API response, but `get_log_events` revealed the final WARN event at 06:29:47 — a ~17-minute metadata lag.
+
+Classification: `no_action` — publish completed normally, no DLQ/ECS failure, dedicated `long running alam` already covers same signal.
+
+## 2026-05-18 session — `segment-publisher slow eic query` ALARM (Pattern B, stepup)
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`
+Transition: `OK -> ALARM` at 2026-05-18 11:53:10 UTC (KST 20:53)
+Datapoint: `Sum=1.0` at 2026-05-18 11:52:00 UTC (metric period 60s)
+Companion alarm: `segment-publisher long running alam` transitioned `INSUFFICIENT_DATA -> ALARM` at 2026-05-18 11:52:05 UTC.
+
+Evidence:
+- Trigger log (2026-05-18 11:52:03 UTC, stream `prod/segment-publisher/0bf290e7372e48f7917a0dd8a9acabfb`): `[WARN] Processing took longer than expected: 3151808.24 ms`
+- Same-stream context: 18 batches, final `campaignId: UL1T00, 886858 recipients published. (batch index: 18)`
+- Received event payload (stream head, 2026-05-18 11:39:15 UTC) shows `schedule_type: "user_journey"`, id `UL1T00`, name `[만보기] 매일 적립 리마인드`
+- Project explicit in stream via `Received event` payload: `project_id: 32d8d9d6294d52e7a5427c036b471f91` → DynamoDB `project` → product `stepup`
+- Memory pressure: rss data not present in this stream; no recurrence of the elevated-swap signal seen in class101 concurrent runs.
+- `describe_log_streams` stale-metadata pitfall reproduced: the trigger stream had `lastEventTimestamp=2026-05-18T11:49:58Z` in the API response, but `get_log_events` revealed events up to 11:52:03 UTC — a ~2-minute metadata lag.
+- Zero ERROR logs in the alarm window (11:45–11:58 UTC); only the single WARN line.
+- Daily metric sum (`ConsoleErrors` `segment-publisher-prod slow eic query`, `Period=86400`, `Statistics=Sum`): 2026-05-18=2.0 total (class101 at 06:23 + stepup at 11:52).
+- 1d=2 confirms the two-daily-window pattern that first appeared on 2026-05-14 (class101 ~06:23 + stepup ~11:52) and repeated on 2026-05-15 and 2026-05-18.
+
+Classification: `no_action` — publish completed, no DLQ/ECS failure, companion `long running alam` already covers same signal.
+
+## 2026-05-18 session — `segment-publisher slow eic query` ALARM (Pattern B, class101)
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`  
+Transition: `OK -> ALARM` at 2026-05-18 06:30:27 UTC (KST 15:30)  
+Datapoint: `Sum=1.0` at 2026-05-18 06:29:00 UTC (metric period 60s)  
+Recovery: transitioned to `INSUFFICIENT_DATA` shortly after  
+Companion alarm: `segment-publisher long running alam` transitioned `INSUFFICIENT_DATA -> ALARM` at 2026-05-18 06:30:05 UTC (datapoint 06:25:00 UTC).
+
+Evidence:
+- Trigger log (2026-05-18 06:29:47 UTC, stream `prod/segment-publisher/007da2262cb04e1cb6c2a44082ec03e7`): `[WARN] Processing took longer than expected: 1814721.12 ms`
+- Same-stream context: 49 batches across 10 concurrent campaigns (CNGJjd, C5Zpf0, 3KWfBG, HxbGSr, WPE9J6, VMyJo5, IdxUZt, a84kiE, FQgbL9, sOk5Yk). Final batch indices 48 and 49.
+- Received event payload (stream head, 2026-05-18 06:39:32 UTC) shows `project_id: b2b4a8f879a75673b755bff42fc1deb6` → DynamoDB `project` → product `class101`.
+- **Memory pressure — new high**: `[MEMORY USAGE REPORT] rss` climbed from ~3900 MB through ~3920 MB during batch 48–49. The ECS task memory limit for `segment-publisher-prod` is 3072 MB (revision 5). The container did not OOM-kill, indicating swap-driven latency. Prior class101 batch on 2026-05-14 had rss peak at 3616 MB; today it reached ~3920 MB, a ~304 MB increase.
+- Zero ERROR logs in the alarm window (06:24–06:34 UTC); only the single WARN line.
+- Alarm name still mismatched: the `ConsoleErrors` metric filter `took too long` caught the batch-processing WARN, not a slow EIC query.
+- Daily recurrence: the class101 multi-campaign batch continues at ~06:25–06:30 UTC every day (observed 2026-05-14, 05-15, and 05-18).
+
+Classification: `no_action` — publish completed, no DLQ/ECS failure, companion `long running alam` already covers same signal.
+
 For deeper project segment extraction, EIC Large Scale conversion workflows, and user-journey session analysis, see `notifly-segment-publisher-alarm-analysis`.

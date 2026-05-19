@@ -209,15 +209,39 @@ So this still does not create true last-touch semantics.
 ### Case C: user asks whether it is fully guaranteed
 - "완전한 의미의 last-touch 보장은 아닙니다. 특히 5분 미만 direct-send 경로에는 취소 조건 기반 대체가 적용되지 않습니다."
 
+## Explaining event time vs email send/receive time
+
+Use this mini-playbook when the customer asks why an event-based email campaign fired at one time but the email arrived later.
+
+Core model:
+
+```text
+customer/server event
+→ Notifly event ingestion / Kinesis
+→ kds-consumer campaign match
+→ email-delivery SQS enqueue
+→ email-delivery Lambda
+→ SES send success
+→ recipient mailbox visibility
+```
+
+Important rules:
+- Event timestamp and email send/result timestamp are different clocks by design.
+- First confirm `campaign.delay`. If `delay = null` or `< 300s`, the message goes direct-to-channel queue via `queueMessageInstantly(...)`; a multi-minute gap is not configured campaign delay.
+- For direct email sends, verify kds-consumer logs for `email queued for delivery directly`, then email-delivery logs / `delivery_result_${projectId}` for `send_success` or failure.
+- If the gap is large, inspect `AWS/SQS` metrics for `email-delivery-queue`: `ApproximateNumberOfMessagesVisible` and `ApproximateAgeOfOldestMessage` around the event time.
+- If SES send success exists but the customer did not see the email, separate Notifly-side send success from downstream mailbox visibility: spam/promotions folder, recipient-domain filtering, mail-client sync, bounce/complaint tracking.
+
 ## Recommended response structure
-1. **Conclusion** — supported / not supported / workaround available
-2. **Mechanism** — trigger snapshot vs latest-event lookup
-3. **Workaround** — cancellation condition on same event for delayed sends
-4. **Caveat** — not universal for direct-send or already-queued sends
+1. **Conclusion** — supported / not supported / workaround available, or for timing cases: expected async gap / queue backlog / downstream visibility
+2. **Mechanism** — trigger snapshot vs latest-event lookup, or event → queue → delivery Lambda → SES path
+3. **Workaround** — cancellation condition on same event for delayed sends, or queue/backlog/provider follow-up for timing cases
+4. **Caveat** — not universal for direct-send or already-queued sends; SES success is not the same as human-visible mailbox arrival
 
 ## References
 
 - `references/web-push-event-trigger-vs-test-send.md` — session-specific notes for cases where web-push test send works but event-triggered delivery is not visibly received, including device selection/fan-out differences and verification queries.
+- `references/event-triggered-email-timing-vs-delivery-queue-2026-05.md` — event-based email timing playbook: event time vs kds-consumer enqueue vs email-delivery/SES success vs mailbox arrival, including SQS backlog checks.
 
 ## Known durable findings
 

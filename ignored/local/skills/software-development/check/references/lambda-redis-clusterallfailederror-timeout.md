@@ -12,6 +12,9 @@ Followed by:
 REPORT RequestId: [uuid] Duration: 900000.00 ms Billed Duration: 900000 ms Memory Size: [n] MB Max Memory Used: [n] MB Status: timeout
 ```
 
+### Variant B — handled error with normal completion
+Some Lambdas wrap each Redis call in a service-level `try...catch` with a fallback return (e.g., `ses-bounce-tracker/lib/redis.ts` returns `0` on any Redis error). The Lambda invocation completes normally, `AWS/Lambda Errors` stays `0`, and `Duration` is well below `Timeout`. However, ioredis still emits `ERROR Error: Cluster isn't ready and enableOfflineQueue options is false` for every failed command. The `%ERROR|Status: timeout%` metric filter matches the literal substring `ERROR`, so the `ConsoleErrors` alarm fires even though no timeout occurred.
+
 ## Root cause
 
 The `@notifly/redis` package (`packages/redis/src/index.ts`) creates an ioredis `Cluster` client for the `CACHE` profile with:
@@ -26,6 +29,7 @@ If `callbackWaitsForEmptyEventLoop` is `false`, the timeout may appear without a
 
 ## Scope extraction
 
+### SQS-triggered Lambdas
 SQS payload bodies in the Lambda log typically contain:
 
 ```json
@@ -33,6 +37,13 @@ SQS payload bodies in the Lambda log typically contain:
 ```
 
 When the helper sanitizes `project_id` in the payload, pair the project from `table_refs` (e.g., `delivery_result_<project_id>`, `users_<project_id>`) with the `campaign_id` from the SQS body.
+
+### Firehose transformation handlers (e.g., `ses-bounce-tracker`)
+There is no SQS payload. Project and campaign IDs appear in companion **INFO** logs, not the ERROR line:
+- `Excluding user email of project: <project_id>, campaign: <campaign_id>, notiflyUserId: ...`
+- `Terminating project <project_id> campaign <campaign_id> due to high bounce rate.`
+
+These INFO lines may be sanitized by the helper. If `current_trigger_contexts` contains only the Redis ERROR signature and no IDs, search the same log stream for `Excluding` or `Terminating` within the same invocation window to recover scope.
 
 ## Bounded trace commands
 
@@ -56,9 +67,12 @@ When the helper sanitizes `project_id` in the payload, pair the project from `ta
    aws sqs get-queue-attributes --queue-url https://sqs.ap-northeast-2.amazonaws.com/<account>/<queue-name> --attribute-names RedrivePolicy ApproximateNumberOfMessages --region ap-northeast-2
    ```
 
+5. Cross-check deployed Lambda config (`MemorySize`, `Timeout`) against repo source (`serverless.yml` or Terraform). Config drift can mask root-cause signals. For example, `ses-bounce-tracker/serverless.yml` declares `memorySize: 512, timeout: 300` but deployed config may show `128 MB / 60 s`.
+
 ## Classification guidance
 
 - **30d/7d baseline**: If `ClusterAllFailedError` appears only after a specific `LastModified` timestamp, treat as deployment-induced.
+- **Increasing trend even when handled**: If `AWS/Lambda Errors = 0` but daily ERROR log counts are rising (e.g., 20 → 29 → 14 in a partial day) and the Lambda performs safety-critical logic (bounce-rate thresholds, campaign auto-termination), classify as `needs_fix`. Handled failures accumulate into functional drift even when individual invocations complete cleanly.
 - **`needs_fix`**: When queue backlog is moderate (< ~1,000 messages) and DLQ count is limited. Fix target: `packages/redis/src/index.ts` cluster client error handling and `REDIS_HOST` env.
 - **`urgent`**: When DLQ count is rising rapidly (> 100 messages/hour), queue depth is very large, or multiple Redis-dependent Lambdas are simultaneously affected.
 

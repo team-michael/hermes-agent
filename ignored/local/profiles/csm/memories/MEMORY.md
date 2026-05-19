@@ -12,6 +12,6 @@ Notifly event export: Athena event_params is map<string,string>; use json_format
 §
 Notifly Payple: PUER0003/0004 billing-key errors are idempotent for drop/delete; keep PCD_PAY_CODE/MSG raw logs. Card re-registration is Settings -> Payment method management.
 §
-CSM profile active SOUL.md is a symlink: /home/ubuntu/.hermes/profiles/csm/SOUL.md -> /home/ubuntu/.hermes/hermes-agent/ignored/local/profiles/csm/SOUL.md. Use read_file on the exact profile path; search_files may miss the symlink.
+Notifly web SDK: never expose real password/API secret as `NEXT_PUBLIC_*`; use public projectId+username, and pass `password: username` as a non-empty legacy placeholder. Empty password can fail current JS SDK/GTM validation.
 §
 Notifly ISMS/audit reply: console audit-log self-view unavailable; on request extract project/period logs: auth/access, user data CRUD/read, user CSV export, plus server access-log supplement. Campaign-upload file deletion is not a current console feature; future implementation unscheduled.

@@ -38,6 +38,8 @@ Important consequence:
 
 For manually-triggered operational workflows (`workflow_dispatch`) that run production scripts, also use `references/workflow-dispatch-operational-scripts.md`. It covers comparing nearby dispatch runs, reading the workflow at the failing SHA, checking optional-input CLI rendering, and separating direct CI failure from live application-state conflicts.
 
+**Notifly/Hermes pitfall:** do not treat the local Hermes VM as the real workflow runtime for checks that depend on GitHub secrets, VPN routing, runner network, AWS/RDS reachability, or production-like environment variables. Local checks are good for unit tests, typecheck, actionlint, static scans, and shell/YAML syntax. If the behavior requires actual environment access, validate it by dispatching the workflow on the target branch and inspecting run logs/status. In reports, separate "local code gates passed" from "workflow runtime verified".
+
 ### 1. Fetch job metadata
 Use the job API first to learn which step failed.
 

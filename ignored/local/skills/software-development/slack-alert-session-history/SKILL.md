@@ -70,6 +70,10 @@ Then rerun with the desired `--thread-ts` or `--session-id`.
 
 When the user asks “기존에 고민해 본 적 있는지 Slack 같은 곳에서 찾아봐” and you do not have live Slack search context/channel, search Hermes' Slack/session archives across profiles before concluding. `session_search` may only cover the current profile/recent indexed subset; fall back to scanning `~/.hermes/profiles/*/sessions/session_*.json`.
 
+## Channel-level wording / term-frequency analysis
+
+When the user asks which terms customers use more often in a Slack channel, prefer existing per-channel exports or curated CS datasets over Hermes session archives. Count customer/root-thread text separately from assistant replies, and report exact phrase, synonym, and broad semantic buckets separately. See `references/channel-term-frequency-analysis.md` for the reusable workflow and regex/counting pattern.
+
 Use a small script under `~/.hermes` or `execute_code`; avoid writing outside `~/.hermes`. Search only `user`/`assistant` messages and skip tool dumps / context compaction blocks, because they create many false positives.
 
 Reusable pattern:
