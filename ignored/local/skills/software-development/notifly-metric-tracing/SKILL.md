@@ -207,6 +207,8 @@ See `references/pa-ad-hoc-analysis-vs-poc-reporting.md` for code evidence and cu
 
 For Slack product/sales advisory threads, keep the first answer concise and limited to the exact question. Avoid comprehensive frameworks unless asked; give a recommendation, 2–4 bullets of rationale/scope, and one safe customer-facing sentence if useful.
 
+For scheduled daily mentoring about Notifly metrics/statistics, prefer one small mechanism, not a broad survey. Shape the answer as: `오늘의 Notifly: <주제>`, one-line summary, 2–3 bullets where each bullet follows `무엇인지 → 어떻게 동작하는지 → 왜 중요한지`, optional SDK/iOS implication, and one `내일은 ...` line. See `references/daily-mentoring-campaign-statistics-path.md` for a compact campaign-statistics example and file citations.
+
 For metric semantics debugging, answer with three layers:
 - **Raw event level:** what rows are written
 - **Campaign/statistics level:** what gets grouped into displayed metric

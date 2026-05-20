@@ -8,9 +8,10 @@ Recurring false-positive pattern for the `[api-service] 4xx error response is gr
 - **Namespace**: `ConsoleErrors`  
 - **Metric name**: `/aws/ecs/notifly-services-prod/api-service 4xx error`  
 - **Statistic**: `Sum`  
-- **Period**: 300s  
-- **Threshold**: 100  
-- **EvaluationPeriods**: 4 (DatapointsToAlarm: 3)  
+- **Period**: 300s
+- **Threshold**: 100
+- **EvaluationPeriods**: 4 (DatapointsToAlarm: 3)
+- **Note on name drift**: The alarm name says "greater than 300" but the actual CloudWatch threshold is **100**. Do not rely on the numeric value embedded in the alarm name when estimating severity margin.
 - **State transition history**: ~44 OK→ALARM transitions in 30 days, typically resolving within 3–5 minutes.
 
 ## Metric filter
@@ -43,10 +44,40 @@ A small minority (~20–30 per alarm window) are real business rejections scoped
 
 - `DELETE /projects/{pid}/messages/text-message/blockservice/recipients/removes` → `"Unregistered recipientNo."` (NHN Cloud block-service rejection)
 - `POST /projects/{pid}/campaigns/{cid}/send` → `"INVALID_RECIPIENTS"` / `"MISSING_PHONE_NUMBER"` (client-provided malformed recipient)
+- `POST /projects/{pid}/campaigns/{cid}/send` → `"Bad request: campaign <id> does not exist"` (client retry burst against deleted/non-existent campaign; see Variant B below)
 - `GET /user-state/{pid}/{uid}` → `"projectId ... does not exist"` (invalid/stale project ID from mobile SDK)
 - `POST /track-event` → `401` (`"Invalid Authorization Token"`)
 
 These are handled service responses, not unhandled exceptions or data-loss events.
+
+## Variant B — Campaign send non-existent campaign burst
+
+On some days the dominant signature shifts from `/authenticate` to repeated `POST /projects/{pid}/campaigns/{cid}/send` returning `400` with body `"Bad request: campaign <id> does not exist"`.
+
+Characteristics:
+- **Source**: a single client IP (e.g. `54.180.113.161`) behind Cloudflare
+- **User-Agent**: often `Apache-HttpClient/5.5 (Java/21.0.11)` or similar Java HTTP client
+- **Volume**: 500–900 requests in a 30-minute window from one IP to one campaign ID
+- **Level**: `warn` (handled validation rejection)
+- **Project scope**: tied to a real project (e.g. `lookpin`) and a specific campaign ID (e.g. `uAApo3`); the campaign does not exist in `campaigns_<project_id>` table
+- **Recurrence**: first-seen within 7 days for the specific campaign; the broader alarm still has the 30-day baseline because other 4xx patterns fire on different days
+
+This is a client-side retry or misconfiguration, not a service regression. The `api-service` is correctly rejecting the request. Cross-check `AWS/ApplicationELB` or `AWS/ApiGateway` 5xx metrics to confirm no server-side failure is present.
+
+## Fast classifier — `level` field
+
+All known false-positive patterns for this alarm emit structured logs with `"level":"warn"`. A single Logs Insights query can separate handled rejection noise from real errors:
+
+```
+fields @timestamp, status, path, level, userAgent
+| filter message == "error-response" and status >= 400
+| stats count() as cnt by status, path, level, userAgent
+| sort cnt desc
+| limit 20
+```
+
+- If ≥ 90 % of the volume is `level: warn` → handled rejection noise → `no_action`
+- If any non-trivial volume is `level: error` → unhandled exception path → investigate as real error
 
 ## Recurrence characteristics
 
@@ -184,6 +215,26 @@ Then: `aws logs get-query-results --region ap-northeast-2 --query-id <queryId>`
 
 Result: consistent with the known weekday **~02:11 KST** `Apache-HttpClient/5.3.1 (Java/17.0.19)` authentication rejection burst.
 
+2026-05-19 alarm window (07:40–07:55 UTC / 16:40–16:55 KST):
+- Total `error-response` with status ≥ 400: **~811**
+- Dominant signature: `POST /projects/acab456b57eb59a193e375891742cfb4/campaigns/uAApo3/send` 400: **716** (88 %)
+  - Response body: `"Bad request: campaign uAApo3 does not exist"`
+  - Source IP: `54.180.113.161`, User-Agent: `Apache-HttpClient/5.5 (Java/21.0.11)`
+  - Project: `lookpin` (`acab456b57eb59a193e375891742cfb4`)
+  - Campaign `uAApo3` not found in Postgres `campaigns_acab456b57eb59a193e375891742cfb4`
+- Levels: **100% `warn`**; `error` level count: **0**
+- Secondary signatures: 14 `POST /authenticate` 400 (`python-requests/2.32.3`), 14 `POST /authenticate` 400 (`node`), 9 `POST /campaign/.../j4k6UJ/send` 400, 7 `POST /track-event` 401, 6 `POST /projects/b2b4a8f8.../campaigns/schU1i/send` 400, 4 `DELETE /users` 401, etc.
+
+Result: **Variant B** — campaign send non-existent campaign burst from a single client IP, not the usual `/authenticate` dominant pattern. All lines are `level: warn` handled validation rejections.
+
+2026-05-20 alarm window (02:04–02:15 KST / 2026-05-19 17:04–17:15 UTC):
+- Total `error-response` with status ≥ 400: **~1,595**
+- `/authenticate` 400: **1,581** (99%)
+- Levels: **100% `warn`**; `error` level count: **0**
+- Secondary signatures: 6 `GET /sdk-configurations` 400, 6 `POST /track-event` 401, 2 `GET /user-state` 405, 1 `POST /projects/sconn/campaigns/CJDzWt/send` 400
+
+Result: consistent with the known weekday **~02:11 KST** `Apache-HttpClient/5.3.1 (Java/17.0.19)` authentication rejection burst.
+
 ## Logs Insights query note — `parse` field collision
 
 When writing manual aggregate queries for `api-service` `error-response` logs, prefer auto-extracted JSON fields (`status`, `message`) directly. Do not add `parse @message '\"status\":*' as status` because `status` is already a top-level JSON field; this raises `MalformedQueryException: Ephemeral field is already defined: status`. Use the auto-extracted field directly, or rename the parsed alias (e.g., `as parsed_status`) when extraction is required.
@@ -194,8 +245,11 @@ The `api-service` log group receives very high traffic. During a spike, CloudWat
 
 ## Classification guidance
 
-- **`no_action`** (default): when the alarm-window breakdown shows ≥ 90 % `/authenticate` 400 from `Apache-HttpClient/5.3.1 (Java/17.0.19)` with `"Missing required fields"`, and the logs are `level: warn`. No customer-facing impact; the `api-service` is correctly rejecting malformed auth requests. Use this even when `filter-log_events` returns empty because the daily recurrence and metric datapoints alone are sufficient evidence.
-- **`needs_fix`**: only if `/authenticate` is not the dominant signature, if a new non-authenticate 4xx path spikes outside the weekday 17:00 UTC window, or if the `level` field shows `error` rather than `warn` indicating an unhandled exception path.
+- **`no_action`** (default): when the alarm-window breakdown shows ≥ 90 % volume from a known false-positive signature and all logs are `level: warn`. This covers:
+  - `/authenticate` 400 from `Apache-HttpClient/5.3.1 (Java/17.0.19)` with `"Missing required fields"`
+  - `POST /projects/{pid}/campaigns/{cid}/send` 400 with `"Bad request: campaign <id> does not exist"` from a single client IP
+  Use this even when `filter-log_events` returns empty because the daily recurrence and metric datapoints alone are sufficient evidence.
+- **`needs_fix`**: only if the dominant signature is outside the known false-positive families, if a new non-authenticate 4xx path spikes outside the weekday 17:00 UTC window, or if the `level` field shows `error` rather than `warn` indicating an unhandled exception path.
 
 ## Long-term remediation options
 

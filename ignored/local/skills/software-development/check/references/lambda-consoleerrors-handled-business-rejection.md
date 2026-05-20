@@ -15,6 +15,7 @@ Class-level reference for Lambda alarms in the `ConsoleErrors` namespace where t
 
 - Trigger string: `080 unsubscribe number missing, skipping batch: <projectId>/<campaignId>`
 - Code path: `services/lambda/kakao-brand-message-delivery/index.ts` around line 163
+- Scope-attribution pitfall: The `/aws/lambda/kakao-brand-message-delivery` log stream often carries both `campaign` and `user_journey` payloads in the same alarm window. The helper's `scope_attribution.scope_kind` may aggregate to `user_journey` even when the actual `080 unsubscribe number missing` ERROR trigger is a `campaign` line with `resource_type: campaign`. Always verify the `resource_type` field on the specific triggering log line before accepting `scope_kind` as definitive.
 - Why it happens: Kakao Bizmessage **marketing** (`/marketing/send/basic/batch`) messages require an 080 toll-free unsubscribe number in the sender profile. If the project's `kakaoSenderInfo.unsubscribe_phone_number` is unset, the batch is intentionally skipped.
 - Impact: no messages are sent for that batch, but the Lambda returns normally and continues processing remaining batches.
 - Scope extraction: log includes `projectId`/`campaignId` directly — map via DynamoDB `project` table.
@@ -23,6 +24,14 @@ Class-level reference for Lambda alarms in the `ConsoleErrors` namespace where t
 - Exact log line format: `080 unsubscribe number missing, skipping batch: <projectId>/<campaignId> { notiflyUserIdList: [ '...' ] }`
 - Rapid recurrence note: when `history.rapid_recurrence.status` is `rapid` or multiple ALARM transitions occur within 10 minutes, verify the current trigger context before classifying. If all transitions show the same `080 unsubscribe number missing` signature for the same campaign, the rapid recurrence is benign batch processing, not a worsening failure.
 - Action: classify each occurrence as `no_action` because the Lambda invocation completes normally and no customer-facing delivery occurs. The rejection is handled behavior. However, when this pattern exceeds ~1/day sustained (e.g., 30d > 20), the cumulative noise warrants a `needs_fix` tracking item to downgrade `console.error` to `console.warn` in `services/lambda/kakao-brand-message-delivery/index.ts:163`.
+
+**Fix implementation** (when user asks for a targeted PR or the pattern has crossed the noise threshold):
+- File: `services/lambda/kakao-brand-message-delivery/index.ts`
+- Change: In the `if (!unsubscribeNumber)` block (around line 163), replace `console.error` with `console.warn` on the skip log line.
+- Keep `incrementCampaignDeliveryCounts` at the end of the block so delivery stats remain accurate.
+- **Leave the `catch` block around `filterUnsubscribedRecipients` at `console.error`**: an exception there is an actual failure, not a handled rejection.
+- No Terraform changes are required; the metric filter continues to work for real failures while the handled path stops tripping it.
+- Prior implementation: PR #3673 (`hashimoto/fix-kakao-brand-080-noise`) demonstrates the one-line change.
 
 **Bounded log check** (when helper returns empty `current_trigger_contexts`):
 ```bash

@@ -6,7 +6,7 @@ Notifly API/fact data default: PG/read-model first; Athena raw only explicit deb
 §
 Notifly docs live site `docs.notifly.tech` is Mintlify-backed from `notifly-tech/notifly-docs`; old `team-michael/notifly-docs` is deprecated Docusaurus/GitHub Pages.
 §
-Slack media Qs: if channel/thread IDs exist, fetch root/thread via Web API, inspect files/attachments, download authorized images, run vision.
+Slack media: fetch thread/root, download authorized files/images, then vision.
 §
 CloudCheckr AU 2000841/a4dcbb7d uses `cloudcheckr-service-cost-api-fetch`; MaxSessionsNotice may end sessions; parallel backfills can OIDC `invalid_grant`, retry sequentially.
 §
@@ -23,3 +23,5 @@ Notifly console: use `NOTIFLY_AUTH` email:password for `/ko/auth/login`; Michael
 Hermes `tarantino`: profile `/home/ubuntu/.hermes/profiles/tarantino`; related to `just-went-viral.com`; dashboard host `dashboard.just-went-viral.com`.
 §
 Notifly web/demo: English IDs; Korean docs; prod-like events; SDK projectId/username, password dummy; no public password env; `.env.example` not gate.
+§
+CRM SDK Tracker shadow paths: code `~/.hermes/workspace/crm-sdk-tracker`; runtime `~/.hermes/profiles/andrej/crm-sdk-tracker`.

@@ -19,7 +19,7 @@ Daily `Sum=1.0` at roughly the same clock time for ~30 days (verified via `get_m
 - Since 2026-05-14 an additional window appeared at ~06:25–06:30 UTC (≈ 15:25–15:30 KST).
 - 2026-05-14 had `Sum=2.0` because both windows fired.
 
-Alarm-history `OK → ALARM` counts are **zero** by design; the helper may report `alarm_count_7d: 0`. Use daily metric `Sum` for frequency instead.
+Alarm-history transitions are `INSUFFICIENT_DATA → ALARM → INSUFFICIENT_DATA` (never `OK`). The helper now extracts `oldState.stateValue → newState.stateValue` from `HistoryData` to count these transitions, so `alarm_count_7d` / `alarm_count_30d` will reflect actual daily alarm occurrences (e.g. `30일: 33회 / 7일: 10회`). They can be used directly for the `빈도` field. Cross-check with `get_metric_statistics Period=86400 Sum` if the helper transition counts look unexpectedly high.
 
 ## Root cause
 
@@ -53,10 +53,13 @@ The triggering stream varies per invocation (different ECS tasks handle differen
 
 When the `Received event` payload contains `"schedule_type": "user_journey"` and a `user_journeys` array, report the scope as **user journey** (mutually exclusive with campaign), using the ID from the array.
 
-Observed projects/campaigns in recent triggers:
+Observed projects/campaigns in recent triggers (scope varies by day because `UL1T00` is not globally unique):
 - `melting` / `k6bkO6` (2026-05-15 06:30 UTC, ~31.4 min)
 - `proudp` / `UL1T00` (2026-05-14 11:52 UTC, ~53.6 min, 884k recipients)
 - `stepup` / `UL1T00` (2026-05-16 11:47 UTC, ~52.3 min, 885k recipients, **user journey** `[만보기] 매일 적립 리마인드`)
+- `proudp` / `UL1T00` (2026-05-19 11:51 UTC, ~52.3 min, 887,991 recipients)
+
+**Scope-attribution caveat**: The same campaign/user journey ID (`UL1T00`) has appeared under different projects on different days. Always extract the current alarm-window `project_id` from the ECS log stream (e.g., from `Used user property names in message:` JSON or inline `project_id`/`campaignId` structured lines), then map it via DynamoDB `project`, and finally determine whether `resource_type` is `campaign` or `user_journey`. Never scope by campaign/user journey ID alone.
 
 ## Classification
 

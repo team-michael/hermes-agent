@@ -26,6 +26,32 @@ fields @timestamp, @message
 
 If this returns zero results, the alarm is a false positive caused by the metric filter matching benign URL parameters.
 
+## `receipt-error-*` referrer pattern (web-console)
+
+**Alarm**: `/aws/ecs/notifly-services-prod/web-console console error`  
+**Metric filter**: `%ERROR|Exception%`  
+**Trigger**: Access log lines such as:
+```
+221.146.182.32 - - [...] "POST /api/s3/upload_html HTTP/1.1" 200 158
+"https://console.notifly.tech/console/products/regather/in-app-message/modification?environment=1&templateName=receipt-error-AOSup-0519"
+```
+
+**Mechanism**: the substring `error` inside the `templateName` query parameter matches the case-insensitive `%ERROR%` arm of the metric filter. The request is a normal 200 OK S3 upload during in-app message template editing.
+
+**Triage**: when the helper returns `can_answer_root_cause: false` and the only trigger contexts are access logs (`POST /api/s3/upload_html`, `POST /api/s3/upload_dataurl`, `POST /api/s3/get_html`), run a secondary bounded log check excluding the benign substring:
+
+```sql
+fields @timestamp, @message
+| filter @message like /ERROR/ or @message like /Exception/
+| filter @message not like /receipt-error/
+| sort @timestamp desc
+| limit 50
+```
+
+If this returns zero results, the alarm is a false positive caused by the metric filter matching a benign template-name query parameter.
+
+**Scope note**: The referrer URL reveals the product (`regather`) and the in-app-message modification screen. Because the `project` GSI for `product_id=regather` returns multiple `project_id` items, the precise project/campaign scope remains ambiguous for this access-log-only trigger. Use the product name in the scope field when exact project mapping is non-unique.
+
 ## Generalisation
 
 Any ECS service whose log group contains mixed application logs + HTTP access logs is vulnerable to this class of false positive when the metric filter uses broad substrings such as `ERROR` or `Exception`. Additional benign patterns to watch for:
