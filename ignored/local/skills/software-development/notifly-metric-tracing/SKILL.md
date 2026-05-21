@@ -209,6 +209,8 @@ For Slack product/sales advisory threads, keep the first answer concise and limi
 
 For scheduled daily mentoring about Notifly metrics/statistics, prefer one small mechanism, not a broad survey. Shape the answer as: `오늘의 Notifly: <주제>`, one-line summary, 2–3 bullets where each bullet follows `무엇인지 → 어떻게 동작하는지 → 왜 중요한지`, optional SDK/iOS implication, and one `내일은 ...` line. See `references/daily-mentoring-campaign-statistics-path.md` for a compact campaign-statistics example and file citations.
 
+Important daily-mentoring guardrail: this skill may be attached to the cron job even when the user asked for broad Notifly infra/service mentoring. Do **not** let the presence of this skill force a metrics/statistics topic. First inspect recent `오늘의 Notifly` outputs when possible; if metrics/statistics appeared recently, avoid `raw event → campaign_statistics → UI metric` entirely and use the broader `notifly-systems-investigation` daily mentoring workflow instead.
+
 For metric semantics debugging, answer with three layers:
 - **Raw event level:** what rows are written
 - **Campaign/statistics level:** what gets grouped into displayed metric

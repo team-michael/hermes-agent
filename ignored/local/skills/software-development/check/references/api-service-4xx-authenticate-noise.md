@@ -12,7 +12,7 @@ Recurring false-positive pattern for the `[api-service] 4xx error response is gr
 - **Threshold**: 100
 - **EvaluationPeriods**: 4 (DatapointsToAlarm: 3)
 - **Note on name drift**: The alarm name says "greater than 300" but the actual CloudWatch threshold is **100**. Do not rely on the numeric value embedded in the alarm name when estimating severity margin.
-- **State transition history**: ~44 OK→ALARM transitions in 30 days, typically resolving within 3–5 minutes.
+- **State transition history**: ~25 OK→ALARM transitions in 30 days (latest live count), typically resolving within 3–5 minutes.
 
 ## Metric filter
 
@@ -83,9 +83,9 @@ fields @timestamp, status, path, level, userAgent
 
 | Window | `/authenticate` 400 count | Total 4xx count |
 |---|---|---|
-| Weekday ~02:11 KST (17:11 UTC) | ~980 | ~1000 |
+| Weekday ~02:11 KST (17:11 UTC) | ~1,400–1,600 | ~1,450–1,650 |
 | Weekend 16:50–17:10 UTC | ~1–5 | ~500–600 (other sources) |
-| Daily total (metric Sum) | — | ~3900–5300 |
+| Daily total (metric Sum) | — | ~3,900–5,300 |
 
 The weekday **~02:11 KST** spike is a clockwork pattern with tight timing (±2 minutes). If the alarm fires outside this window, investigate the dominant signature immediately; it may be a different root cause.
 
@@ -233,7 +233,15 @@ Result: **Variant B** — campaign send non-existent campaign burst from a singl
 - Levels: **100% `warn`**; `error` level count: **0**
 - Secondary signatures: 6 `GET /sdk-configurations` 400, 6 `POST /track-event` 401, 2 `GET /user-state` 405, 1 `POST /projects/sconn/campaigns/CJDzWt/send` 400
 
-Result: consistent with the known weekday **~02:11 KST** `Apache-HttpClient/5.3.1 (Java/17.0.19)` authentication rejection burst.
+2026-05-20 alarm window (16:56–17:06 UTC / 2026-05-21 01:56–02:06 KST):
+- Total `error-response` with status ≥ 400: **1,447**
+- `/authenticate` 400: **1,437** (99.3%)
+- User-Agent dominant: `Apache-HttpClient/5.3.1 (Java/17.0.19)` and `python-requests/2.32.3`
+- Levels: **100% `warn`**; `error` level count: **0**
+- `projectId`: **explicitly `"unknown"`** on all `/authenticate` lines (validation occurs before project resolution)
+- Secondary signatures: 6 `POST /track-event` 401, 1 `POST /campaign/.../j4k6UJ/send` 400 (`museclinic`), 1 `GET /user-state` 400
+
+Result: consistent with the known weekday **~02:11 KST** `Apache-HttpClient/5.3.1 (Java/17.0.19)` authentication rejection burst. The `projectId: "unknown"` on all `/authenticate` lines confirms scope is untraceable by design, not a missing log field.
 
 ## Logs Insights query note — `parse` field collision
 

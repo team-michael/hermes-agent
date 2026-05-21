@@ -561,4 +561,31 @@ Evidence:
 
 Classification: `no_action` — publish completed, no DLQ/ECS failure, companion `long running alam` already covers same signal.
 
+## 2026-05-20 session — `segment-publisher slow eic query` ALARM (Pattern B, stepup)
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`
+Transition: `OK -> ALARM` at 2026-05-20 11:54:46 UTC (KST 20:54)
+Datapoint: `Sum=1.0` at 2026-05-20 11:53:00 UTC (metric period 60s)
+Companion alarm: `segment-publisher long running alam` transitioned `INSUFFICIENT_DATA -> ALARM` at 2026-05-20 11:54:05 UTC (datapoint 11:49:00 UTC).
+
+Evidence:
+- Trigger log (2026-05-20 11:53:19 UTC, stream `prod/segment-publisher/cc1676f92a3d474c9107a78ad364501c`): `[WARN] Processing took longer than expected: 3243945.97 ms` (~54.0 min, the longest duration observed to date).
+- Same-stream context: 18 batches, final `campaignId: UL1T00, 888846 recipients published. (batch index: 18)`
+- `Received event` payload in the same stream head (2026-05-20 10:59:15 UTC) shows `schedule_type: "user_journey"`, id `UL1T00`, name `[만보기] 매일 적립 리마인드`
+- Project explicit in stream: `project_id: 32d8d9d6294d52e7a5427c036b471f91` → DynamoDB `project` → product `stepup`
+- Zero ERROR logs in the alarm window; only the single WARN line.
+- Daily recurrence continues uninterrupted: 30d baseline ~1–6/day, 2026-05-20 count = 1.0.
+
+Classification: `no_action` — publish completed, no DLQ/ECS failure, companion `long running alam` already covers same signal. Durations continue creeping upward (3243s vs ~2977s on 2026-05-08); monitor if sustained growth crosses a material threshold.
+
+**Updated daily counts** (2026-05-20 added):
+
+```
+2026-04-13=7, 04-14=3, 04-15=2, 04-16=0, 04-17=4, 04-18=1,
+04-19=1, 04-20=5, 04-21=3, 04-22=2, 04-23=3, 04-24=6, 04-25=2, 04-26=2,
+04-27=4, 04-28=3, 04-29=5, 04-30=2, 05-01=1, 05-02=3, 05-03=1, 05-04=2,
+05-05=1, 05-06=1, 05-07=3, 05-08=1, 05-09=1, 05-10=1, 05-11=5, 05-12=3,
+05-13=1, 05-14=5, 05-15=1, 05-17=1, 05-18=2, 05-19=1, 05-20=1
+```
+
 For deeper project segment extraction, EIC Large Scale conversion workflows, and user-journey session analysis, see `notifly-segment-publisher-alarm-analysis`.
