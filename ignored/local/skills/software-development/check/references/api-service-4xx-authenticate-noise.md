@@ -28,13 +28,14 @@ The filter increments on every structured log where `message` is exactly `error-
 
 ## Dominant trigger pattern
 
-On weekdays around **17:00 UTC (KST 02:00)**, a burst of requests hits `POST /authenticate`:
+A daily burst of requests hits `POST /authenticate` around **02:11 KST (17:11 UTC)**:
 
-- **User-Agent**: `Apache-HttpClient/5.3.1 (Java/17.0.19)`
+- **User-Agent**: primarily `Apache-HttpClient/5.3.1 (Java/17.0.19)`; also `python-requests/2.32.3`, `axios/1.13.6`
 - **Status**: `400`
-- **Response body**: `{"error":"Missing required fields"}`
+- **Response body**: `{"error":"Missing required fields"}` (or `{"data":null}` for access-key-bearing requests that still fail validation)
 - **IP origin**: various Korean IPs behind Cloudflare
-- **Volume**: typically 500–1000 events in a 10-minute window, enough to breach `Sum > 100` across 3 consecutive 5-minute periods.
+- **Volume**: typically 500–1,600 events in a 10-minute window, enough to breach `Sum > 100` across 3 consecutive 5-minute periods.
+- **Recurrence**: daily including weekends; timing is tight (±2 minutes).
 
 The projectId for these lines is `"unknown"`; there is no campaign or user-journey scope.
 
@@ -83,11 +84,11 @@ fields @timestamp, status, path, level, userAgent
 
 | Window | `/authenticate` 400 count | Total 4xx count |
 |---|---|---|
-| Weekday ~02:11 KST (17:11 UTC) | ~1,400–1,600 | ~1,450–1,650 |
-| Weekend 16:50–17:10 UTC | ~1–5 | ~500–600 (other sources) |
+| Daily ~02:11 KST (17:11 UTC) | ~1,400–1,600 | ~1,450–1,650 |
+| Off-window (other times) | ~1–15 | ~100–300 (other sources) |
 | Daily total (metric Sum) | — | ~3,900–5,300 |
 
-The weekday **~02:11 KST** spike is a clockwork pattern with tight timing (±2 minutes). If the alarm fires outside this window, investigate the dominant signature immediately; it may be a different root cause.
+The daily **~02:11 KST** spike is a clockwork pattern with tight timing (±2 minutes). If the alarm fires outside this window, investigate the dominant signature immediately; it may be a different root cause.
 
 ## Helper gap — bracket-prefix fallback
 
@@ -143,7 +144,7 @@ for (k, c) in paths.most_common(10):
 "
 ```
 
-Check weekday vs weekend auth volume for the last N days:
+Check daily auth volume for the last N days:
 
 ```bash
 python3 -c "
@@ -213,7 +214,7 @@ Then: `aws logs get-query-results --region ap-northeast-2 --query-id <queryId>`
 - Levels: **100% `warn`**
 - Secondary signatures: 21 `DELETE /projects/{pid}/messages/text-message/blockservice/recipients/removes` 400, 4 `POST /track-event` 401, 2 `GET /users` 401
 
-Result: consistent with the known weekday **~02:11 KST** `Apache-HttpClient/5.3.1 (Java/17.0.19)` authentication rejection burst.
+Result: consistent with the known daily **~02:11 KST** `Apache-HttpClient/5.3.1 (Java/17.0.19)` authentication rejection burst.
 
 2026-05-19 alarm window (07:40–07:55 UTC / 16:40–16:55 KST):
 - Total `error-response` with status ≥ 400: **~811**
@@ -241,9 +242,43 @@ Result: **Variant B** — campaign send non-existent campaign burst from a singl
 - `projectId`: **explicitly `"unknown"`** on all `/authenticate` lines (validation occurs before project resolution)
 - Secondary signatures: 6 `POST /track-event` 401, 1 `POST /campaign/.../j4k6UJ/send` 400 (`museclinic`), 1 `GET /user-state` 400
 
-Result: consistent with the known weekday **~02:11 KST** `Apache-HttpClient/5.3.1 (Java/17.0.19)` authentication rejection burst. The `projectId: "unknown"` on all `/authenticate` lines confirms scope is untraceable by design, not a missing log field.
+Result: consistent with the known daily **~02:11 KST** `Apache-HttpClient/5.3.1 (Java/17.0.19)` authentication rejection burst. The `projectId: "unknown"` on all `/authenticate` lines confirms scope is untraceable by design, not a missing log field.
 
-## Logs Insights query note — `parse` field collision
+2026-05-21 alarm window (16:45–17:20 UTC / 2026-05-22 01:45–02:20 KST):
+- Total `error-response` with status ≥ 400: **~1,635**
+- `/authenticate` 400: **1,627** (99.5%)
+- User-Agent mix: `Apache-HttpClient/5.3.1 (Java/17.0.19)`, `python-requests/2.32.3`, `axios/1.13.6`
+- Levels: **100% `warn`**; `error` level count: **0**
+- `projectId`: `"unknown"` on all `/authenticate` lines; one access-key-bearing request (`projectId: "accessKey:564f044c479959b98c0ffa0f683636ab"`) still responded 400 with body `{"data":null}`
+- Secondary signatures: 3 `POST /track-event` 401, 2 `POST /campaign/.../j4k6UJ/send` 400, 1 `GET /user-state` 400, 1 `POST /projects/.../campaigns/CJDzWt/send` 400
+- Alarm state: ALARM at 17:11 UTC, OK at 17:14 UTC (3-minute duration)
+
+Result: consistent with the known daily **~02:11 KST** `/authenticate` authentication rejection burst. All signals are handled `warn` validation rejections; no customer impact.
+
+2026-05-21 alarm window (16:56–17:06 UTC / 2026-05-22 01:56–02:06 KST):
+- Total `error-response` with status ≥ 400: **1,632**
+- `/authenticate` 400: **1,620+** (~99%)
+- User-Agent dominant: `Apache-HttpClient/5.3.1 (Java/17.0.19)` via Cloudflare IPs (`13.209.221.105`, `141.101.84.238`, `172.71.111.143-144`, `43.200.25.101`)
+- Levels: **100% `warn`**; `error` level count: **0**
+- `projectId`: **explicitly `"unknown"`** on all `/authenticate` lines
+- Secondary signatures (sparse): `POST /campaign/300ef7dd1ea459a2bb0dbafd2aabc0c7/j4k6UJ/send` 400 (`warn`, `python-requests/2.32.5`), `POST /user-state/2b9f5a6685ba5b839803f1338a539724/...` 400 (Dalvik/Android), `POST /track-event` 401 (`python-requests/2.33.1`), `POST /set-user-properties` 401 (`node-fetch`)
+
+Result: identical to the prior-day baseline. The dominant `/authenticate` 400 burst volume is **~1,620** in the 15-minute alarm window. This confirms the pattern is stable, not worsening.
+
+**7-day daily `/authenticate` 400 baseline** (2026-05-14 to 2026-05-21, full 24h counts):
+
+| Date | `/authenticate` 400 count | Day |
+|---|---|---|
+| 2026-05-14 | 2,111 | Wed |
+| 2026-05-15 | 2,101 | Thu |
+| 2026-05-16 | 2,303 | Fri |
+| 2026-05-17 | 2,364 | Sat |
+| 2026-05-18 | 2,431 | Sun |
+| 2026-05-19 | 2,246 | Mon |
+| 2026-05-20 | 1,986 | Tue |
+| 2026-05-21 | 2,370 | Wed |
+
+Average: ~2,239/day. Range: 1,986–2,431. This narrow band (~±10%) is the expected baseline. Spikes outside this band or a sudden shift in dominant User-Agent warrant deeper investigation.
 
 When writing manual aggregate queries for `api-service` `error-response` logs, prefer auto-extracted JSON fields (`status`, `message`) directly. Do not add `parse @message '\"status\":*' as status` because `status` is already a top-level JSON field; this raises `MalformedQueryException: Ephemeral field is already defined: status`. Use the auto-extracted field directly, or rename the parsed alias (e.g., `as parsed_status`) when extraction is required.
 
@@ -257,7 +292,7 @@ The `api-service` log group receives very high traffic. During a spike, CloudWat
   - `/authenticate` 400 from `Apache-HttpClient/5.3.1 (Java/17.0.19)` with `"Missing required fields"`
   - `POST /projects/{pid}/campaigns/{cid}/send` 400 with `"Bad request: campaign <id> does not exist"` from a single client IP
   Use this even when `filter-log_events` returns empty because the daily recurrence and metric datapoints alone are sufficient evidence.
-- **`needs_fix`**: only if the dominant signature is outside the known false-positive families, if a new non-authenticate 4xx path spikes outside the weekday 17:00 UTC window, or if the `level` field shows `error` rather than `warn` indicating an unhandled exception path.
+- **`needs_fix`**: only if the dominant signature is outside the known false-positive families, if a new non-authenticate 4xx path spikes outside the daily ~02:11 KST window, or if the `level` field shows `error` rather than `warn` indicating an unhandled exception path.
 
 ## Long-term remediation options
 

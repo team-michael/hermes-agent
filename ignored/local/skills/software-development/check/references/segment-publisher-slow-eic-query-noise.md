@@ -294,7 +294,7 @@ Investigation note:
 
 ### Pattern A scope-attribution note
 
-When the trigger is `EventCounterCteManager.extract:{project_id} took too long: {ms}ms`, the log line carries the `project_id` but often **no campaign or user-journey ID**. In the stream context, `campaign_id` may appear as `undefined` because the schedule is segment-condition-based rather than tied to a single campaign entity. Do not force a campaign scope when the log explicitly shows `campaign_id: undefined` and no `user_journey.id` is present in the payload. The correct scope is `project/unknown-campaign` (or `project/unknown-user-journey` when the payload shape suggests a journey).
+When the trigger is `EventCounterCteManager.extract:{project_id} took too long: {ms}ms`, the log line carries the `project_id` but often **no campaign or user-journey ID**. In the stream context, `campaign_id` may initially appear as `undefined` because the schedule is segment-condition-based rather than tied to a single campaign entity. However, check the same stream tail within the next few seconds after the slow-query log; `campaign_id` may appear in `shouldExtractOnlyUsedProperties` or `Schedule context setup completed` lines before batch publishing begins (e.g., munice `zmmqWA` on 2026-05-21). If still absent, do not force a campaign scope. The correct scope is `project/unknown-campaign` (or `project/unknown-user-journey` when the payload shape suggests a journey).
 
 If a single day jumps to >10 or the weekly total doubles versus the 30-day mean, treat it as `needs_fix` and inspect the dominant project in that window. Otherwise, `no_action` is appropriate. The 2026-05-12 count (1) is well within the 1–7 baseline.
 
@@ -578,14 +578,124 @@ Evidence:
 
 Classification: `no_action` — publish completed, no DLQ/ECS failure, companion `long running alam` already covers same signal. Durations continue creeping upward (3243s vs ~2977s on 2026-05-08); monitor if sustained growth crosses a material threshold.
 
-**Updated daily counts** (2026-05-20 added):
+**Updated daily counts** (2026-05-21 added):
 
 ```
 2026-04-13=7, 04-14=3, 04-15=2, 04-16=0, 04-17=4, 04-18=1,
 04-19=1, 04-20=5, 04-21=3, 04-22=2, 04-23=3, 04-24=6, 04-25=2, 04-26=2,
 04-27=4, 04-28=3, 04-29=5, 04-30=2, 05-01=1, 05-02=3, 05-03=1, 05-04=2,
 05-05=1, 05-06=1, 05-07=3, 05-08=1, 05-09=1, 05-10=1, 05-11=5, 05-12=3,
-05-13=1, 05-14=5, 05-15=1, 05-17=1, 05-18=2, 05-19=1, 05-20=1
+05-13=1, 05-14=5, 05-15=1, 05-16=1, 05-17=1, 05-18=2, 05-19=1, 05-20=1,
+05-21=6
 ```
+
+## 2026-05-21 session — `segment-publisher slow eic query` ALARM (Pattern A, munice), 16:49 KST
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`
+Transition: `OK -> ALARM` at 2026-05-21 07:49:46 UTC (KST 16:49)
+Datapoint: `Sum=1.0` at 2026-05-21 07:48:00 UTC (metric period 60s)
+Recovery: `ALARM -> OK` at 2026-05-21 07:50:46 UTC
+Companion alarm: `segment-publisher long running alam` remained `INSUFFICIENT_DATA` throughout the window — confirming this is **not** Pattern B.
+
+Evidence:
+- Trigger log (2026-05-21 07:48:25 UTC, stream `prod/segment-publisher/2d2350c0129345548d555d1610a27887`): `EventCounterCteManager.extract:031b18009978590188e49e6777447fc2 took too long: 67824ms`
+- Same-stream context: `Received event` payload (07:47:15 UTC) shows `projectId: 031b18009978590188e49e6777447fc2` with segment conditions on `amplitude__trial_converted`, `amplitude__subscription_renewed`, `amplitude__subscription_started`, etc. Channel: `push-notification`.
+- `Schedule context setup completed cc1074a3639e423fa955325c6a183378` at 07:48:25 UTC.
+- `campaign_id: undefined` in log; schedule is segment-condition-driven, not a named campaign entity.
+- Standard publishing batches followed (10 batches, 352→3122 recipients).
+- Zero ERROR logs in the alarm window (07:35–07:55 UTC).
+- Project mapping: `project_id: 031b18009978590188e49e6777447fc2` → DynamoDB `project` → product `munice`.
+
+Daily recurrence context:
+- 2026-05-21 metric sum = 2.0 total. The second event (07:15:47 UTC, same stream form) is a second munice Pattern A occurrence.
+- This is the first **clean Pattern A day** in the recent window — prior days (2026-05-17 through 05-20) were either Pattern B only or mixed-pattern days.
+- The trigger time (~07:15 and ~07:48 UTC) is outside both known Pattern B windows (~06:30 UTC for class101, ~11:47 UTC for stepup), confirming this is independent batch scheduling for munice.
+
+Classification: `no_action` — query completed, batch publishing finished normally, no ECS failure or DLQ signal. The 2 munice Pattern A occurrences are within the 1–7/day baseline.
+
+## 2026-05-21 session — `segment-publisher slow eic query` ALARM (Pattern B, stepup), 20:54 KST
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`
+Transition: `OK -> ALARM` at 2026-05-21 11:54:46 UTC (KST 20:54)
+Datapoint: `Sum=1.0` at 2026-05-21 11:53:00 UTC (metric period 60s)
+Recovery: `ALARM -> OK` at 2026-05-21 11:55:46 UTC
+Companion alarm: `segment-publisher long running alam` transitioned `INSUFFICIENT_DATA -> ALARM` at 2026-05-21 11:54:05 UTC (datapoint 11:49:00 UTC).
+
+Evidence:
+- Trigger log (2026-05-21 11:53:09 UTC, stream `prod/segment-publisher/ae1b37bc67654c628859651af958e635`): `[WARN] Processing took longer than expected: 3233991.74 ms`
+- Same-stream context: 18 batches, final `campaignId: UL1T00, 890035 recipients published. (batch index: 18)`
+- Received event payload (stream head, 2026-05-21 10:59:15 UTC) shows `schedule_type: "user_journey"`, id `UL1T00`, name `[만보기] 매일 적립 리마인드`
+- Project explicit in stream: `project_id: 32d8d9d6294d52e7a5427c036b471f91` → DynamoDB `project` → product `stepup`
+- Zero ERROR logs in the alarm window; only the single WARN line.
+- This is the stepup UL1T00 daily batch, continuing the exact same Pattern B seen since 2026-05-08.
+
+Daily recurrence update:
+- 2026-05-21 had 4 ALARM transitions total for this alarm (munice Pattern A at 07:16, 07:49, and 12:55 UTC; stepup Pattern B at 11:54 UTC). The ConsoleErrors metric daily sum = 4.0.
+- Daily count baseline remains 1–7/day.
+
+Classification: `no_action` — publish completed, no DLQ/ECS failure, companion `long running alam` already covers same signal.
+
+## 2026-05-21 session — `segment-publisher slow eic query` ALARM (Pattern A, munice), 21:56 KST
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`
+Transition: `OK -> ALARM` at 2026-05-21 12:56:46 UTC (KST 21:56)
+Datapoint: `Sum=1.0` at 2026-05-21 12:55:00 UTC (metric period 60s)
+Recovery: `ALARM -> OK` at 2026-05-21 12:57:46 UTC
+Companion alarm: `segment-publisher long running alam` remained `INSUFFICIENT_DATA` throughout the window — confirming this is **not** Pattern B.
+
+Evidence:
+- Trigger log (2026-05-21 12:55:27.545 UTC, stream `prod/segment-publisher/54cf34398c6a43a48c1218ccfc3acf53`): `EventCounterCteManager.extract:031b18009978590188e49e6777447fc2 took too long: 60520ms`
+- Same-stream context: `Received event` payload (12:54:25 UTC) shows `projectId: 031b18009978590188e49e6777447fc2`, segment conditions on `amplitude__trial_converted`, `amplitude__subscription_renewed`, `amplitude__subscription_started`, channel `push-notification`.
+- `Schedule context setup completed 8e5afa88c35546a78333ac4ae9f92cd2` at 12:55:27 UTC.
+- The slow query log line carries no campaign ID, but the same stream tail (12:55:27 UTC) shows `shouldExtractOnlyUsedProperties` context with `campaign_id: 'zmmqWA'` and campaign name `(푸시) (ja) 리뷰 이벤트 (구독 1차)`. This is the first documented Pattern A occurrence with an explicit munice campaign ID.
+- Standard publishing batches followed (3 batches, 350→683 recipients).
+- Memory pressure observed: `[MEMORY USAGE REPORT] rss` climbed from ~1906 MB through ~2997 MB during batch processing, approaching but not exceeding the ECS task memory limit of 3072 MB.
+- Zero ERROR logs in the alarm window (12:40–13:00 UTC).
+- `filter-log-events` with the unquoted metric filter pattern `"took" "too" "long"` would match; the Logs Insights bounded query `filter @message like /took too long/` recovered the trigger directly.
+- Project mapping: `project_id: 031b18009978590188e49e6777447fc2` → DynamoDB `project` → product `munice`.
+
+Daily recurrence context:
+- 2026-05-21 daily metric sum (ConsoleErrors `segment-publisher-prod slow eic query`, `Period=86400`, `Statistics=Sum`) = **4.0 total**, the highest since 2026-05-14 (5.0). Munice contributed three Pattern A occurrences (07:16, 07:49, 12:55 UTC); stepup contributed one Pattern B (11:54 UTC).
+- The munice trigger time at 12:55 UTC is outside both known Pattern B windows (~06:30 UTC class101, ~11:47 UTC stepup), confirming independent batch scheduling.
+
+Classification: `no_action` — query completed, batch publishing finished normally, no ECS failure or DLQ signal. The three munice Pattern A occurrences are within the 1–7/day baseline.
+
+## 2026-05-21 session — `segment-publisher slow eic query` ALARM (Pattern A, munice), 22:28 KST
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`
+Transition: `OK -> ALARM` at 2026-05-21 13:28:46 UTC (KST 22:28)
+Datapoint: `Sum=1.0` at 2026-05-21 13:27:00 UTC (metric period 60s)
+Recovery: `ALARM -> OK` at 2026-05-21 13:29:46 UTC
+Companion alarm: `segment-publisher long running alam` remained `INSUFFICIENT_DATA` throughout the window — confirming this is **not** Pattern B.
+
+Evidence:
+- Trigger log (2026-05-21 13:27:08 UTC, stream `prod/segment-publisher/99652a47df1d415da6b573d371742e73`): `EventCounterCteManager.extract:031b18009978590188e49e6777447fc2 took too long: 65220ms`
+- Same-stream context: `Schedule context setup completed ce383e83defe49309042bb07943ad583` at 13:27:08 UTC.
+- `project_id: '031b18009978590188e49e6777447fc2'` in the schedule context block; `campaign_id: undefined`.
+- 10 standard publishing batches followed (batch indices 1–10, 349→3,131 recipients).
+- Zero ERROR logs in the alarm window (13:12–13:32 UTC).
+- Project mapping: `project_id: 031b18009978590188e49e6777447fc2` → DynamoDB `project` → product `munice`.
+- Daily recurrence context: 2026-05-21 metric sum = 6.0 total, the highest since 2026-05-14 (5.0). This was the sixth `slow eic query` transition on 2026-05-21 (munice Pattern A at 07:16, 07:49, 12:55, 13:28, 13:37 UTC; stepup Pattern B at 11:54 UTC).
+
+Classification: `no_action` — query completed, batch publishing finished normally, no ECS failure or DLQ signal. The five munice Pattern A occurrences on 2026-05-21 are within the 1–7/day baseline.
+
+## 2026-05-21 session — `segment-publisher slow eic query` ALARM (Pattern A, munice), 22:38 KST
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`
+Transition: `OK -> ALARM` at 2026-05-21 13:38:46 UTC (KST 22:38)
+Datapoint: `Sum=1.0` at 2026-05-21 13:37:00 UTC (metric period 60s)
+Recovery: `ALARM -> OK` at 2026-05-21 13:39:46 UTC
+Companion alarm: `segment-publisher long running alam` remained `INSUFFICIENT_DATA` throughout the window — confirming this is **not** Pattern B.
+
+Evidence:
+- Trigger log (2026-05-21 13:37:05 UTC, stream `prod/segment-publisher/d6e6f02955dd4fa9906b4edeb5af6f05`): `EventCounterCteManager.extract:031b18009978590188e49e6777447fc2 took too long: 65353ms`
+- Same-stream context: `Schedule context setup completed f5c74493899749498eb8544191f27f82` at 13:37:05 UTC.
+- `project_id: '031b18009978590188e49e6777447fc2'` in the schedule context block; `campaign_id: undefined`.
+- Standard publishing batches followed (10 batches, 349→3,131 recipients).
+- Zero ERROR logs in the alarm window (13:30–13:45 UTC).
+- Project mapping: `project_id: 031b18009978590188e49e6777447fc2` → DynamoDB `project` → product `munice`.
+- Daily recurrence context: 2026-05-21 metric sum = 6.0 total. This was the sixth and final `slow eic query` transition on 2026-05-21, completing a burst of five munice Pattern A occurrences between 07:16 and 13:38 UTC.
+
+Classification: `no_action` — query completed, batch publishing finished normally, no ECS failure or DLQ signal. The five munice Pattern A occurrences on 2026-05-21 are within the 1–7/day baseline.
 
 For deeper project segment extraction, EIC Large Scale conversion workflows, and user-journey session analysis, see `notifly-segment-publisher-alarm-analysis`.

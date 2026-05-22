@@ -11,6 +11,10 @@ metadata:
 
 # Slack Thread Root Retrieval
 
+## Notifly Slack permalink rule
+
+When a Slack permalink is provided, use the Slack Web API before browser fallback: parse `channel`/`ts`, fetch with `conversations.history` or `conversations.replies`, download `url_private_download` attachments with the bot token, then analyze screenshots locally. See `references/slack-permalink-api-first.md`.
+
 Use this when a Slack bot/agent can see a threaded reply or mention but cannot see the thread's root message.
 
 ## Core facts
@@ -127,7 +131,7 @@ Interpret response:
 
 ## Practical notes
 
-- In Notifly Slack work, treat Slack permalinks as structured Slack data, not ordinary web links. Browser login pages are **not** evidence that content is inaccessible. First parse channel/ts, call Slack Web API (`conversations.replies` for threads, `conversations.history` for nearby context), and only say content is inaccessible after an API-level failure (`channel_not_found`, `not_in_channel`, `missing_scope`, `ok:false`, etc.). If the Slack content links to Google Docs/Sheets/Drive, follow with authenticated Google Workspace access before giving product/sales conclusions.
+- In Notifly Slack work, treat Slack permalinks as structured Slack data, not ordinary web links. Browser login pages are **not** evidence that content is inaccessible. **Do not open the permalink in the browser as the first retrieval attempt.** First parse channel/ts, load `SLACK_BOT_TOKEN` from `/home/ubuntu/.hermes/profiles/andrej/.env` if it is not already in the process environment, then call Slack Web API (`conversations.history` with a tight `oldest/latest` window for the exact permalink message; `conversations.replies` with `thread_ts` for the full thread). Only say content is inaccessible after an API-level failure (`channel_not_found`, `not_in_channel`, `missing_scope`, `ok:false`, etc.). If the Slack message has `files[]`, download image evidence via `url_private_download` with the bearer token and run vision/OCR before summarizing. If the Slack content links to Google Docs/Sheets/Drive, follow with authenticated Google Workspace access before giving product/sales conclusions. See `references/slack-permalink-api-first-with-media.md` for the compact permalink + screenshot retrieval recipe.
 - For long-range Slack support/CS Q&A dataset extraction, use the same `conversations.history` + `conversations.replies` pattern but make the export resumable, persist raw JSONL, categorize threads into coarse topic CSVs, and validate category row totals before packaging. See `references/bulk-channel-qa-dataset-export.md`.
 - `app_mention` only gives messages pertinent to the app; do not rely on it for full thread context.
 - For private channels, “scope exists” is not enough; membership is usually the real blocker.

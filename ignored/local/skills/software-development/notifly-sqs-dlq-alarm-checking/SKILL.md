@@ -44,6 +44,8 @@ Despite the name, `has been created` means "DLQ has visible messages", not queue
 
 ## Investigation workflow
 
+Before attributing a DLQ move to Lambda code-level failure, confirm whether the SQS event source mapping has `FunctionResponseTypes: ["ReportBatchItemFailures"]`. If it is empty, a returned `{ batchItemFailures }` object is not honored as SQS partial batch failure evidence. See `references/sqs-lambda-partial-batch-redrive-pitfall.md` for the receive/delete/visibility-timeout diagnostic pattern.
+
 ### 1. Check Terraform first
 
 Search `queues.tf` for the queue name in both sections:

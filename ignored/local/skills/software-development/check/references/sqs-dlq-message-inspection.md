@@ -134,6 +134,9 @@ Key extraction fields:
 
 Because this is a raw batch payload (not a dispatch command), `SentTimestamp` is the **original scheduled enqueue time** to the main queue, often hours or even days before the Lambda actually processes the message. Do not confuse it with the DLQ arrival time or the Lambda error time.
 
+**Error pattern: TokenizationError + batchItemFailures + maxReceiveCount=1**
+When `delivery.js` catches a per-message error (e.g., `TokenizationError` from malformed Liquid in `title`, `body`, or `actionUrl`) and adds the record to `batchItemFailures`, the message is returned to SQS. If the source queue has `maxReceiveCount=1`, the message is immediately DLQed even though the Lambda invocation succeeds (`AWS/Lambda Errors=0`). This produces the paradox of ERROR lines in Lambda logs + healthy CloudWatch metrics + growing DLQ. The root cause is the combined effect of per-message template failure and aggressive redrive policy, not a Lambda code bug.
+
 ## Pitfalls
 
 - Do not call `delete-message` during investigation. Use `receive_message` with short visibility only.

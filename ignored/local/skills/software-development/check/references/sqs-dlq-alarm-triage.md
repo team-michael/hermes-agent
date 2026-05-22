@@ -86,6 +86,36 @@ If the main queue redrive policy has `maxReceiveCount=1`, every single receive-f
 
 **Fix target:** `infra/terraform/prod/ap-northeast-2/sqs/queues.tf` (or wherever the queue resource is defined). Raise `maxReceiveCount` from 1 to 3–5 unless the messages are truly non-idempotent and dangerous to retry.
 
+## Caught exceptions with batchItemFailures and maxReceiveCount=1
+
+When the consumer Lambda uses partial batch failure response (`batchItemFailures`) and `maxReceiveCount=1`, a **caught exception** can still land the message in the DLQ even though `AWS/Lambda Errors == 0`:
+
+1. Lambda receives the message and processes it.
+2. Application code catches an exception (e.g., `TokenizationError` from Liquid template rendering, missing credential, or invalid payload).
+3. The Lambda handler logs the error via `console.error` and adds the message ID to `batchItemFailures`.
+4. Lambda returns a successful invocation (`statusCode: 200`).
+5. SQS receives the batch failure report and returns the failed message to the queue.
+6. Because `maxReceiveCount=1`, the single failed receive attempt is already exhausted, so the message is immediately moved to the DLQ.
+
+**Signals:**
+- `AWS/Lambda Errors == 0` and `Throttles == 0` (handler returned successfully).
+- Lambda logs contain `ERROR` lines with specific exceptions or `console.error` output.
+- `REPORT` lines show `Duration` well below `Timeout`.
+- DLQ messages are single-record batch items, not full-batch failures.
+- `batchItemFailures` appears in the Lambda `END` log line or in CloudWatch.
+
+**Canonical example: `scheduled-batch-delivery` push notification TokenizationError**
+- `services/lambda/scheduled-batch-delivery/delivery.js` catches per-message exceptions and pushes `itemIdentifier` to `batchItemFailures`.
+- `lib/push_utils.js` / `packages/liquidjs/src/personalize/push.ts` render campaign/user-journey templates.
+- Malformed customer Liquid (e.g., `{{){{ entry_event["product_id"]`) throws `TokenizationError`.
+- Lambda logs ERROR but `AWS/Lambda Errors` stays 0.
+- Message immediately DLQs because `maxReceiveCount=1`.
+- **Scope attribution:** DLQ message body contains `project_id`, `campaign_id`, `platform`, `delivery_type`. Map via DynamoDB for final scope.
+
+**Fix target:**
+- Short-term: raise `maxReceiveCount` to 3–5 in SQS Terraform so transient per-message failures can retry.
+- Long-term: pre-validate campaign/user-journey Liquid templates before publish, or catch render failures earlier with a fallback (`common_message`) instead of `batchItemFailure`.
+
 ## Representative case: `kinesis-record-dispatcher-queue-dlq`
 
 - **Main queue:** `kinesis-record-dispatcher-queue`
@@ -101,9 +131,47 @@ If the main queue redrive policy has `maxReceiveCount=1`, every single receive-f
 - **Impact:** no sustained customer impact; messages were either processed from DLQ or expired; queue empty by investigation time.
 - **Long-term fix:** raise `maxReceiveCount` to 3–5 in Terraform.
 
+## DLQ message → Lambda log cross-reference technique
+
+When you need to prove a specific DLQ message was (or was not) actually processed by the consumer Lambda, use the message `md5OfBody` or a unique payload field to search Lambda logs.
+
+```bash
+# 1. Extract md5OfBody from the DLQ message
+aws sqs receive-message --queue-url <dlq-url> --max-number-of-messages 10 \
+  --visibility-timeout 300 --attribute-names All --region ap-northeast-2 \
+  --query 'Messages[].{md5:MD5OfBody,body:Body,recCount:Attributes.ApproximateReceiveCount}'
+
+# 2. Search the Lambda log group for that md5 or a unique phone/template/recipient field
+aws logs filter-log-events --region ap-northeast-2 \
+  --log-group-name /aws/lambda/<consumer-function> \
+  --start-time <alarm-window-start-ms> --end-time <alarm-window-end-ms> \
+  --filter-pattern '<unique-field-from-dlq>' \
+  --query 'events[*].{ts:timestamp,msg:message}'
+```
+
+**Interpretation:**
+- **Match found** → The message was received by Lambda and logged. Inspect the surrounding log context for ERROR, WARN, or timeout.
+- **Zero match** → The message was never logged by Lambda. Combined with `AWS/Lambda Errors=0` and `maxReceiveCount=1`, this is strong evidence for a **transient AWS service-level failure** (SQS poller → Lambda invoke failure, or Lambda internal `DeleteMessage` failure) rather than a code bug.
+
+**Pitfall — DLQ body may not be an SQS wrapper:** Some producer services (e.g., `scheduled-batch-kakao-alimtalk-delivery`) place a **direct JSON payload** into the main queue, not a Lambda-style `{"Records":[...]}` wrapper. The Lambda log will show the payload fields directly, not an SQS event envelope. Do not expect `messageId` or `eventSourceARN` fields in the DLQ body.
+
+**Pitfall — Lambda poller layer logs are invisible:** `filter-log-events` only sees what the function code logged. AWS Lambda's internal SQS poller (the layer that calls `ReceiveMessage`, invokes the function, and calls `DeleteMessage`) does not write to `/aws/lambda/<function>`. A zero-match does not prove the message never reached Lambda; it only proves the function code never processed it visibly.
+
+## Zero-log-match + healthy Lambda pattern
+
+When all of the following hold, classify the DLQ as **transient infrastructure failure**, not code regression:
+1. DLQ message exists with `ApproximateReceiveCount >= 1`.
+2. Lambda `AWS/Lambda` metrics: `Errors=0`, `Throttles=0`, `Duration` well below timeout.
+3. Lambda log search for the message content (MD5, recipientNo, template_code) returns **zero events**.
+4. Main queue `RedrivePolicy.maxReceiveCount` is **1**.
+5. No other ERROR or timeout logs appear in the consumer log group during the alarm window.
+
+**What this means:** The message was received at least once by SQS, but the Lambda function either was never invoked, or the invocation completed without logging and the subsequent `DeleteMessage` failed. Because `maxReceiveCount=1`, there was no retry. The root cause is structural (retry policy) and/or transient AWS internals, not application code.
+
 ## Pitfalls
 
 - Do not treat DLQ presence as proof of a Lambda bug. Always check Lambda `Errors` first.
 - Do not treat empty DLQ at investigation time as a false alarm. DLQ messages are often short-lived (auto-redrive, manual purge, or consumer retry after delay).
 - Do not search Lambda logs for project IDs when the queue is a shared pipeline.
 - Never omit the `maxReceiveCount` value from the final answer when it is 1; it is the dominant structural cause.
+- Do not claim certainty about "AWS transient network/SQS error" unless you can show the above zero-log-match + healthy-Lambda pattern. Without that pattern, the root cause is unverified.

@@ -61,6 +61,31 @@ Any ECS service whose log group contains mixed application logs + HTTP access lo
 
 **Remediation direction**: narrow the metric filter pattern so it does not match access logs, or move access logs to a separate log stream.
 
+## `abort_message` LiquidJS tag — rendered test-send abort (web-console)
+
+**Alarm**: `/aws/ecs/notifly-services-prod/web-console console error`  
+**Metric filter**: `%ERROR|Exception%`  
+**Trigger log**:
+```
+RenderError: message is aborted, line:9, col:3
+    at Tag.render (/app/services/server/web-console/.next/server/chunks/8693.js:1:9640)
+...
+From AbortError: message is aborted
+```
+
+**Mechanism**: When a console user previews or test-sends a push/in-app message whose Liquid template contains `{% abort_message() %}`, the web-console API (`POST /api/projects/{projectId}/test_send/push_notification` and siblings) intentionally throws an `AbortError`. The API route wraps the call in `try/catch` and returns HTTP 400 with `"Invalid request data"`, but the caught error is first emitted via `console.error`. The resulting stack trace contains both `RenderError` and `AbortError`, which matches the coarse `%ERROR|Exception%` metric filter even though no service fault occurred.
+
+**Triage**: When the current trigger context shows `RenderError: message is aborted` or `From AbortError: message is aborted`, verify:
+1. The surrounding log lines contain a `POST /api/projects/{pid}/test_send/push_notification` (or `email`, `kakao_alimtalk`, etc.) request with HTTP status 400.
+2. The `Referer` header shows a campaign-creation or campaign-clone screen (e.g. `/console/products/{productId}/campaign/create`).
+3. No other ERROR/Exception patterns appear in the same alarm window.
+
+If all three hold, this is a handled business rejection (user-initiated template abort during preview/test-send) and should be classified as `no_action`.
+
+**Scope extraction**: The `projectId` path parameter is visible on the `POST` access log line. Map it via DynamoDB `project` table. The `Referer` product slug can be mapped via the `product_id-project_id-index` GSI when needed.
+
+**Remediation direction**: The `catch` block in `services/server/web-console/src/pages/api/projects/[projectId]/test_send/push_notification.ts` (and sibling channel files) could log at `warn` level instead of `console.error` for `AbortError`, or the metric filter could exclude `RenderError.*message is aborted`.
+
 ## `FailedToUploadImageException` — Kakao image URL validation (web-console)
 
 **Alarm**: `/aws/ecs/notifly-services-prod/web-console console error`

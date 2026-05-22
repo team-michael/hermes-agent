@@ -53,6 +53,37 @@ for e in resp.get('events', []):
 "
 ```
 
+### cafe24-token-refresher: deleted/completed mall token refresh failure
+
+- Trigger string: `Failed to get fresh token <mall_id> invalid_client Uninstalled app. Please re-acquire admin consent.`
+- Log line: `ERROR	Failed to get fresh token drlabnosh invalid_client Uninstalled app. Please re-acquire admin consent.`
+- Data source: `cafe24_integration` DynamoDB table — scanned by `getCandidatesToRefreshAccessToken` without a `status` filter.
+- Root cause: `services/lambda/cafe24-token-refresher/lib/ddb.js` `getCandidatesToRefreshAccessToken` only filters on `token.expires_at <= now + 10min`. It does **not** check the `status` field. Malls with `status: deleted` or `status: completed` remain in the table and are repeatedly scanned for refresh. When the Cafe24 app is uninstalled, the OAuth refresh request returns `invalid_client`, which is logged at `ERROR` level in `lib/cafe24.js` or its caller.
+- Impact: Lambda continues after logging the ERROR; 56 of 57 candidates in the observed run succeeded. The invocation completes normally with `Errors=0`.
+- Scope: extract `project_id` from the candidate object in the log (e.g. `c91f318c73235d7c8e72266f2cf28452` / `doctor-labnosh`) and map via DynamoDB `project`. When `project_id` is not present, use the `mall_id` to look up the `cafe24_integration` item.
+- Classification: `no_action` for isolated occurrences because the Lambda completes normally and the mall is no longer active. If the same deleted mall fires repeatedly over days, classify as `needs_fix` because the noise is structural.
+- Immediate fix: Delete the `mall_id` row from the `cafe24_integration` DynamoDB table. This is safe when the project is `deleted` or `completed` and the app is uninstalled.
+- Structural fix: Add a `FilterExpression` on `status` in `getCandidatesToRefreshAccessToken` so that only `token_issued` (or equivalent active status) records are candidates. For example: add `AND (#st = :active)` with `ExpressionAttributeNames {'#st': 'status'}` and `ExpressionAttributeValues {':active': 'token_issued'}`.
+- Frequency observed: 30d 1 / 7d 1 / 1d 1 / 10m 1 — single occurrence in current window, but will recur every time the expired token is re-scanned.
+- Bounded log check (when helper returns empty `current_trigger_contexts`):
+```bash
+python3 -c "
+import boto3, datetime
+session = boto3.Session(region_name='ap-northeast-2')
+logs = session.client('logs')
+start = int(datetime.datetime(2026, 5, 21, 2, 0, tzinfo=datetime.timezone.utc).timestamp() * 1000)
+end   = int(datetime.datetime(2026, 5, 21, 2, 20, tzinfo=datetime.timezone.utc).timestamp() * 1000)
+resp = logs.filter_log_events(
+    logGroupName='/aws/lambda/cafe24-token-refresher',
+    startTime=start, endTime=end,
+    filterPattern='ERROR',
+    limit=10
+)
+for e in resp.get('events', []):
+    print(e['message'].strip()[:300])
+"
+```
+
 ### Other patterns (see dedicated references)
 
 - `message-event-consumer`: `delivery_policy_inspection_failed__global_frequency_limit` — handled frequency-limit rejection. See `references/message-event-consumer-delivery-policy-error.md`.
