@@ -698,4 +698,26 @@ Evidence:
 
 Classification: `no_action` — query completed, batch publishing finished normally, no ECS failure or DLQ signal. The five munice Pattern A occurrences on 2026-05-21 are within the 1–7/day baseline.
 
+## 2026-05-22 session — `segment-publisher slow eic query` ALARM (Pattern B, stepup), 20:54 KST
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`
+Transition: `OK -> ALARM` at 2026-05-22 11:54:08 UTC (KST 20:54)
+Datapoint: `Sum=1.0` at 2026-05-22 11:53:00 UTC (metric period 60s)
+Companion alarm: `segment-publisher long running alam` (`Custom/segment-publisher` / `SegmentPublisher.ExecutionTimeOverThreshold`, period 300) in ALARM with datapoint 1.0 at 2026-05-22 11:49:00 UTC.
+
+Evidence:
+- **Fargate log stream expiration before investigation**: The segment-publisher Fargate task that processed the 11:53 datapoint had already stopped by investigation time (~11:54 UTC). `describe_log_streams` showed the most recent stream (`83ad8133441643a7ba2371beef4c3b59`) ended at 11:54:26 UTC and contained only a 93-second sub-batch for project `e7239ea653e251ed8b0ae4aff9d9d859` (campaign `fUxoSN`), not the trigger. Streams before that ended at 11:49:27 UTC. There was a **~4-minute gap** (11:49–11:53) with no active streams in the log group, yet the metric filter demonstrably breached at 11:53.
+- Logs Insights (`filter @message like /took too long/`, 11:00–12:00 UTC) scanned 879 records and matched 0 within ~300 seconds of the breach, confirming CloudWatch Logs ingestion lag even for the exact metric-filter pattern.
+- Manual stream-first tail checks on all streams with `lastEventTimestamp >= 11:00 UTC` found zero `Processing took longer than expected` or `EventCounterCteManager.extract...took too long` matches in any stream ending between 11:00–11:55 UTC.
+- The companion alarm `segment-publisher long running alam` was in ALARM with a datapoint at 11:49:00 UTC (period 300), evaluated at 11:54:05 UTC. Its metric filter (`Processing took longer than expected`) is the exact Pattern B signature. This is strong evidence that the `ConsoleErrors` `slow eic query` alarm caught the same benign log line.
+- Daily recurrence: 30d=9, 7d=9, 1d=5, 10m=1. Continues the known baseline of 1–7/day.
+- Zero ERROR logs visible in any stream in the 11:00–12:00 UTC window.
+
+**Companion-alarm shortcut rule**: When the `slow eic query` helper returns empty `current_trigger_contexts`, manual Logs Insights/`filter_log_events` also returns zero, AND the `segment-publisher long running alam` is in ALARM with a datapoint overlapping the same time window, treat this as **Pattern B** without requiring the exact trigger log line. The `Custom/segment-publisher` alarm has a purpose-built metric filter for `Processing took longer than expected`; its ALARM state is definitive evidence that the `ConsoleErrors` alarm is catching the same benign log line.
+
+Scope: user journey UL1T00 (`[만보기] 매일 적립 리마인드`), project unknown for this window (동일 ID가 stepup·proudp 등 다수 프로젝트에서 관찰됨; 현재 윈도우에 명시적 `project_id` 없음).
+
+Classification: `no_action` — `ConsoleErrors` metric-filter 노이즈, companion `long running alam`이 동일 신호를 이미 커버함.
+
 For deeper project segment extraction, EIC Large Scale conversion workflows, and user-journey session analysis, see `notifly-segment-publisher-alarm-analysis`.
+

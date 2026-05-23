@@ -69,9 +69,11 @@ This reference describes how to distinguish bottleneck from bug and where to fix
 - Producer: `event-proxy` ECS service writes to Kinesis (`notifly-event-stream`), then records are enqueued to SQS.
 - Consumer: `kinesis-record-dispatcher` Lambda (node22.x, 1024 MB, 300 s timeout).
 - EventSourceMapping: `BatchSize=50`, `MaximumConcurrency=2`.
-- Symptoms: `ApproximateAgeOfOldestMessage` 22–55 s, `Errors=0`, `Throttles=0`, `Duration=60–80 ms`.
-- Root cause: peak event volume temporarily exceeds `2 × 50 / 0.07 ≈ 1,400` msg/s capacity.
-- Impact: all Notifly projects using the shared event stream experience delivery delay (no data loss, DLQ=0).
+- Timing pattern: scheduled batch campaigns send simultaneously at ~01:00 UTC (10:00 KST), creating a recurrent traffic spike.
+- Symptoms: `ApproximateAgeOfOldestMessage` peaks at 78–98 s, `Errors=0`, `Throttles=0`, `Duration=100–570 ms` during the spike window.
+- Spike magnitude observed: `NumberOfMessagesSent` ~38,900 in one minute; `NumberOfMessagesDeleted` tracks closely, confirming healthy consumption at average speed.
+- Root cause: peak event volume temporarily exceeds `2 × 50 / 0.5 ≈ 200` msg/s short-term capacity.
+- Impact: all Notifly projects using the shared event stream experience brief delivery delay. No data loss (DLQ stays at 0 throughout the spike).
 
 ## Fix targets
 
@@ -85,6 +87,7 @@ Code:
 
 ## Pitfalls
 
+- The `check` helper may not auto-detect the Lambda consumer for some SQS queues (`lambda_names: []`). If the queue is known but no Lambda appears, search `infra/terraform/prod/ap-northeast-2/lambda/functions.tf` for `event_source_arn` matches, or run `aws lambda list-event-source-mappings --query 'EventSourceMappings[?contains(EventSourceArn, `queue-name`)]'` directly.
 - Do not assume `ApproximateAgeOfOldestMessage` = Lambda failure. Zero errors + short duration = bottleneck.
 - Do not recommend code changes when the fix is simply raising `MaximumConcurrency`.
 - Do not search project IDs in Lambda logs for shared-pipeline queues; the messages are intentionally aggregate.

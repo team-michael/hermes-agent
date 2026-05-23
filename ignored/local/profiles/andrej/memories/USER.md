@@ -2,7 +2,7 @@ Notifly GitHub: share findings before PR unless direct push; Conventional Commit
 §
 Remote/container tasks: never assume local Hermes is target; verify intended system first, and never destructively mutate home dirs like /ubuntu/home, /home/ubuntu, or $HOME.
 §
-User studies Notifly infra; prefers senior mentor explanations with concrete flows/failures/verification and brief AWS terms. Avoid repetitive Notifly notes; rotate topics and bring a new mechanism/file/ops angle.
+User studies Notifly infra; wants mentor-style explanations with concrete flows/failures/verification, brief AWS terms, and clear “improved vs still to fix vs actually fixed?” splits. Avoid repetitive Notifly notes.
 §
 In DMs, user wants infra explanations tailored to their Mobile/iOS + SDK Eng background: use iOS/SDK analogies only when mechanisms truly match, and flag SDK-side implications for contracts, retries, offline behavior, telemetry, or DX.
 §
