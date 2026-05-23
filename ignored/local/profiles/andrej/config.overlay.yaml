@@ -23,6 +23,7 @@ auxiliary:
     api_key: ""
     timeout: 240
     extra_body:
+      service_tier: priority
       reasoning:
         effort: low
 agent:

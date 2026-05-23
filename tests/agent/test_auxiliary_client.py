@@ -2101,6 +2101,65 @@ class TestStaleBaseUrlWarning:
 
 
 class TestAuxiliaryTaskExtraBody:
+    def test_codex_auxiliary_promotes_service_tier_from_extra_body(self):
+        class FakeStream:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def __iter__(self):
+                return iter([])
+
+            def get_final_response(self):
+                return SimpleNamespace(
+                    output=[
+                        SimpleNamespace(
+                            type="message",
+                            content=[
+                                SimpleNamespace(type="output_text", text="ok"),
+                            ],
+                        ),
+                    ],
+                    usage=None,
+                )
+
+        class FakeResponses:
+            def __init__(self):
+                self.kwargs = None
+
+            def stream(self, **kwargs):
+                self.kwargs = kwargs
+                return FakeStream()
+
+        class FakeClient:
+            def __init__(self):
+                self.responses = FakeResponses()
+                self.api_key = "test-key"
+                self.base_url = "https://chatgpt.com/backend-api/codex"
+
+            def close(self):
+                pass
+
+        client = FakeClient()
+        adapter = _CodexCompletionsAdapter(client, "gpt-5.4-mini")
+
+        response = adapter.create(
+            messages=[{"role": "user", "content": "hello"}],
+            extra_body={
+                "service_tier": "priority",
+                "reasoning": {"effort": "low"},
+            },
+        )
+
+        assert response.choices[0].message.content == "ok"
+        assert client.responses.kwargs["service_tier"] == "priority"
+        assert client.responses.kwargs["reasoning"] == {
+            "effort": "low",
+            "summary": "auto",
+        }
+
     def test_sync_call_merges_task_extra_body_from_config(self):
         client = MagicMock()
         client.base_url = "https://api.example.com/v1"

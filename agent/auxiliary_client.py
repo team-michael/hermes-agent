@@ -691,6 +691,13 @@ class _CodexCompletionsAdapter:
         if timeout is not None:
             resp_kwargs["timeout"] = timeout
 
+        extra_body = kwargs.get("extra_body") or {}
+        service_tier = kwargs.get("service_tier")
+        if not service_tier and isinstance(extra_body, dict):
+            service_tier = extra_body.get("service_tier")
+        if isinstance(service_tier, str) and service_tier.strip():
+            resp_kwargs["service_tier"] = service_tier.strip()
+
         # Note: the Codex endpoint (chatgpt.com/backend-api/codex) does NOT
         # support max_output_tokens or temperature — omit to avoid 400 errors.
 
@@ -699,7 +706,6 @@ class _CodexCompletionsAdapter:
         # agent/transports/codex.py::build_kwargs() so auxiliary callers
         # that configure reasoning via auxiliary.<task>.extra_body get the
         # same behavior as the main agent's Codex transport.
-        extra_body = kwargs.get("extra_body") or {}
         if isinstance(extra_body, dict):
             reasoning_cfg = extra_body.get("reasoning")
             if isinstance(reasoning_cfg, dict):
