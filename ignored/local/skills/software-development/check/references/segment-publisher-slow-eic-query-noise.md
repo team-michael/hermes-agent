@@ -719,5 +719,51 @@ Scope: user journey UL1T00 (`[만보기] 매일 적립 리마인드`), project u
 
 Classification: `no_action` — `ConsoleErrors` metric-filter 노이즈, companion `long running alam`이 동일 신호를 이미 커버함.
 
+## 2026-05-23 session — `segment-publisher slow eic query` ALARM (Pattern B, class101)
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`
+Transition: `OK -> ALARM` at 2026-05-23 06:30:08 UTC (KST 15:30)
+Datapoint: `Sum=1.0` at 2026-05-23 06:23:00 UTC and `Sum=1.0` at 06:29:00 UTC (metric period 60s)
+Companion alarm: `segment-publisher long running alam` (`Custom/segment-publisher` / `SegmentPublisher.ExecutionTimeOverThreshold`) in `ALARM` with datapoint 1.0 at 2026-05-23 06:25:00 UTC.
+
+Evidence:
+- Trigger log (2026-05-23 06:29:53 UTC, stream `prod/segment-publisher/b03528907e934cd78d15e305ea0d9b2d`): `[WARN] Processing took longer than expected: 1825911.85 ms`
+- Same-stream context: 49 batches across 10 concurrent campaigns (CNGJjd, 3KWfBG, HxbGSr, WPE9J6, VMyJo5, IdxUZt, a84kiE, FQgbL9, sOk5Yk, C5Zpf0).
+- `Received event` payload (stream head, 05:59:27 UTC) shows `project_id: b2b4a8f879a75673b755bff42fc1deb6` → DynamoDB `project` → product `class101`.
+- Helper reproduced the `filter_terms` false-negative: `logs.skipped` with no stable filter terms inferred for `took too long`; `count_7d=0` and `count_30d=0`. Manual `filter-log-events` with `"took" "too" "long"` recovered the trigger.
+- `get_log_events` on the trigger stream found the `Received event` payload carrying the full 10-campaign class101 segment configuration, confirming scope.
+- Zero ERROR logs in the alarm window (06:10–06:45 UTC); only the single WARN line.
+- The `ConsoleErrors` `slow eic query` alarm datapoint (06:29:00 UTC) lagged the companion `long running alam` datapoint (06:25:00 UTC) by 4 minutes because the metric filter `took too long` matched the same Pattern B WARN line with a different metric period (60s vs 300s).
+
+Classification: `no_action` — publish completed, no DLQ/ECS failure, companion `long running alam` already covers same signal. This is a recurrence of the class101 multi-campaign batch at ~06:30 UTC first observed on 2026-05-14.
+
+**Updated daily counts** (2026-05-23 added):
+
+```
+2026-04-13=7, 04-14=3, 04-15=2, 04-16=0, 04-17=4, 04-18=1,
+04-19=1, 04-20=5, 04-21=3, 04-22=2, 04-23=3, 04-24=6, 04-25=2, 04-26=2,
+04-27=4, 04-28=3, 04-29=5, 04-30=2, 05-01=1, 05-02=3, 05-03=1, 05-04=2,
+05-05=1, 05-06=1, 05-07=3, 05-08=1, 05-09=1, 05-10=1, 05-11=5, 05-12=3,
+05-13=1, 05-14=5, 05-15=1, 05-16=1, 05-17=1, 05-18=2, 05-19=1, 05-20=1,
+05-21=6, 05-22=1, 05-23=2
+```
+
+## 2026-05-23 session — `segment-publisher slow eic query` ALARM (Pattern B, stepup)
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`
+Transition: `OK -> ALARM` at 2026-05-23 11:54:08 UTC (KST 20:54)
+Datapoint: `Sum=1.0` at 2026-05-23 11:53:00 UTC (metric period 60s)
+Companion alarm: `segment-publisher long running alam` in `ALARM` with datapoint 1.0 at 2026-05-23 11:49:00 UTC.
+
+Evidence:
+- The trigger log line was not recovered in this session because the segment-publisher Fargate task had already stopped by investigation time, and `filter-log_events` returned zero matches (`describe_log_streams` showed the most recent stream ending at 11:54:26 UTC for a different project/campaign, not the trigger).
+- The companion alarm `segment-publisher long running alam` was definitively in `ALARM` with a datapoint at 11:49:00 UTC, overlapping the `slow eic query` alarm window. Per the companion-alarm shortcut rule documented on 2026-05-22, this is sufficient evidence to classify as **Pattern B** without the exact trigger log line.
+- Daily recurrence: stepup UL1T00 continues at ~11:47–11:54 UTC every day. 30d=9, 7d=9, 1d=2, 10m=1. Baseline remains 1–7/day.
+- Zero ERROR logs visible in any stream ending between 11:00–11:55 UTC.
+
+Scope: user journey UL1T00 (`[만보기] 매일 적립 리마인드`), project unknown for this window (prior-day evidence: stepup on 2026-05-17/20/21, proudp on 2026-05-13; no explicit `project_id` in current alarm window).
+
+Classification: `no_action` — `ConsoleErrors` metric-filter 노이즈, companion `long running alam`이 동일 신호를 이미 커버함.
+
 For deeper project segment extraction, EIC Large Scale conversion workflows, and user-journey session analysis, see `notifly-segment-publisher-alarm-analysis`.
 
