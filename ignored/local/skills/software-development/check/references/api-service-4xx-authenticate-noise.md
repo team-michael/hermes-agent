@@ -12,7 +12,7 @@ Recurring false-positive pattern for the `[api-service] 4xx error response is gr
 - **Threshold**: 100
 - **EvaluationPeriods**: 4 (DatapointsToAlarm: 3)
 - **Note on name drift**: The alarm name says "greater than 300" but the actual CloudWatch threshold is **100**. Do not rely on the numeric value embedded in the alarm name when estimating severity margin.
-- **State transition history**: ~25 OK→ALARM transitions in 30 days (latest live count), typically resolving within 3–5 minutes.
+- **State transition history**: ~43 OK→ALARM transitions in 30 days (2026-04-28 through 2026-05-23), typically 2 transitions per day resolving within 3–5 minutes. The latest live data shows the count was understated in earlier estimates; always derive from actual `describe-alarm-history` output using `HistoryData | fromjson | .oldState.stateValue` / `.newState.stateValue` rather than the `StateValue` field, which can be `null` for older entries.
 
 ## Metric filter
 
@@ -263,7 +263,19 @@ Result: consistent with the known daily **~02:11 KST** `/authenticate` authentic
 - `projectId`: **explicitly `"unknown"`** on all `/authenticate` lines
 - Secondary signatures (sparse): `POST /campaign/300ef7dd1ea459a2bb0dbafd2aabc0c7/j4k6UJ/send` 400 (`warn`, `python-requests/2.32.5`), `POST /user-state/2b9f5a6685ba5b839803f1338a539724/...` 400 (Dalvik/Android), `POST /track-event` 401 (`python-requests/2.33.1`), `POST /set-user-properties` 401 (`node-fetch`)
 
-Result: identical to the prior-day baseline. The dominant `/authenticate` 400 burst volume is **~1,620** in the 15-minute alarm window. This confirms the pattern is stable, not worsening.
+Result: identical to the prior-day baseline (2026-05-16–2026-05-21). The dominant `/authenticate` 400 burst volume is **~1,620** in the 15-minute alarm window. This confirms the pattern is stable, not worsening.
+
+2026-05-23 alarm window (16:56–17:06 UTC / 2026-05-24 01:56–02:06 KST):
+- **Alarm transition**: OK→ALARM at 17:11 UTC, ALARM→OK at 17:12 UTC (1-minute duration)
+- Total `error-response` with status ≥ 400: **~1,337**
+- `/authenticate` 400: **1,314** (98.3%)
+- User-Agent dominant: `Apache-HttpClient/5.3.1 (Java/17.0.19)`; single UA, no mix
+- Levels: **100% `warn`**; `error` level count: **0**
+- `projectId`: **explicitly `"unknown"`** on all `/authenticate` lines
+- Secondary signatures: `POST /projects/0c61d690f3425c13875c2c4902616b40/campaigns/CJDzWt/send` 400 (`warn`, `sconn`), `POST /campaign/300ef7dd1ea459a2bb0dbafd2aabc0c7/j4k6UJ/send` 400 (`warn`, `museclinic`), `POST /track-event` 401 (`warn`, `playio`), `GET /user-state` 400 (`warn`, `2b9f5a6685ba5b839803f1338a539724`), `POST /set-user-properties` 401 (`warn`, `arooo`)
+- 30d OK→ALARM count: **43** (2 per day baseline)
+
+Result: consistent with the known daily **~02:11 KST** `/authenticate` authentication rejection burst. All signals are handled `warn` validation rejections; no customer impact.
 
 **7-day daily `/authenticate` 400 baseline** (2026-05-14 to 2026-05-21, full 24h counts):
 
@@ -280,7 +292,7 @@ Result: identical to the prior-day baseline. The dominant `/authenticate` 400 bu
 
 Average: ~2,239/day. Range: 1,986–2,431. This narrow band (~±10%) is the expected baseline. Spikes outside this band or a sudden shift in dominant User-Agent warrant deeper investigation.
 
-When writing manual aggregate queries for `api-service` `error-response` logs, prefer auto-extracted JSON fields (`status`, `message`) directly. Do not add `parse @message '\"status\":*' as status` because `status` is already a top-level JSON field; this raises `MalformedQueryException: Ephemeral field is already defined: status`. Use the auto-extracted field directly, or rename the parsed alias (e.g., `as parsed_status`) when extraction is required.
+When writing manual aggregate queries for `api-service` `error-response` logs, prefer auto-extracted JSON fields (`status`, `message`, `path`, `method`, `level`, `projectId`, `campaignId`) directly. Do not add `parse @message '"status":"*"' as status` because `status` is already a top-level JSON field; this either raises `MalformedQueryException: Ephemeral field is already defined: status` or silently shifts parsed values into the wrong columns when `filter` runs before `parse`. Use the auto-extracted field directly in `stats` and `filter` clauses.
 
 ## Pitfall — log ingestion lag hides current trigger
 
