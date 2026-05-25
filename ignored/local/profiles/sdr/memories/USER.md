@@ -5,3 +5,5 @@ User prefers future Google Drive deliverables for Notifly competitor/consulting 
 User prefers Slack-facing Notifly SDR/account research outputs not use Markdown tables because Slack does not support them well; use bullets or numbered lists instead.
 §
 User prefers Slack-facing answers to be more concise and focused only on the asked question; avoid comprehensive overviews unless requested, and leave room for follow-up questions.
+§
+User wants future AI-assisted research to follow GeekNews/Maily reliability guardrails: avoid invented numbers, hypothesis-confirming data, outdated facts presented as current, and fake/mismatched URLs; mark unknowns/estimates, include counter-evidence, source/time scope, confidence labels, and spot-check the decision-critical claims.

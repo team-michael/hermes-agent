@@ -765,5 +765,33 @@ Scope: user journey UL1T00 (`[만보기] 매일 적립 리마인드`), project u
 
 Classification: `no_action` — `ConsoleErrors` metric-filter 노이즈, companion `long running alam`이 동일 신호를 이미 커버함.
 
+## 2026-05-24 session — `segment-publisher slow eic query` ALARM (Pattern B, melting)
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`
+Transition: `OK -> ALARM` at 2026-05-24 06:30:08 UTC (KST 15:30)
+Datapoint: `Sum=1.0` at 2026-05-24 06:29:00 UTC (metric period 60s)
+Companion alarm: `segment-publisher long running alam` in `ALARM` with datapoint 1.0 at 2026-05-24 06:25:00 UTC.
+
+Evidence:
+- Trigger log (2026-05-24 06:29:47 UTC, stream `prod/segment-publisher/280ff091-7ae7-4723-b5b2-bc8a6bf1afad`): `[WARN] Processing took longer than expected: 1823359.26 ms`
+- `Received event` payload (stream head, 06:29:25 UTC) shows `project_id: 8d20a65c1e445fc8a6ae485573fc93ca`, `campaign_id: k6bkO6`, `schedule_type: "campaign"`, name `DLY_전체유저(퀴즈)_250807`.
+- Project mapping: `8d20a65c1e445fc8a6ae485573fc93ca` → DynamoDB `project` → product `melting`.
+- **Memory pressure — new all-time high**: `[MEMORY USAGE REPORT] rss` peaked at **4655.77 MB** at 06:29:47 UTC, exceeding the ECS task memory limit of 3072 MB by ~51%. The container did not OOM-kill, indicating heavy swap usage that likely contributed to the total batch latency. This surpasses the prior highs of 3965 MB (2026-05-18 class101) and 3616 MB (2026-05-14 class101).
+- Zero ERROR logs in the alarm window (06:20–06:35 UTC); only the single WARN line.
+- The companion `segment-publisher long running alam` datapoint at 06:25:00 UTC (period 300) confirms this is Pattern B; the `ConsoleErrors` `slow eic query` datapoint at 06:29:00 UTC (period 60) is the same log line caught by the broader metric filter.
+
+Classification: `no_action` — publish completed (batch index 1 reached), no DLQ/ECS failure, companion `long running alam` already covers same signal.
+
+**Updated daily counts** (2026-05-24 added):
+
+```
+2026-04-13=7, 04-14=3, 04-15=2, 04-16=0, 04-17=4, 04-18=1,
+04-19=1, 04-20=5, 04-21=3, 04-22=2, 04-23=3, 04-24=6, 04-25=2, 04-26=2,
+04-27=4, 04-28=3, 04-29=5, 04-30=2, 05-01=1, 05-02=3, 05-03=1, 05-04=2,
+05-05=1, 05-06=1, 05-07=3, 05-08=1, 05-09=1, 05-10=1, 05-11=5, 05-12=3,
+05-13=1, 05-14=5, 05-15=1, 05-16=1, 05-17=1, 05-18=2, 05-19=1, 05-20=1,
+05-21=6, 05-22=1, 05-23=2, 05-24=1
+```
+
 For deeper project segment extraction, EIC Large Scale conversion workflows, and user-journey session analysis, see `notifly-segment-publisher-alarm-analysis`.
 

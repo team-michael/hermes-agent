@@ -36,7 +36,7 @@ Total processing time: <duration_ms> ms
 ```
 
 - No ERROR logs co-occur.
-- Memory (`[MEMORY USAGE REPORT] rss`) is typically well under the ECS task limit (3072 MB), though the report may not appear in every stream.
+- Memory (`[MEMORY USAGE REPORT] rss`) is frequently below the ECS task limit (3072 MB), but large multi-campaign batches can push it well above the limit (observed **4655 MB** on 2026-05-24 for melting `k6bkO6`). The container does not necessarily OOM-kill; swap-driven latency may contribute to the total batch time.
 - The task continues publishing recipients normally; batch index increments.
 
 ## Scope extraction
@@ -54,6 +54,7 @@ The triggering stream varies per invocation (different ECS tasks handle differen
 When the `Received event` payload contains `"schedule_type": "user_journey"` and a `user_journeys` array, report the scope as **user journey** (mutually exclusive with campaign), using the ID from the array.
 
 Observed projects/campaigns in recent triggers (scope varies by day because `UL1T00` is not globally unique):
+- **`melting`** / `k6bkO6` (2026-05-24 06:29 UTC, ~30.4 min, multi-campaign batch, rss peaked at **4655 MB**)
 - `melting` / `k6bkO6` (2026-05-15 06:30 UTC, ~31.4 min)
 - `proudp` / `UL1T00` (2026-05-14 11:52 UTC, ~53.6 min, 884k recipients)
 - `stepup` / `UL1T00` (2026-05-16 11:47 UTC, ~52.3 min, 885k recipients, **user journey** `[만보기] 매일 적립 리마인드`)

@@ -277,6 +277,23 @@ Result: identical to the prior-day baseline (2026-05-16–2026-05-21). The domin
 
 Result: consistent with the known daily **~02:11 KST** `/authenticate` authentication rejection burst. All signals are handled `warn` validation rejections; no customer impact.
 
+2026-05-24 alarm window (16:56–17:06 UTC / 2026-05-25 01:56–02:06 KST):
+- **Alarm transitions**: OK→ALARM at 17:11 UTC, OK→ALARM at 17:16 UTC (2 transitions, back-to-back 5-min periods)
+- Metric datapoints confirming breach: 169.0 (16:56), 895.0 (17:01), 205.0 (17:06); threshold 100 with 3 of 4 datapoints required
+- Total `error-response` with status ≥ 400: **~1,281**
+- `/authenticate` 400: **1,262** (98.5%)
+- User-Agent dominant: `Apache-HttpClient/5.3.1 (Java/17.0.19)`; single appearance of `node`
+- Levels: **100% `warn`**; `error` level count: **0**
+- `projectId`: **explicitly `"unknown"`** on all `/authenticate` lines (validation occurs before project resolution)
+- Secondary signatures:
+  - `POST /projects/b2b4a8f879a75673b755bff42fc1deb6/campaigns/2D1ujT/send` 400: **3** (`warn`, `class101`, body: `"Bad request: invalid recipients"` with `INVALID_RECIPIENTS` / `MISSING_PHONE_NUMBER` for userId `naver66415321`, channel `kakao-friendtalk`)
+  - `POST /projects/0c61d690f3425c13875c2c4902616b40/campaigns/CJDzWt/send` 400: **1** (`warn`, `sconn`)
+  - `POST /campaign/300ef7dd1ea459a2bb0dbafd2aabc0c7/j4k6UJ/send` 400: **1** (`warn`, `museclinic`)
+  - `POST /track-event` 401: **3** (`warn`), `GET /user-state` 400: **3** (`warn`), others sparse
+- 30d OK→ALARM count: **45** (5/19 had 3 transitions; all other days had exactly 2)
+
+Result: consistent with the known daily **~02:11 KST** `/authenticate` authentication rejection burst. All signals are handled `warn` validation rejections; no customer impact. Campaign send rejections are normal business validation (missing phone number for Kakao Friendtalk) and remain well within daily baseline.
+
 **7-day daily `/authenticate` 400 baseline** (2026-05-14 to 2026-05-21, full 24h counts):
 
 | Date | `/authenticate` 400 count | Day |

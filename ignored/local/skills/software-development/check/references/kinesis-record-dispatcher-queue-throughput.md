@@ -32,6 +32,8 @@ These are stable daily/weekly scheduled batch windows that correlate with queue-
 
 Campaigns rotate daily; use the segment-publisher ECS log stream around the alarm window to identify the current day's campaign IDs.
 
+> **Note:** Bursts are not limited to these morning slots. Segment-publisher scheduled campaigns (including those with `0 recipients published`) can trigger queue-age spikes at any time of day. Always check ECS `segment-publisher` logs for `recipients published` around the alarm window rather than relying solely on the table above.
+
 ## Bounded trace commands
 
 ### 1. Queue + consumer baseline

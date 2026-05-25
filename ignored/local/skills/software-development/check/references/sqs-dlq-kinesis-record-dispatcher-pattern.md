@@ -65,11 +65,34 @@ Always `no_action` unless:
 ## DLQ message inspection (read-only)
 
 ```bash
-aws sqs get-queue-url --region ap-northeast-2 \
-  --queue-name kinesis-record-dispatcher-queue-dlq \
-  --query 'QueueUrl' --output text | xargs -I{} \
-  aws sqs receive-message --region ap-northeast-2 --queue-url {} \
-  --max-number-of-messages 10 --attribute-names All --output json
+aws sqs receive-message --region ap-northeast-2 \
+  --queue-url https://sqs.ap-northeast-2.amazonaws.com/702197142747/kinesis-record-dispatcher-queue-dlq \
+  --max-number-of-messages 10 --visibility-timeout 10 \
+  --attribute-names All --message-attribute-names All \
+  --output json | jq -r '.Messages[] | (.Body | fromjson | {records_length: (.records | length), first_record: (.records[0] | {project_id:.data.project_id,campaign_id:.data.campaign_id})})'
 ```
 
-Note: `receive-message` changes message visibility. Run only when explicitly asked.
+The payload shape is:
+
+```json
+{
+  "streamName": "notifly-triggering-events-stream",
+  "records": [
+    {
+      "data": {
+        "triggering_event_id": "<uuid>",
+        "project_id": "<project_id>",
+        "campaign_id": "<campaign_id>",
+        "experiment_id": "<experiment_id>",
+        "variant_id": "<variant_id>",
+        ...
+      },
+      "partitionKey": "<triggering_event_id>"
+    }
+  ]
+}
+```
+
+Map `project_id` via DynamoDB `project` and report `project_id/name/product_id` + `campaign_id`.
+
+Note: `receive-message` changes message visibility. Use a short `--visibility-timeout` (e.g. 10s). Run only when scope is a mandatory field and the helper reports unknown.
