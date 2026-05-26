@@ -1,0 +1,1 @@
+User prefers directly authored Hermes skills or skill support packages/scripts to use Node.js-based TypeScript instead of Python, in a package form runnable directly by node without a separate tsc transpile/build step.
