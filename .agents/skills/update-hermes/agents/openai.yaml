@@ -1,4 +1,0 @@
-interface:
-  display_name: "Update Hermes"
-  short_description: "Update Hermes with local patches"
-  default_prompt: "Use $update-hermes to update Hermes, rebase local main patches, synchronize profiles, and push team-michael/main."

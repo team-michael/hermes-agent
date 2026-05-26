@@ -1,4 +1,4 @@
-Notifly andrej `.env` path `/home/ubuntu/.hermes/profiles/andrej/.env` (`$HOME` may be tflint-home); Google Workspace uses `google-workspace` + `gws` config from profile env.
+Andrej GWS: source `/home/ubuntu/.hermes/profiles/andrej/.env`; if `gws` missing use `/home/ubuntu/.nvm/versions/node/v24.15.0/bin/gws`.
 §
 Notifly project lookup: project_id→DynamoDB project product_id/name; per-project PG tables `table_${project_id}`; AI Agent auth allows Cognito service_role=admin fallback after project resolves, otherwise users_products.
 §

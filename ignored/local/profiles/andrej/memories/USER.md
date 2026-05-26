@@ -6,7 +6,7 @@ User studies Notifly infra; wants mentor-style explanations with concrete flows/
 §
 In DMs, user wants infra explanations tailored to Mobile/iOS+SDK Eng background: use analogies only when mechanisms match; flag SDK implications for contracts/retries/offline/telemetry/DX.
 §
-Slack product/sales: exact concise. Notion/org reports: hypothesis, neutral tables/bullets, Korean metric units, minimal color, source caveats.
+Slack/product/sales/planning: concise/high-signal, formal Korean tables for milestones; avoid verbose or overly colloquial phrasing.
 §
 MSP/Zendesk: show draft; no internal Slack refs.
 §

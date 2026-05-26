@@ -191,12 +191,41 @@ aws dynamodb query \
 - `TypeError` (`Cannot read properties of undefined (reading 'h')`) — React/Next.js hydration error, usually on test/staging projects (`michael`).
 - `TypeError` (`Failed to fetch (api-sr.amplitude.com)`) — Amplitude analytics API network error (break).
 - `Error` (`Failed to parse stream string. No separator found.`) — Usually from `campaign/list`, occurs on localhost or stage (`michael`).
-- `ReferenceError` (`$ is not defined`) — `/auth/login` or `/auth/signout` page script error.
+- `Error` (`AI agent stream client response closed before completion`) — Web-console AI Agent proxy/stream disconnect. Tag `handled: yes` indicates it is a caught Sentry event, not an unhandled crash. Tag `feature: ai-agent`. Customer impact depends on whether the disconnect is transient (single user session) or recurring across many sessions. Daily volume is typically low (0–3).
 
 ## When to escalate vs stay as `no_action`
 
 - Default status for this alarm family is `no_action` because the pipeline itself is healthy and individual Sentry issues are tracked in the Sentry (`greybox`) organization.
+- Check the `handled` tag in the Sentry payload (`"handled":"yes"` vs `"handled":"no"`). `handled: yes` means the error was caught and reported intentionally (e.g., an expected AI agent disconnect); `handled: no` or absent means an unhandled crash and should be reviewed more carefully.
 - Escalate to `needs_fix` only when:
   - A specific error title/transaction pair is **sharply increasing** across multiple production projects (not just test projects).
   - The Sentry issue volume itself indicates a real customer-facing regression (e.g., `SyntaxError` on stats page hitting many projects repeatedly).
 - Never use `urgent` solely because this metric-filter alarm fired; the alarm fires on every Sentry alert arrival.
+
+## Pitfalls learned from live sessions
+
+### `filter-log-events --filter-pattern 'ERROR'` can return 0 while the metric filter still matched
+
+CloudWatch Logs `filter-log-events` uses **term matching** for bare keywords like `ERROR`. The metric filter `%[Ee][Rr][Rr][Oo][Rr]%` uses substring (case-insensitive) matching. JSON payload strings such as `"title":"Error"` may tokenize in ways that prevent a standalone `ERROR` term match, so `filterPattern='ERROR'` produces zero results even though the metric filter counted the line.  
+**Remediation**: when the alarm `StateReasonData` confirms a datapoint but `filter-log-events --filter-pattern 'ERROR'` returns empty, fall back to an **unfiltered** `filter-log-events` bounded to the exact alarm window and parse the raw messages manually, or use Logs Insights with `filter @message like 'Error'`.
+
+### `organizationSlug` is a Sentry organization name, not a Notifly `product_id`
+
+The Sentry payload contains `organizationSlug` (e.g., `greybox`). This is the **Sentry** organization, not a Notifly product slug. Querying DynamoDB `project` table with `product_id = greybox` returns zero items. The correct Notifly product ID must be extracted from `request.url` or `tags.url` (e.g., `/console/products/<productId>/...`). Do not confuse the two identifiers.
+
+### `describe_alarm_history` OK→ALARM may be zero even though the alarm is currently in ALARM
+
+`describe_alarm_history` only counts explicit `StateUpdate` history items. If the alarm transitioned from `INSUFFICIENT_DATA → ALARM` (never reaching `OK`) or if the helper's default lookback is too short, `alarm_count_7d: 0` is normal. For this alarm family, prefer the **metric daily Sum** over alarm-history transition counts for frequency baselining:
+
+```python
+client.get_metric_statistics(
+    Namespace='ConsoleErrors',
+    MetricName='/aws/ecs/notifly-services-prod/web-console/sentry alert',
+    StartTime=now - timedelta(days=N),
+    EndTime=now,
+    Period=86400,
+    Statistics=['Sum']
+)
+```
+
+Use the resulting daily `Sum` values for the `빈도` field.

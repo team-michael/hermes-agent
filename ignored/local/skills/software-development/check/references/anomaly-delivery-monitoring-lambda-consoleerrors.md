@@ -123,6 +123,49 @@ The metric filter counts any log line containing `ERROR` or
 `Status: timeout`.  One Lambda run emitting 2–3 anomaly lines is enough to
 cross the alarm threshold (`Sum >= 2` over 60 s with 1 datapoint to alarm).
 
+### Structural explanation — scheduled Lambda + tight threshold
+
+`anomaly-delivery-monitoring` is a **scheduled Lambda** (EventBridge rule,
+no EventSourceMapping).  It runs on a fixed interval and each invocation
+emits **two to three** `ERROR` anomaly lines when conditions are met.  The
+Terraform alarm configuration is:
+
+- `Period = 60`
+- `Threshold = 2.0`
+- `DatapointsToAlarm = 1`
+- `EvaluationPeriods = 1`
+
+Because `DatapointsToAlarm = 1` and the period is **1 minute**, a single
+scheduled invocation that logs 2+ `ERROR` lines in any 60-second wall-clock
+bucket immediately transitions the alarm to `ALARM`.  This is deterministic
+metric-filter behavior, not an unexpected spike.
+
+### Finding current trigger logs when `filter-log-events` returns empty
+
+The scheduled Lambda creates a new log stream per invocation.  CloudWatch
+Logs indexing can lag behind metric-filter evaluation, and `filter-log-events`
+with `--filter-pattern 'ERROR'` often returns zero results even though the
+metric filter demonstrably breached.
+
+**Reliable fallback:** Enumerate the latest stream and read it directly.
+
+```bash
+# List most-recent stream for this Lambda
+aws logs describe-log-streams \
+  --region ap-northeast-2 \
+  --log-group-name /aws/lambda/anomaly-delivery-monitoring \
+  --order-by LastEventTime --descending --limit 5
+
+# Then read the stream with the latest lastEventTimestamp
+aws logs get-log-events \
+  --region ap-northeast-2 \
+  --log-group-name /aws/lambda/anomaly-delivery-monitoring \
+  --log-stream-name 'YYYY/MM/DD/[$LATEST]<stream-id>'
+```
+
+This bypasses the CloudWatch Logs filter index and reads the raw events
+directly, confirming the exact ERROR lines that triggered the alarm.
+
 ## Verification steps
 
 1. Check `AWS/Lambda` `Errors` metric for `anomaly-delivery-monitoring`.
