@@ -116,6 +116,12 @@ Add `&tbs=qdr:X` to the Google URL to restrict by recency:
 
 Example: `https://www.google.com/search?q=...&num=30&tbs=qdr:w&hl=ko`
 
+**Custom date range** (when `qdr:m` is too short and `qdr:y` is too wide — e.g. user asks for "past 2 months"):
+```
+&tbs=cdr:1,cd_min:MM/DD/YYYY,cd_max:MM/DD/YYYY
+```
+Verified working 2026-05-25 on `hl=en&gl=us` — `cdr:1,cd_min:3/25/2026,cd_max:5/25/2026` returned 7/12 queries clean (Q8 hit `/sorry/`, normal rate limit) with all results genuinely within the 60-day window. Use US date format `MM/DD/YYYY` regardless of `hl`. Always re-verify ages with `tiktok_id_to_datetime` and post-filter — Google's date filters leak slightly the same way `qdr:w` does.
+
 **Important caveat about `qdr:w` behavior**: Google's "past week" filter leaks slightly — results up to ~8 days old can slip through. Don't trust the filter alone; always re-verify with `parse_age_days` and post-filter to `age_days <= 8` (or your target threshold).
 
 **What to expect from a 1-week window**:
@@ -533,6 +539,27 @@ When you move from ranking to deep-dive analysis (per-video page scraping via Ti
 High share rate is the FYP amplifier — the algorithm reads "people send this to other people" as a strong distribution signal. A 100K-view video with 20% share rate is a better template to copy than a 1M-view video with 2% share rate.
 
 When reporting, compute share/like per video and flag the outliers. Recommend `share/like ≥ 5%` as the minimum success bar for app-growth content experiments — this bar means the creative is actually doing distribution work, not just getting shown.
+
+### Diagnosing the user's OWN low-view video (not a competitor)
+When the user says "this is mine, why isn't it taking off / how do I improve it," the framing flips. You're not ranking against competitors — you're decomposing one video's signal mix to find the algorithmic ceiling. Compute **all four ratios**, not just share/like:
+
+| Ratio | What the algorithm reads it as | Healthy floor |
+|---|---|---|
+| `like / view` | "did people pause and react" | category-dependent, but ≥ 3-5% is healthy |
+| `comment / like` | "is this generating discussion" | **≥ 1-2%** — below this is the most common ceiling for tutorial/listicle content |
+| `share / like` | "do people send this to others" (FYP amplifier) | ≥ 5% |
+| `favorite / like` (save rate) | "do people want to come back" (retention signal) | ≥ 5%; tutorial content often hits 15-25% and that's strong |
+
+**Diagnostic pattern observed 2026-05-25 (`@runformai` 10-hack listicle, 6 days post)**: likes 34, comments 0, shares 2, saves 7. Save/like = 20.6% (very strong tutorial signal — algorithm sees "worth bookmarking"), share/like = 5.9% (passing), but **comment/like = 0% is the killer**. Comments are how the algorithm decides "this generates discussion = boost surface." A tutorial-tone video with strong saves but zero comments will plateau no matter how good the format is.
+
+**The fix is rarely "change the format."** It's adding **comment-bait into the existing format**:
+- Last beat of the video: *"Which one do you struggle with most? Drop the number 👇"*
+- Last beat: *"What did I miss? #11 in comments"*
+- Caption: *"Tell me you're a beginner without telling me — I'll guess from the comments"*
+
+Before recommending a format pivot to a user with their own video, always pull the four ratios first. The diagnosis usually points to ONE missing signal (comments, or saves, or shares) and the fix is local to the hook, the caption, or the last 2 seconds — not a re-shoot.
+
+**DOM selectors are the same as competitor research** (`[data-e2e="like-count"]` / `comment-count` / `share-count` / `favorite-count`) — see the "TikTok Video Page DOM Verification" section above. The diagnosis is in the math, not in extra scraping.
 
 Per-video TikTok DOM selectors for likes/comments/shares (as of Apr 2026 — **superseded, see "TikTok Video Page DOM Verification" section above for 2026-05 confirmed selectors**):
 ```javascript

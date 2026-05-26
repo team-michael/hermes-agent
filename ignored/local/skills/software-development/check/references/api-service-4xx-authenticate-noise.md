@@ -12,7 +12,7 @@ Recurring false-positive pattern for the `[api-service] 4xx error response is gr
 - **Threshold**: 100
 - **EvaluationPeriods**: 4 (DatapointsToAlarm: 3)
 - **Note on name drift**: The alarm name says "greater than 300" but the actual CloudWatch threshold is **100**. Do not rely on the numeric value embedded in the alarm name when estimating severity margin.
-- **State transition history**: ~43 OK→ALARM transitions in 30 days (2026-04-28 through 2026-05-23), typically 2 transitions per day resolving within 3–5 minutes. The latest live data shows the count was understated in earlier estimates; always derive from actual `describe-alarm-history` output using `HistoryData | fromjson | .oldState.stateValue` / `.newState.stateValue` rather than the `StateValue` field, which can be `null` for older entries.
+- **State transition history**: ~47 OK→ALARM transitions in 30 days (2026-04-26 through 2026-05-25), typically 2 transitions per day resolving within 3–5 minutes. Some days produce back-to-back transitions within 5 minutes when a high-volume 5-minute bucket continues contributing to the rolling evaluation after a brief OK recovery. Always derive from actual `describe-alarm-history` output using `HistoryData | fromjson | .oldState.stateValue` / `.newState.stateValue` rather than the `StateValue` field, which can be `null` for older entries.
 
 ## Metric filter
 
@@ -322,6 +322,20 @@ The `api-service` log group receives very high traffic. During a spike, CloudWat
   - `POST /projects/{pid}/campaigns/{cid}/send` 400 with `"Bad request: campaign <id> does not exist"` from a single client IP
   Use this even when `filter-log_events` returns empty because the daily recurrence and metric datapoints alone are sufficient evidence.
 - **`needs_fix`**: only if the dominant signature is outside the known false-positive families, if a new non-authenticate 4xx path spikes outside the daily ~02:11 KST window, or if the `level` field shows `error` rather than `warn` indicating an unhandled exception path.
+
+2026-05-25 alarm window (16:56–17:06 UTC / 2026-05-26 01:56–02:06 KST):
+- **Alarm transitions**: OK→ALARM at 17:11 UTC, ALARM→OK at 17:14 UTC (3 min), then OK→ALARM at 17:16 UTC again (back-to-back within 5 minutes)
+- Metric datapoints confirming breach for the 17:16 transition: 170.0 (16:56), 886.0 (17:01), 581.0 (17:06) per StateReasonData; threshold 100.0 with 3 of 4 datapoints required
+- Total `error-response` with status ≥ 400 in the 16:50–17:20 window: **~1,646**
+- `/authenticate` 400: **1,633** (~99.2%); breakdown by 5-min bucket: 878 (17:00), 755 (17:05), 3 (17:15)
+- User-Agent dominant: `Apache-HttpClient/5.3.1 (Java/17.0.19)` via Cloudflare IPs (`13.209.221.105`, `141.101.85.19-20`, `172.71.111.144`)
+- Levels: **100% `warn`**; `error` level count: **0**
+- `projectId`: **explicitly `"unknown"`** on all `/authenticate` lines (validation occurs before project resolution)
+- Secondary signatures: `POST /track-event` 401 (2), `POST /set-user-properties` 401 (1), `GET /user-state/...` 400 (1)
+- **30-day OK→ALARM count**: **47** / **7-day**: **17** / **1-day**: **2** / **10-minute window**: **2** (the back-to-back transitions)
+- Recurrence pattern: stable daily ~02:11 KST burst, consistent with prior 7-day baseline (~1,620–2,400 /authenticate 400 per day window)
+
+Result: identical to the known daily ~02:11 KST `/authenticate` authentication rejection burst. The back-to-back transitions within 5 minutes are caused by the 17:01 bucket (886.0) still contributing to the rolling evaluation after the first ALARM→OK recovery. All signals are handled `warn` validation rejections; no customer impact. The 30-day transition count of 47 confirms the alarm fires roughly 1.6 times per day on average, well within the established baseline.
 
 ## Long-term remediation options
 

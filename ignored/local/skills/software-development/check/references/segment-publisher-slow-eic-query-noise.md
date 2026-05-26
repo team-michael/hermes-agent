@@ -793,5 +793,41 @@ Classification: `no_action` — publish completed (batch index 1 reached), no DL
 05-21=6, 05-22=1, 05-23=2, 05-24=1
 ```
 
+## 2026-05-25 session — `segment-publisher slow eic query` ALARM (Pattern B, stepup)
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`
+Transition: `OK -> ALARM` at 2026-05-25 11:56:08 UTC (KST 20:56)
+Datapoint: `Sum=1.0` at 2026-05-25 11:55:00 UTC (metric period 60s)
+Companion alarm: `segment-publisher long running alam` (`Custom/segment-publisher` / `SegmentPublisher.ExecutionTimeOverThreshold`) in `ALARM` with datapoint `Sum=1.0` at 2026-05-25 11:51:00 UTC.
+Recovery: `ALARM -> OK` at 2026-05-25 12:00:08 UTC.
+
+Evidence:
+- Trigger log (2026-05-25 11:55:51 UTC, stream `prod/segment-publisher/85463e0b01e64cfd97a7f0a164389f22`): `[WARN] Processing took longer than expected: 3386954.66 ms`
+- Same-stream context: 18 batches, final `campaignId: UL1T00, 891998 recipients published. (batch index: 18)`
+- Received event payload (stream head, 2026-05-25 10:59:24 UTC) shows `schedule_type: "user_journey"`, id `UL1T00`, name `[만보기] 매일 적립 리마인드`.
+- Project explicit in stream via `Received event` and `Used user property names` blocks: `project_id: 32d8d9d6294d52e7a5427c036b471f91` → DynamoDB `project` → product `stepup`.
+- Zero ERROR logs in the alarm window (11:50–12:00 UTC); only the single WARN line.
+- `filter-log_events` with the three-term unquoted pattern `"took" "too" "long"` found exactly one match in the 11:50–12:00 UTC window.
+- `describe_log_streams` stale-metadata note: the trigger stream had `lastEventTimestamp=2026-05-25T11:55:51Z` in the API response, matching the actual final event, so no significant lag today.
+
+Alarm history (OK→ALARM via `HistoryData` parsing, 30-day lookback):
+- 30일=68 / 7일=14 / 1일=1 / 10분=1
+
+Daily recurrence context:
+- 2026-05-25 metric sum (`ConsoleErrors` `segment-publisher-prod slow eic query`, `Period=86400`, `Statistics=Sum`) = **1.0 total**.
+- This is the stepup UL1T00 daily batch at ~11:55 UTC, continuing the exact Pattern B seen since 2026-05-08.
+
+**Updated daily counts** (2026-05-25 added):
+```
+2026-04-13=7, 04-14=3, 04-15=2, 04-16=0, 04-17=4, 04-18=1,
+04-19=1, 04-20=5, 04-21=3, 04-22=2, 04-23=3, 04-24=6, 04-25=2, 04-26=2,
+04-27=4, 04-28=3, 04-29=5, 04-30=2, 05-01=1, 05-02=3, 05-03=1, 05-04=2,
+05-05=1, 05-06=1, 05-07=3, 05-08=1, 05-09=1, 05-10=1, 05-11=5, 05-12=3,
+05-13=1, 05-14=5, 05-15=1, 05-16=1, 05-17=1, 05-18=2, 05-19=1, 05-20=1,
+05-21=6, 05-22=1, 05-23=2, 05-24=1, 05-25=1
+```
+
+Classification: `no_action` — publish completed, no DLQ/ECS failure, companion `long running alam` already covers same signal. Durations continue creeping upward (3387s vs ~2977s on 2026-05-08).
+
 For deeper project segment extraction, EIC Large Scale conversion workflows, and user-journey session analysis, see `notifly-segment-publisher-alarm-analysis`.
 

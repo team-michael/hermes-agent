@@ -5,6 +5,9 @@
 `aws logs filter-log-events --start-time X --end-time Y`  
 Expects **epoch milliseconds**.
 
+`aws logs start-query --start-time X --end-time Y`  
+Also expects **epoch milliseconds**. Using seconds (e.g. `1716652500`) produces `MalformedQueryException: Query's end date and time is either before the log groups creation time or exceeds the log groups log retention settings` because the value is interpreted as milliseconds (year 1970) and falls outside the log group's retention window.
+
 ## Output fields
 
 | API | Field | Unit |
