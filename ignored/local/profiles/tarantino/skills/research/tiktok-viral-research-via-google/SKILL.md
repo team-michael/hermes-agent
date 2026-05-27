@@ -343,6 +343,14 @@ When your SERP is dominated by reality-TV, crafting, phone-tips, or nostalgia co
   Do NOT just reorder the query list and hope — the block is at position ~14, not at that query's keyword; whatever lands at Q14 dies. Do NOT add in-session retries — `/sorry/` memory is session + IP + window, not per-driver.
 
   **Action overdue as of 2026-05-11**: four consecutive days of Q14-at-23-UTC blocks with only handoff-and-halt response. Every day burns a VNC solve AND loses the Q14–Q18 tail. The structural fix (split cron into Tick A at 23 UTC for Q1–Q10, Tick B at 03+ UTC for Q11–Q18, merge `google_results.json` before downstream) has been documented here since 2026-05-10 but not yet implemented in the cron job definition. **If you are reading this during a 5th-day Q14 block, stop adding to the tally and instead propose the cron split to jace in the VNC-handoff post body** — daily VNC handoff is the actual pain signal, not the data gap.
+
+  **2026-05-26 23:04 UTC — confirmed recurrence after a quiet stretch**: After the 4-day streak through 05-11, the Q1-at-23-UTC IP-reputation block (05-13) appeared to replace the Q14 pattern. Today the **Q14-at-23-UTC pattern returned**: blocked at exactly Q14 `"find friends college app"` after 13 clean queries on `hl=ko&qdr:w`, identical `/sorry/` URL shape. Same Tarantino profile, no prior same-day run. So the deterministic 23-UTC + Q14 signature is back; the IP did not stay in the harder Q1-fail bucket permanently.
+
+  **Operator self-correction (2026-05-26)**: This session executed the standard handoff (post VNC request, park driver, halt) but **did NOT escalate by proposing the cron split in the post body**, even though the skill explicitly said to do so on a 5th-day-or-later Q14 block. The mechanical handoff is the comfortable path; the actionable fix is unfamiliar and got skipped. Going forward: **the FIRST line of any Q14-at-23-UTC handoff post body** (not buried below status fields) should be one of:
+
+  > `:point_right: *5번째+ 같은 Q14 차단. 매일 수동 솔빙 부담 누적 — 크론 분할 제안: Tick A 23UTC Q1-Q10, Tick B 03+UTC Q11-Q15, 다이어트 후 머지. 진행할까?*`
+
+  Treat this as a hard rule: if the streak counter ≥ 5 (currently it is), the handoff post is not just a status notification — it's a decision request to jace. Don't post the standard "풀어주세요" template alone.
 - **Same-day second run burns budget faster** (observed 2026-05-08 23:01 UTC, `hl=ko`, jittered 2/3/4 sleep, Tarantino profile warmed earlier same day by VNC-solved morning run): `/sorry/` at Q14 after 13 clean queries. **Confirmed again 2026-05-09 23:02 UTC with identical query list and identical schedule (23:00 UTC cron tick): blocked at exactly Q14 `"find friends college app"` after 13 clean queries.** **Confirmed a third time 2026-05-10 23:02 UTC: blocked at Q14 after 13 clean queries, identical `/sorry/` URL shape.** **Confirmed a fourth time 2026-05-11 23:03 UTC: blocked at Q14 after 13 clean queries, identical shape — even though the 2026-05-11 run was the *first* run of the day (no prior same-day VNC-solve warming the profile). This kills the earlier "first-run-of-the-day can do 18/18" framing: on this IP the 23 UTC slot itself is the rate-limited signal, not the profile state.** Four consecutive days, same Q-index, same query — this is not noise, it's a **deterministic signature** of the 23-UTC cron slot on this host IP. Q14 being `"find friends college app"` is not special about that query — it's the 14th query in sequence that trips the rate limit, regardless of what query sits there. If you reorder the list, the block will move to whatever query is at position ~14. **2026-05-10 verification**: after VNC-solving the 05-09 23:04 UTC `/sorry/`, a tail-recovery script (`scrape_google_tail.py`, Q14-Q18 only) at 01:05 UTC landed **Q14-Q18 clean with zero re-blocks** in the same Tarantino profile. So "VNC solve → fresh driver → tail-only resume" is a proven path to 18/18 clean coverage for the day — do NOT accept 13/18 as inevitable when a human-solve has happened within the last few hours. So the "18 queries clean" number is a **first-run-of-the-day** ceiling, not a per-session ceiling. Rough rule: if a VNC-solved run already fired in the past ~12 hours, expect 12–14 queries before the tail captures you again. For a same-day second run, **order the query list so the 5 most important queries are first** — you will lose the tail, not the head. If the second run is a cron recovery after a missed morning tick, accept 13/18 coverage and halt on block per §4 policy; do not chase "full coverage" with retries. **Query-list action item**: the tail queries that always get dropped (Q14–Q18 of the current list: `find friends college app`, `anonymous college app`, `lapse social app`, `NGL app college`, `BeReal college`) are the *college-specific long-tail* — the competitor-name queries in Q3–Q10 survive. If those tail queries matter for ICP coverage, move them higher in the list; what's at the end is what gets lost, deterministically.
 - **Google CAPTCHA on qdr:w heavy runs**: observed 2026-04-27 — after ~14 consecutive `tbs=qdr:w` queries the Selenium session redirects to `/sorry/` captcha page. Detect via `'unusual traffic' in body.lower()` or `'/sorry/' in driver.current_url` and skip+log the failed query instead of crashing. In headless/cron contexts, just record which queries were skipped and note it in the delivered report. Confirmed again 2026-04-29 (`hl=ko`, 18-query college-app run): 12 queries completed, 6 tail queries skipped on `/sorry/`. Treat **12–14 queries as the realistic ceiling per driver session on `hl=ko`** and **order your query list so the highest-value / hardest-to-re-cover ones run first** — the tail of the list is the part you'll lose.
 - **English-locale (`hl=en&gl=us`) burn rate is ~40% faster**: observed 2026-04-28 — `/sorry/` hit after only 9 consecutive `qdr:w` queries (vs ~14 on `hl=ko`). Treat **8 queries as the soft ceiling per driver session on `gl=us`**. A 45-second cool-down + retry in the same session does NOT work; Google remembers the session-level signal. Either (a) accept partial coverage and ship, or (b) rotate the Chrome profile and wait hours before re-attempting. Per Soomin's error-halt rule, do NOT loop retries — halt and report.
@@ -449,6 +457,21 @@ Soomin's principle #2 says "single viral video ≠ trend, require clustering ≥
 
 When writing the report, rank formats by (creator-repetition count × median s/l) rather than raw max-views. A format that produced 5× s/l>15% videos from one creator beats a format that produced one 1.8M-view one-hit-wonder. It's also the right input for action-item writing: the replicable format is the one worth instructing UGC creators to copy.
 
+### Canonical case — `@just.us.two13` (Duolog 2026-W22 scout)
+
+The cleanest example of this rule firing in the wild. One channel produced **4 of the top 6 videos** for "둘만의 공간" / private-space-for-two framing in 2 weeks:
+
+| Video ID | Views | s/l | sv/l |
+|---|---|---|---|
+| 7639783986788715808 | 1.0M | **75.7%** | 7.2% |
+| 7643352611340471584 | 450K | 24.0% | 5.8% |
+| 7640429342299835681 | 107K | 26.5% | 8.1% |
+| 7641688909465914656 | 10K | 18.3% | 9.3% |
+
+Format is structurally simple: 8-second static close-up of hands or hugs (no faces), slowed BGM (Phoebe Bridgers / Lana Del Rey-tier), 1-2 lines of poetic copy ("You today. You tomorrow. You forever." / "the art of touching"), hashtags only in caption. No voice, no demo, no CTA. Median s/l 25%; ceiling s/l 75.7% — top-bracket of every category scouted to date.
+
+When this fingerprint appears, the action item is **collaboration before competitors do**. A creator with a proven median s/l > 20% and 4+ video repetitions is operating a format factory; the cost of working with them is far lower than the cost of trying to compete from scratch in the same genre. Surface it explicitly in the deck's closing recommendation, not just as one more bullet — it's a category-level move.
+
 ## Query-Design Rule: Semantic-Family Overlap
 
 Observed 2026-05-06 (NA-college-social-app run, 18 queries, 167 raw results): **top-10-by-DOM-likes had 9/10 videos at q=1** (matched by exactly one query). Only `@limmytalks` hit q=4. That's a query-design failure, not a data failure — each of the 18 queries probed a different sub-niche (`roommate finder` / `dorm life` / `college freshman` / `find friends college` / `anonymous college` all sound similar to humans but Google tokenizes them as disjoint), so the cross-query intersection signal the skill relies on for "format worth copying" was dead on arrival.
@@ -539,6 +562,43 @@ When you move from ranking to deep-dive analysis (per-video page scraping via Ti
 High share rate is the FYP amplifier — the algorithm reads "people send this to other people" as a strong distribution signal. A 100K-view video with 20% share rate is a better template to copy than a 1M-view video with 2% share rate.
 
 When reporting, compute share/like per video and flag the outliers. Recommend `share/like ≥ 5%` as the minimum success bar for app-growth content experiments — this bar means the creative is actually doing distribution work, not just getting shown.
+
+### Caption-Seed Detection: Spotting Paid Seeding / Format-Replication Waves
+
+When the same near-identical caption block appears across 3+ different handles in your Top-15 (especially when those handles are unrelated and span different view tiers — e.g. 1.9M / 472K / 342K), you've caught one of two things:
+- **Paid creator seeding**: a brand or agency briefed multiple creators with the same caption template, often including a keyword stuff-list at the bottom (`"long distance relationship, LDR app, couple goals, lock screen app, ..."`) that no organic creator would write.
+- **Self-replicating format**: creators copy each other's caption verbatim because it works, after which TikTok's algorithm groups them into the same recommendation cluster.
+
+Either way, **it's a stronger trend signal than per-video share/like alone**. A format that 4+ creators paste with the same caption is replicable by definition — that's the trend you can hand to a UGC creator with the highest hit-rate confidence.
+
+Detection during DOM-verify pass:
+- Capture `desc` field for every video (already done by the standard verify script).
+- Post-pass, normalize descriptions (lowercase, strip emoji, collapse whitespace) and look for ≥30-char substring overlap across 3+ unrelated handles.
+- The caption block is usually at the **end** of the description (after the user's actual line, e.g. `"medium distance relationship is hard too 😭"` followed by the shared `"Long Distance App Widget · App for Couples Share Notes on Screen · ..."` boilerplate).
+
+Observed 2026-05-26 (Duolog 2-week scout): `yamensanders` / `deluluskyz` / `latenightsandsadthoughts` / `raxxk1` all carried the same `"Beat long distance blues with the cutest countdown app for your lock screen. Stay connected with your LDR! Keywords: long distance relationship, LDR app, couple goals, relationship countdown, lock screen app, boyfriend, long distance love."` block — 4 unrelated handles in the same week, view range 342K to 1.9M. That's the LDR lock-screen widget seeding wave; reporting it as a single trend cluster (not 4 separate hits) was the right call.
+
+When you spot caption-seeding, name it explicitly in the report so jace/Soomin can decide whether to (a) ride the same wave with our app, or (b) avoid the cluster because the brand behind the seeding will outspend any organic test we run.
+
+### Weekly-Delta Workflow: Comparing a Live Yeti Report vs Most-Recent Signal
+
+When the user asks for "new trends" / "fresh concept ideas" / "what's changed" for an app that already has a Yeti weekly report on `just-went-viral.com/r/<app>/<week>/`, fire this workflow instead of starting from zero:
+
+1. **Fetch the most recent published report** (probe `2026-W22`, `W21`, ... downward until HTTP 200 with the app's title).
+2. **Strip HTML, extract the trend cluster names + ICP-hot references + P1-P5 experiments** as a baseline state-of-category snapshot.
+3. **Run a small ~8-query Google site-search scrape** with `tbs=cdr:1,cd_min:M/D/YYYY,cd_max:M/D/YYYY` covering the window from the report's week up to today. Order queries to cover gaps the report missed (e.g. W20 Duolog had zero LDR coverage despite Duolog's product being LDR-shaped — so the delta scout should lead with LDR queries).
+4. **Top-10–15 DOM verify** for share/like, comment/like, save/like.
+5. **Tag each surviving and new format against the report's clusters**: which W20 clusters held up, which evolved, which died, which is genuinely new since the report shipped.
+6. **Deliver as a delta**: not a full rewrite of the report, but a "since W20" diff with concrete new concept-video pitches anchored to the new signals.
+
+Output shape jace expects (verified 2026-05-26 Duolog response):
+- One paragraph naming the **biggest single delta** (e.g. "LDR lock-screen widget format went from invisible to category megaphone").
+- A short table of evidence for that delta (handle / views / s/l / hook).
+- A "what survived / what died" mini-table mapping every cluster the report named.
+- 5 concrete concept-video pitches, each with: hook line, 15-second shot list, the customer's specific app feature it relies on, KPI priority.
+- Footer pointing to the raw scrape JSONs in `~/.hermes/profiles/tarantino/work/<app>-trends-<date>/`.
+
+Don't pad the delta with re-explaining what the original report already says. The user already read it; they want the diff.
 
 ### Diagnosing the user's OWN low-view video (not a competitor)
 When the user says "this is mine, why isn't it taking off / how do I improve it," the framing flips. You're not ranking against competitors — you're decomposing one video's signal mix to find the algorithmic ceiling. Compute **all four ratios**, not just share/like:

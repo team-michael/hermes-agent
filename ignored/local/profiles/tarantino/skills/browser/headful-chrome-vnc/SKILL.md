@@ -144,6 +144,123 @@ Cron jobs operating under this contract should declare it by listing
 conversation. Auto-retry, SERP-provider fallback, and silent skipping are all
 forbidden for blocks under this contract.
 
+### Probe-died-with-script handoff (verified 2026-05-26)
+
+A sibling failure mode of the "Stale handoff" section above. The "Stale" case
+is *driver was parked, Chrome died mid-park*. This case is *the script never
+parked at all* — it crashed cleanly on block detection and took the driver
+with it on `driver.quit()` in its `finally` clause.
+
+This is the common shape when the blocking script is **not** a probe written
+to the §4 contract but a regular pipeline stage (`p2_weekly_report.py`,
+`dom_verify_run.py`, etc.) whose CAPTCHA detection raises an exception
+through a `with create_driver() as d:` block. The driver dies, Chrome dies,
+the script exits 1, and the user has nothing to solve in VNC.
+
+**Symptom signature:**
+- Pipeline log shows `STAGE A HALTED on query: CAPTCHA on: '<query>'` (or
+  equivalent) followed by a clean `Saved to ...` line + traceback + exit 1.
+- `pgrep -af 'chrome|chromedriver' | grep -v grep` returns empty.
+- `ls /tmp/.X*-lock` shows X is up but no Chrome attached.
+- No `time.sleep(86400)` parked process anywhere.
+
+**Recovery — manual Chrome relaunch directly to the blocked URL:**
+
+The standard "leave driver alive" §4 recipe doesn't apply here because there's
+no driver to leave alive. Instead, relaunch Chrome via the wrapper directly
+to the URL that triggered the block. Cookies still seed correctly because
+the wrapper points at the same Tarantino `--user-data-dir` the dead Selenium
+session used.
+
+```bash
+# 1. Confirm Chrome really is gone (prevent SingletonLock collision later)
+pgrep -af 'chrome|chromedriver' | grep -v grep | head
+ls /home/ubuntu/.hermes/profiles/tarantino/Tarantino/Singleton* 2>/dev/null
+# If anything lives, sweep with the enumerate-then-kill recipe in the
+# SingletonLock section — never `pkill -f chrome` (self-terminates the shell).
+
+# 2. Relaunch via the wrapper, directly to the blocked URL.
+# Use terminal(background=True), NOT shell `&`/`disown`/`nohup`.
+DISPLAY=:1 XAUTHORITY=/home/ubuntu/.Xauthority \
+  /home/ubuntu/.hermes/profiles/tarantino/bin/chrome '<exact-blocked-URL>'
+
+# 3. Wait ~5s for the tab title to settle.
+sleep 5
+
+# 4. Enumerate windows and find the WID by URL substring (NOT title 'Chrome')
+DISPLAY=:1 XAUTHORITY=/home/ubuntu/.Xauthority \
+  xdotool search --name '.' 2>/dev/null | while read wid; do
+    title=$(DISPLAY=:1 XAUTHORITY=/home/ubuntu/.Xauthority \
+      xdotool getwindowname $wid 2>/dev/null)
+    echo "$wid | $title"
+  done
+# Pick the WID whose title contains the URL fragment or query keywords.
+# Skip the root 'google-chrome' window.
+
+# 5. Promote it to the noVNC viewport
+WID=<picked id>
+# If `xdotool` from a `bash -c` wrapper hits "Authorization required, but no
+# authorization protocol specified" / "Can't open display: (null)", the
+# environment isn't propagating. Run via Python's `subprocess` with an
+# explicit env dict instead — that path works:
+#   import os, subprocess
+#   env = os.environ.copy()
+#   env["DISPLAY"] = ":1"
+#   env["XAUTHORITY"] = "/home/ubuntu/.Xauthority"
+#   for cmd in [["xdotool","windowactivate",WID], ...]:
+#       subprocess.run(cmd, env=env, capture_output=True, text=True)
+# Bash's `DISPLAY=:1 XAUTHORITY=... xdotool ...` form sometimes loses the
+# vars before xdo init when wrapped through `bash -c '...'` — running each
+# xdotool command standalone or via subprocess.run with explicit env works.
+
+# 6. Post the Slack VNC handoff via templates/post_vnc_handoff.py.
+# Body should explicitly state "Chrome 살아있음" and the exact URL.
+```
+
+**After the user solves and replies "완료":**
+
+```bash
+# 1. Verify cookie was set — title should have flipped from /sorry/... to
+# the legitimate destination page title (e.g. real Google Search results).
+DISPLAY=:1 XAUTHORITY=/home/ubuntu/.Xauthority xdotool getwindowname $WID
+
+# 2. Kill the manual Chrome cleanly (enumerate-then-kill, NOT pkill -f).
+for pid in $(ps -eo pid,args | \
+  grep -E 'chrome.*--user-data-dir=/home/ubuntu/.hermes/profiles/tarantino/Tarantino|chrome_crashpad' | \
+  grep -v grep | awk '{print $1}'); do
+  kill $pid 2>/dev/null
+done
+sleep 3
+
+# 3. Sweep singletons (always do this before re-running automation)
+rm -f /home/ubuntu/.hermes/profiles/tarantino/Tarantino/Singleton{Lock,Cookie,Socket}
+
+# 4. Re-run the original pipeline. Cookies seeded by the manual solve are
+# in the Tarantino profile and inherited by the next create_driver().
+```
+
+**Why "manual Chrome to blocked URL" beats "rerun probe to re-trigger block":**
+- Faster (no probe budget burn, no risk of Q14-style rate-limit cascade
+  on a fresh driver).
+- Same cookie outcome — the solve writes to `--user-data-dir`, not the
+  driver session.
+- Cleaner handoff message — you can name the exact URL the human will see.
+
+**Pitfall — do NOT skip the singleton sweep before re-running.** Even though
+your `kill` command exited and `pgrep -af chrome` returns empty, the wrapper's
+post-launch `chrome_crashpad` worker can briefly hold the SingletonLock for
+a second or two after kill. If you re-run P2 immediately and it tries to
+spawn its own Selenium-controlled Chrome at the same `user-data-dir`, you
+get a silent SingletonLock collision (Selenium reports a generic "Chrome
+failed to start"). Always: kill → sleep 3 → rm Singleton* → then re-run.
+
+**Verified 2026-05-26** on duolog W22 P2 retry: P2 hit Google `/sorry/` on
+Q1, exited 1, Chrome gone. Wrapper-relaunched to the same blocked Google
+search URL → user solved CAPTCHA in noVNC → killed manual Chrome → swept
+SingletonLock → re-ran P2 → completed 16/16 queries clean (Q14 reddit
+CAPTCHA in late stage, but Stage A had already saved 103 URLs at that
+point, so report.json/clusters.json/report.md emerged intact).
+
 ### Two-stage captcha on recovery runs (Google + TikTok are separate cookie layers)
 
 Observed 2026-05-11: a clean VNC solve on Google `/sorry/` does NOT seed TikTok cookies. When the recovery pipeline moves from SERP scraping to TikTok DOM verification, expect a **second captcha handoff** on the first TikTok page load if it's been more than ~a day since the last TikTok session in this profile.
@@ -418,6 +535,52 @@ park loop poll `len(driver.window_handles)` every N seconds and exit if Chrome
 disappeared, so the handoff post auto-corrects with a "Chrome died, relaunch
 needed" follow-up instead of leaving a stale "open and ready" claim.
 
+### Variant: P2 (or any pipeline) halted on first query — no parked driver
+
+When `p2_weekly_report.py` (or any one-shot pipeline that quits cleanly on
+CAPTCHA without parking the driver) halts on Stage A Q1 with Google `/sorry/`,
+there is **no live Chrome to hand off** — the pipeline already called
+`driver.quit()` as part of normal shutdown. Verified 2026-05-26 (Duolog W22).
+
+Symptom:
+- Pipeline exit code 0 (it's a clean halt, not a crash)
+- `pgrep -af 'chrome|chromedriver'` returns empty
+- Log shows `⚠️ STAGE A HALTED on query: CAPTCHA on: 'site:tiktok.com/@ ...'`
+- `Recovered 0 URLs from 0 completed queries → partial report mode`
+- Empty `report.json` (~2.6KB) gets emitted with 0 trends / 0 ICP
+
+Recovery (faster than running a fresh probe):
+
+1. Extract the exact blocked URL from the log: it's the Q1 search URL P2
+   constructed. Reconstruct via `https://www.google.com/search?q=<urlencoded query>&num=30&hl=en&tbs=qdr:w2`
+   — the `qdr:w2` is P2's hardcoded recency window.
+2. Launch Chrome **directly to that URL** via the wrapper (no Selenium):
+   ```bash
+   DISPLAY=:1 XAUTHORITY=/home/ubuntu/.Xauthority \
+     /home/ubuntu/.hermes/profiles/tarantino/bin/chrome \
+     'https://www.google.com/search?q=<encoded>&num=30&hl=en&tbs=qdr:w2'
+   ```
+   Use `terminal(background=True)` — not shell `&`/`disown`. Chrome wrapper
+   exits ~1s after launching the actual Chrome process (it just `exec`s).
+3. Wait 3-5s, enumerate windows, find the WID whose title matches the search
+   query (NOT the literal `google-chrome` root window).
+4. Promote it to `(0,0) 1600×1000` per the recipe above. Note env-var ordering
+   pitfall — `DISPLAY` must come first.
+5. Post VNC handoff to Slack thread.
+6. After user solves: re-run the original pipeline (e.g. `p2_weekly_report.py
+   --app-id duolog`). The cookies set by the manual solve are now in the
+   Tarantino profile and Stage A passes. **Don't blow away the outdir** — the
+   resume cache is empty (Q1 was the first query) so `rm -rf` makes no
+   difference here, but in principle the cached partial state is harmless.
+
+Difference from the parked-Python recovery: there is no zombie chromedriver,
+no SingletonLock to clear, no `kill -9` sweep needed. The pipeline shut down
+cleanly. Skip straight to the wrapper-relaunch.
+
+The user-facing handoff message is the same template as §4. **Do NOT post a
+fresh "차단됨 again" alert if the user already saw the original pipeline
+failure** — frame the wrapper-relaunch as continuation of the same incident.
+
 Do this instead of trying to attach to the existing window:
 
 ```bash
@@ -504,8 +667,38 @@ Template: `scripts/probe_first_query_google.py` — probes Q01 of a Google query
 
 After the probe freezes, the solve window might be off-screen or behind other windows. Reposition before telling the user to connect:
 
+**Critical env-var ordering pitfall (verified 2026-05-26)**: `xdotool` requires `DISPLAY` to come **before** `XAUTHORITY` in the env prefix when invoked via the agent's terminal tool. The reverse order:
+
 ```bash
-# Enumerate Chrome windows
+# ❌ FAILS — every xdotool call returns "Error: Can't open display: (null)"
+XAUTHORITY=/home/ubuntu/.Xauthority DISPLAY=:1 xdotool windowactivate $WID
+```
+
+…fails on every call because the terminal tool's bash -c wrapper does not propagate `DISPLAY` reliably when it appears second in the env prefix. The same env vars in the correct order work:
+
+```bash
+# ✓ WORKS
+DISPLAY=:1 XAUTHORITY=/home/ubuntu/.Xauthority xdotool windowactivate $WID
+```
+
+If you hit "Can't open display: (null)" repeatedly across `windowactivate`/`windowraise`/`windowsize`/`getwindowname` despite a clean `DISPLAY=:1 xdpyinfo` confirming the X server, the cause is almost certainly env-var ordering, not the X server. Two-line fallback when the bash form keeps failing — drop into Python:
+
+```python
+import os, subprocess
+env = os.environ.copy()
+env["DISPLAY"] = ":1"
+env["XAUTHORITY"] = "/home/ubuntu/.Xauthority"
+subprocess.run(["xdotool", "windowactivate", WID], env=env, check=True)
+```
+
+`subprocess.run(env=...)` always works because Python passes the env dict directly into `execvpe()` — no shell-wrapper layer to mangle it. Use this form in `execute_code` blocks when bash refuses.
+
+**Tab-completion artifact pitfall**: do NOT type `XAUTHORITY=/home/...rity` (the literal `...rity` is a shell tab-completion fragment of `.Xauthority`). Chrome's wrapper silently ignores a bogus XAUTHORITY value (it falls back to default), but `xdotool` fails loudly. Always type the full path `/home/ubuntu/.Xauthority` or skip the var entirely if the default works.
+
+**Recurrence 2026-05-26**: confirmed twice in one session. (1) During the Q14-handoff window-promote, an `XAUTHORITY=*** placeholder` (used while drafting commands and not replaced before send) caused four consecutive xdotool calls to fail with "Authorization required, but no authorization protocol specified". The literal `***` made it past terminal tool intake because it's syntactically valid env-var syntax, but `xdotool` parses it as a path that doesn't exist. (2) Earlier in the same session, a **background-launched Python scrape script** had the same bad `XAUTHORITY=*** in its terminal command — Chrome started anyway (Selenium's `hermes_chrome.py` resets XAUTHORITY internally), but if the scrape had needed any post-launch xdotool step it would have silently failed. The lesson: never paste secret-redaction or tab-completion placeholders into env-var values; always type the full literal `/home/ubuntu/.Xauthority` or omit the var entirely. If you find yourself drafting a command with `***` or `...rity` in any var slot, that's the bug — fix it before sending.
+
+```bash
+# Enumerate Chrome windows — note DISPLAY first
 DISPLAY=:1 XAUTHORITY=/home/ubuntu/.Xauthority xdotool search --name 'Chrome' 2>/dev/null | while read wid; do
   title=$(DISPLAY=:1 XAUTHORITY=/home/ubuntu/.Xauthority xdotool getwindowname $wid 2>/dev/null)
   echo "$wid | $title"

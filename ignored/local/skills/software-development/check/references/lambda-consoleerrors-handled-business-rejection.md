@@ -92,6 +92,36 @@ for e in resp.get('events', []):
 - Node.js 22.x deprecation warnings containing literal `ERROR` substring. See `references/nodejs-deprecation-warning-lambda-consoleerrors-false-positive.md`.
 - `user-journey-node-runner`: `notiflyUserId is required to match event condition` — handled user journey node validation. See below.
 
+### user-journey-node-runner: LiquidJS TokenizationError on malformed template
+
+- Trigger string: `Failed to build message for context: <notifly_user_id>, projectId: <project_id>` followed by `TokenizationError: output "..." not closed`
+- Code path: `services/lambda/user-journey-node-runner/lib/services/executors/MessageNodeBatchExecutor.ts:443`
+- Why it happens: During user-journey message-node batch processing, `buildMessages()` renders a LiquidJS template per recipient. If the campaign/user-journey template contains HTML attributes (e.g. `alt="..."`) that break Liquid tokenization, `liquidjs` throws `TokenizerError` / `TokenizationError`. The error is caught, logged with `console.error`, and `pushFailedContext()` records a failure for that recipient. The remaining recipients in the batch continue processing and the Lambda returns normally.
+- Impact: One recipient (or a subset matching the bad template) does not receive the message. The batch is not aborted. No Lambda invocation failure occurs.
+- Invocation health: `AWS/Lambda Errors == 0`, `Throttles == 0`, `Duration` stays well under `Timeout`. The `REPORT` line shows normal completion.
+- Scope extraction: The ERROR log carries `projectId` directly (e.g. `13645f66a993575995631aad71b37ca3`). Map via DynamoDB `project` table. The `notifly_user_id` context value is also present. `campaign_id` or `user_journey_id` may not appear in the same log line; look for `campaign_id`/`user_journey_id` in adjacent Kinesis record `Processing` lines.
+- 30-day frequency pitfall: ConsoleErrors log count for this Lambda can be dominated by a single bad day (e.g. 6,316 on 2026-05-15) of WARN `Unexpected error on idle client` pg-pool ETIMEDOUT lines that contain the literal word `Error` and therefore trip the metric filter. Always inspect `logs.daily_counts_30d` before judging severity. The actual alarm transition count (OK→ALARM) is the better severity signal.
+- Classification: `no_action` when isolated and Lambda `Errors == 0`. The root cause is a client-authored template with invalid Liquid syntax, not a service bug.
+- Action target: In `MessageNodeBatchExecutor.ts`, change the handled template-failure log from `console.error` to `console.warn` and log only `projectId`, `notifly_user_id`, and a compact error code instead of the full LiquidJS stack trace.
+- Bounded log check (when helper returns empty `current_error_details`):
+```bash
+python3 -c "
+import boto3, datetime
+session = boto3.Session(region_name='ap-northeast-2')
+logs = session.client('logs')
+start = int(datetime.datetime(YYYY, MM, DD, HH, MM, tzinfo=datetime.timezone.utc).timestamp() * 1000)
+end   = int(datetime.datetime(YYYY, MM, DD, HH, MM, tzinfo=datetime.timezone.utc).timestamp() * 1000)
+resp = logs.filter_log_events(
+    logGroupName='/aws/lambda/user-journey-node-runner',
+    startTime=start, endTime=end,
+    filterPattern='TokenizationError',
+    limit=20
+)
+for e in resp.get('events', []):
+    print(e['message'].strip()[:400])
+"
+```
+
 ### user-journey-node-runner: notiflyUserId is required to match event condition
 
 - Trigger string: `notiflyUserId is required to match event condition`

@@ -10,7 +10,7 @@ Slack/product/sales/planning: concise/high-signal, formal Korean tables for mile
 §
 MSP/Zendesk: show draft; no internal Slack refs.
 §
-API prefs: REST nouns; no PII; users=`notifly_user_id`; PG/stats default; docs canonical; api-service JS/CJS+JSDoc+typecheck; after compaction continue active task; existing branches build on branch.
+API/CS prefs: REST nouns; no PII; users=`notifly_user_id`; PG/stats default; docs canonical; api-service JS/CJS+JSDoc+typecheck; CS/MCP minimal; MCP provider quirks belong in internal proxy/tools, not generic clients.
 §
 Post-session: expects proactive memory plus class-level umbrella skill/reference updates; avoid narrow one-off skills.
 §

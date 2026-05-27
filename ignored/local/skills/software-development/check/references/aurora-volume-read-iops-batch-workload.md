@@ -66,6 +66,18 @@ At Notifly prod, daily peak `VolumeReadIOPs` ranges 10M–20M. Threshold set at 
 
 When the daily fire time shifts by hours (e.g., from ~20:50 KST to ~15:00 KST), check whether campaign schedules or segment-publisher trigger times were adjusted.
 
+## Companion-alarm shortcut
+
+When `segment-publisher long running alam` (namespace `Custom/segment-publisher`) is in `ALARM` with a datapoint overlapping the `VolumeReadIOPs` breach window, treat this as strong evidence that the IOPS spike is caused by the known `segment-publisher` scheduled batch workload. The batch queries (`user_journey_sessions_*`, `event_intermediate_counts_*`) run in parallel across reader instances, producing the uniform ReadIOPS signature described above.
+
+This shortcut is especially useful when:
+- Fargate log streams have already expired before investigation.
+- `filter_log_events` returns zero matches despite the metric filter demonstrably breaching.
+
+In this case, the companion alarm's purpose-built metric filter (`Processing took longer than expected`) proves the batch workload is active, and the `VolumeReadIOPs` alarm is catching its parallel query side effect. Classification remains `no_action` when ReadLatency is healthy and CPU headroom exists.
+
+See `references/segment-publisher-slow-eic-query-noise.md` § "Cross-reference: RDS VolumeReadIOPs correlation" for the reverse direction.
+
 ## Scope
 
 This alarm is **infra-wide** at the cluster level. Segment-publisher logs can tie the triggering batch to a specific `project_id`/`campaign_id` pair, but the alarm itself does not dimension by project. Report the dominant project/campaign from logs when available; otherwise state infra-wide scope.
