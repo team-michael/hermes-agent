@@ -38,3 +38,27 @@ aws logs filter-log-events ... \
 date -d '2026-05-20 16:51:00 UTC' +%s          # seconds
 date -d '2026-05-20 16:51:00 UTC' +%s | awk '{print $1"000"}'  # milliseconds
 ```
+
+## CWLI query syntax — `bin()` in `sort`
+
+CloudWatch Logs Insights rejects `sort bin(1d) desc` with `MalformedQueryException: unexpected symbol found (`. The `bin()` expression is valid in `stats` but not in `sort`.
+
+**Correct**: omit `sort` when grouping by `bin()`; the result is returned in ascending time order by default.
+
+```bash
+aws logs start-query --region ap-northeast-2 \
+  --log-group-name '/aws/ecs/notifly-services-prod/api-service' \
+  --start-time $(date -d 'YYYY-MM-DD HH:MM:SS UTC' +%s)000 \
+  --end-time   $(date -d 'YYYY-MM-DD HH:MM:SS UTC' +%s)000 \
+  --query-string 'fields @timestamp, @message
+| filter @message like /error-response/
+| stats count() by bin(1d)
+| limit 10'
+```
+
+**Incorrect**:
+```
+| stats count() by bin(1d)
+| sort bin(1d) desc
+| limit 10
+```

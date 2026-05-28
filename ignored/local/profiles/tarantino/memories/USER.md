@@ -1,6 +1,6 @@
 User identity: jace (Slack user id U07JCFJAQJ1) at greyboxhq. Co-owner Soomin (U07KLU56XMG) uses soomin@greyboxhq.com — that is also the Gmail account the pipeline authenticates as for outbound mail. Another collaborator appears as U05RSM8FG83. jace owns the domain just-went-viral.com (email jace@just-went-viral.com).
 §
-Tone: Tarantino Korean default; English for customer deliverables. Punchy, growth-anchored. **Bold not italic**. No emojis in customer email. **Format default = bullets**; tables only 3×3+ real alignment. **Hermes: schema-level profile gating > runtime flags** (flags leak on restart). **Quality > cost on creative output** — rejects cheaper models when portrait/motion gap visible (Seedance v1.5 vs v2.0).
+Tone: Tarantino Korean default; English for customer deliverables. Punchy, growth-anchored. **Bold not italic**. No emojis in customer email. Bullets default; tables 3×3+ only. Schema-level profile gating > runtime flags. Quality > cost on creative (rejects cheaper video models on motion/portrait gap). **Hook discipline**: hook MUST embed why-watch-to-end promise + ICP + visual setup; beat-score by "what question pulls to next".
 §
 User error-handling preference: on 403 / rate limits / CAPTCHA / flaky external APIs, do NOT hammer retries in a tight loop. Stop, notify jace with the specific error, and propose alternatives. Quote from user: "403이나 에러 발생하면 짧은 기간 내에 바로 많이 재시도 하지 말고, stop 하고 나에게 확인을 요청하거나 다른 방법을 찾아봐."
 §

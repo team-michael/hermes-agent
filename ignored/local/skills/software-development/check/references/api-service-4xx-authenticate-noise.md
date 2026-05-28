@@ -337,6 +337,48 @@ The `api-service` log group receives very high traffic. During a spike, CloudWat
 
 Result: identical to the known daily ~02:11 KST `/authenticate` authentication rejection burst. The back-to-back transitions within 5 minutes are caused by the 17:01 bucket (886.0) still contributing to the rolling evaluation after the first ALARM→OK recovery. All signals are handled `warn` validation rejections; no customer impact. The 30-day transition count of 47 confirms the alarm fires roughly 1.6 times per day on average, well within the established baseline.
 
+2026-05-26 alarm window (16:56–17:06 UTC / 2026-05-27 01:56–02:06 KST):
+- **Alarm transitions**: OK→ALARM at 17:11 UTC, OK→ALARM at 17:16 UTC (2 transitions, back-to-back 5-min periods)
+- Metric datapoints confirming breach: 170.0 (16:56), 898.0 (17:01), 688.0 (17:06); threshold 100.0 with 3 of 4 datapoints required
+- Total `error-response` with status ≥ 400: **~1,768**
+- `/authenticate` 400: **1,748** (98.9%)
+- User-Agent dominant: `Apache-HttpClient/5.3.1 (Java/17.0.19)`; single appearances of `python-requests/2.32.3`, `axios/1.13.6`
+- Levels: **100% `warn`**; `error` level count: **0**
+- `projectId`: **explicitly `"unknown"`** on all `/authenticate` lines (validation occurs before project resolution)
+- Secondary signatures (sparse): `POST /track-event` 401 (8), `GET /user-state/...` 400 (3), `POST /projects/0c61d690f3425c13875c2c4902616b40/campaigns/CJDzWt/send` 400 (1, `sconn`), `POST /campaign/300ef7dd1ea459a2bb0dbafd2aabc0c7/j4k6UJ/send` 400 (1, `museclinic`)
+- 30-day OK→ALARM count: **48** / 7-day: **15** / 1-day: **2** / 10-minute window: **2**
+
+Result: identical to the known daily ~02:11 KST `/authenticate` authentication rejection burst. All signals are handled `warn` validation rejections; no customer impact. The 10-minute window showing 2 transitions is a sliding-window evaluation artifact from the 17:01 bucket (898.0) still contributing after the brief OK recovery.
+
+2026-05-27 alarm window (17:00–17:20 UTC / 2026-05-28 02:00–02:20 KST):
+- **Alarm state**: ALARM→OK at 17:14 UTC (recovered within 3 minutes); metric breach window `startDate` 2026-05-27T17:00:00 UTC
+- Metric datapoints confirming breach (from `StateReasonData`): **888.0** (17:01), **866.0** (17:06), 6.0 (17:11), 2.0 (17:16); threshold 100.0 with 3 of 4 datapoints required
+- Total `error-response` with status ≥ 400 (16:50–17:20 UTC): **~1,770**
+- `/authenticate` 400: **1,748** (98.8%)
+- User-Agent dominant: `Apache-HttpClient/5.3.1 (Java/17.0.19)`
+- Levels: **100% `warn`**; `error` level count: **0**
+- `projectId`: **explicitly `"unknown"`** on all `/authenticate` lines (validation occurs before project resolution)
+- Secondary signatures (sparse): `POST /track-event` 401 (10, `warn`), `GET /user-state/...` 400 (3, `warn`), `DELETE /user-state/...` 405 (1, `warn`), `POST /projects/0c61d690f3425c13875c2c4902616b40/campaigns/CJDzWt/send` 400 (2, `warn`, `sconn`), `POST /campaign/300ef7dd1ea459a2bb0dbafd2aabc0c7/j4k6UJ/send` 400 (1, `warn`, `museclinic`)
+- 30-day OK→ALARM count: **48** / 7-day: **15** / 1-day: **2** / 10-minute window: **1**
+
+Result: identical to the known daily ~02:11 KST `/authenticate` authentication rejection burst. All signals are handled `warn` validation rejections; no customer impact. The metric datapoint 888.0 at 17:01 UTC confirms the burst peaked in the same 5-minute bucket as prior days.
+
+## Pitfall — `INSUFFICIENT_DATA → ALARM` undercounts in transition history
+
+This alarm uses `TreatMissingData: missing`. During low-traffic periods (midnight KST), the `ConsoleErrors` metric may have no data points, so the alarm state drops to `INSUFFICIENT_DATA`. The daily ~02:11 KST burst then transitions `INSUFFICIENT_DATA → ALARM`, not `OK → ALARM`.
+
+`describe-alarm-history` parsers that only count `oldState.stateValue == "OK" && newState.stateValue == "ALARM"` **undercount actual alarm firings**. For example, on 2026-05-27 the latest `OK → ALARM` transition in 30 days was 2026-04-28, yet the alarm was demonstrably in `ALARM` at 17:01 UTC that day.
+
+**Remediation**: for alarms with `TreatMissingData: missing`, rely on the **metric datapoint breach densities** (`recentDatapoints` from `StateReasonData`) and daily recurrence pattern as the ground truth, not just OK→ALARM transition counts. Counting `INSUFFICIENT_DATA → ALARM` requires inspecting `HistoryData` for both transition directions:
+
+```python
+data = json.loads(item.get('HistoryData', '{}'))
+old = data.get('oldState', {}).get('stateValue')
+new = data.get('newState', {}).get('stateValue')
+if old in ('OK', 'INSUFFICIENT_DATA') and new == 'ALARM':
+    count += 1
+```
+
 ## Long-term remediation options
 
 1. **Metric filter refinement**: change the metric filter to exclude `$.path = "/authenticate"` if this path is accepted noise, or require `$.level = "error"` so handled `warn` rejections do not increment the alarm.

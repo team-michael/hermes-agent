@@ -2,7 +2,7 @@ Notifly GitHub: share findings before PR unless direct push; Conventional Commit
 §
 Remote/container tasks: never assume local Hermes is target; verify intended system first, and never destructively mutate home dirs like /ubuntu/home, /home/ubuntu, or $HOME.
 §
-User studies Notifly infra; wants mentor-style explanations with concrete flows/failures/verification, brief AWS terms, and “improved vs still to fix vs fixed?” splits. Avoid repetitive notes.
+User studies Notifly infra; wants concrete flows/failures/verification, brief AWS terms, and clear status splits (개선/변화없음/악화/불확실/fixed/still-to-fix). Avoid repetition.
 §
 In DMs, user wants infra explanations tailored to Mobile/iOS+SDK Eng background: use analogies only when mechanisms match; flag SDK implications for contracts/retries/offline/telemetry/DX.
 §
@@ -10,7 +10,7 @@ Slack/product/sales/planning: concise/high-signal, formal Korean tables for mile
 §
 MSP/Zendesk: show draft; no internal Slack refs.
 §
-API/CS prefs: REST nouns; no PII; users=`notifly_user_id`; PG/stats default; docs canonical; api-service JS/CJS+JSDoc+typecheck; CS/MCP minimal; MCP provider quirks belong in internal proxy/tools, not generic clients.
+API/CS prefs: REST nouns; no PII; users=`notifly_user_id`; PG/stats default; docs canonical. CS/MCP eval: source question → intent/clues → logical tool flow/judgment; no keyword tool lists.
 §
 Post-session: expects proactive memory plus class-level umbrella skill/reference updates; avoid narrow one-off skills.
 §

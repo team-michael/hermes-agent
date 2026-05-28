@@ -8,4 +8,4 @@ RunForm slideshow: 10 topics. ONLY cron = batch4 `11552f25d69c` (Tue/Thu KST09, 
 §
 Clix prompt-builder: repo github.com/clix-so/clix-prompt-builder, live https://clix-prompt-builder.pages.dev (Cloudflare Pages auto-deploys on main push, branch protection bypass allowed). Vite+React SPA + Pages Functions + Google Sheets DB. Key composers: src/lib/image.ts, src/lib/video.ts, src/lib/naturalness.ts (6 realism groups), src/lib/axes.ts. For image-prompt craft load creative/image-prompt-engineering skill.
 §
-**`send_message(slack_table=…)`** (tarantino-only, branch `feat/slack-table-block-tarantino`). Min 3×3 (validator rejects below → bullets). 디자인 in hermes-multi-profile-feature-rollout skill + references/slack-table-block-rollout.md.
+**`send_message(slack_table=…)`** (tarantino, hermes-multi-profile-feature-rollout). Slack mp4 ≥40MB → 500 cbfail; re-encode crf 23 → ~26MB. r2v `@Image2` photoreal persona 인종/나이/헤어 explicit 확인 후 lock. photoreal-plus-2d-sticker-companion.md.

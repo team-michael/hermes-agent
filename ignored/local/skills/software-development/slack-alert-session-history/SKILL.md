@@ -18,6 +18,8 @@ Use this when a user asks:
 
 This skill is for **Hermes session archive inspection**, not live Slack history.
 
+It also covers routing recovery when Slack group/channel delivery fails (for example `not_in_channel`) and you need to resolve a named person's DM target from Hermes archives. See `references/slack-dm-target-resolution.md`.
+
 ## Core idea
 
 When Hermes handled a Slack thread, the useful root context often landed in two places:

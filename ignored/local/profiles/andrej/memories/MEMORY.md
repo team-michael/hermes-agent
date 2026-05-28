@@ -4,7 +4,7 @@ Notifly project lookup: project_id→DynamoDB project product_id/name; per-proje
 §
 Notifly API/fact data default: PG/read-model first; Athena raw only explicit debug/audit. Campaign-user facts route as `/campaigns/{campaignId}/users/{notiflyUserId}/eligibility` and `/deliveries`.
 §
-Notifly docs live site `docs.notifly.tech` is Mintlify-backed from `notifly-tech/notifly-docs`; old `team-michael/notifly-docs` is deprecated Docusaurus/GitHub Pages.
+Notifly docs: live `docs.notifly.tech` from `notifly-tech/notifly-docs`; old `team-michael/notifly-docs` deprecated. Product KB repo: `team-michael/notifly-product-knowledge` private main, has `llms*.txt`.
 §
 Slack links: use SLACK_BOT_TOKEN API first; url_private images→vision.
 §
