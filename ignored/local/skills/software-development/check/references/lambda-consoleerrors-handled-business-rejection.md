@@ -84,6 +84,45 @@ for e in resp.get('events', []):
 "
 ```
 
+### cafe24-worker: handled SQS record rejection / invalid command / malformed payload
+
+- Trigger strings: `Record <messageId> failed, will retry via SQS:`, `Unsupported command:`, `The body from sqs record is not in JSON format.`, `Invalid record format`, `Project id or token not found for mallId`, `Failed to add user of <mallId>`, `Failed to update user properties of <mallId>`, `API request failed with`
+- Code path: `services/lambda/cafe24-worker/index.js` and `lib/jobs/*.js`
+- Why it happens: `cafe24-worker` is an SQS consumer Lambda that processes Cafe24 webhook events (`add_user`, `order_completed`, `add_to_cart`, etc.). It uses `Promise.allSettled()` and returns `batchItemFailures` for any rejected task. Rejected — including those logged with `console.error` — are **handled by the Lambda runtime**: SQS will retry per the queue's `RedrivePolicy` (`maxReceiveCount: 6` for `cafe24-worker-queue`). The Lambda itself returns normally with `return { batchItemFailures }`.
+- Invocation health: `AWS/Lambda Errors == 0`, `Throttles == 0`, `Duration` well under `Timeout` (typically < 2 s, p99 < 1.2 s). `REPORT` lines show normal completion.
+- Impact: individual SQS records retry through standard SQS redrive. No data loss because `maxReceiveCount: 6` provides ample retry budget before DLQ. DLQ depth is typically zero.
+- Scope extraction: the ERROR log often carries `mallId` (e.g. `chosunhnb`, `vorio01`). Map `mallId` → `project_id` via DynamoDB `cafe24_integration` table or use the `mall_id` field in the SQS body. When the log line is a generic `index.js` handler error (`Unsupported command`, `Invalid record format`), `mallId` may still be present. No `campaign_id` or `user_journey_id` is involved in this Lambda.
+- Metric-filter note: the `%ERROR|Status: timeout%` filter catches all of the above because they contain the literal substring `ERROR`. There is no separate `timeout` signal here; the `|Status: timeout` clause is the metric-filter's catch-all for other Lambda failure modes.
+- **Log-ingestion pitfall**: `cafe24-worker` has low traffic and short-lived log streams. When an alarm fires, `filter-log-events` may return zero results even though the metric filter demonstrably breached, because the matching log line has not yet been indexed or the stream already rotated. In this state, do not conclude the alarm is unclassifiable. Cross-check `AWS/Lambda Errors`, queue depth, and DLQ depth instead.
+- Classification: `no_action` when `Lambda Errors=0`, queue metrics are healthy, and recurrence is sparse (observed ~1/week, e.g. 30d 4 / 7d 1 / 1d 1). Each alarm is a transient handled rejection, not a service fault.
+- Action target (if noise threshold is crossed, e.g. > 1/day sustained):
+  - In `services/lambda/cafe24-worker/index.js`, change the non-rate-limit rejection log from `console.error` to `console.warn`:
+    ```js
+    // Line ~93
+    console.warn(`Record ${tasks[i].messageId} failed, will retry via SQS:`, reason);
+    ```
+  - Keep `batchItemFailures.push(...)` unchanged so SQS retry still works.
+  - For job-level errors (`lib/jobs/*.js`), prefer `console.warn` for expected failures (missing project/token, invalid params) and keep `console.error` only for unexpected exceptions (network failure, DB write failure).
+  - No Terraform or alarm changes needed; the metric filter still catches real Lambda invocation failures (`Errors > 0`).
+- Bounded log check (when helper returns empty `current_trigger_contexts`):
+```bash
+python3 -c "
+import boto3, datetime
+session = boto3.Session(region_name='ap-northeast-2')
+logs = session.client('logs')
+start = int(datetime.datetime(YYYY, MM, DD, HH, MM, tzinfo=datetime.timezone.utc).timestamp() * 1000)
+end   = int(datetime.datetime(YYYY, MM, DD, HH, MM, tzinfo=datetime.timezone.utc).timestamp() * 1000)
+resp = logs.filter_log_events(
+    logGroupName='/aws/lambda/cafe24-worker',
+    startTime=start, endTime=end,
+    filterPattern='ERROR',
+    limit=50
+)
+for e in resp.get('events', []):
+    print(e['message'].strip()[:300])
+"
+```
+
 ### Other patterns (see dedicated references)
 
 - `message-event-consumer`: `delivery_policy_inspection_failed__global_frequency_limit` — handled frequency-limit rejection. See `references/message-event-consumer-delivery-policy-error.md`.

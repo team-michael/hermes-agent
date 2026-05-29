@@ -1,6 +1,6 @@
 Andrej GWS: source `/home/ubuntu/.hermes/profiles/andrej/.env`; if `gws` missing use `/home/ubuntu/.nvm/versions/node/v24.15.0/bin/gws`.
 §
-Notifly project lookup: project_id→DynamoDB project product_id/name; per-project PG tables `table_${project_id}`; AI Agent auth allows Cognito service_role=admin fallback after project resolves, otherwise users_products.
+Notifly project: MCP/CS agents know requester project; gold flows don't call `list_projects` to resolve it. project_id→DDB product/name; per-project PG `table_${project_id}`; AI admin fallback after lookup.
 §
 Notifly API/fact data default: PG/read-model first; Athena raw only explicit debug/audit. Campaign-user facts route as `/campaigns/{campaignId}/users/{notiflyUserId}/eligibility` and `/deliveries`.
 §

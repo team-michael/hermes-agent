@@ -315,6 +315,19 @@ When writing manual aggregate queries for `api-service` `error-response` logs, p
 
 The `api-service` log group receives very high traffic. During a spike, CloudWatch Logs indexing can lag behind the metric-filter evaluation, so `filter-log_events` may return zero results even when the metric has demonstrably breached. If this happens during triage, do not conclude no logs exist. Instead, verify the exact 5-minute `Sum` datapoints via `get_metric_statistics` on the `ConsoleErrors` metric (`/aws/ecs/notifly-services-prod/api-service 4xx error`) for the alarm window, and compare the daily recurrence pattern for 16:50–17:20 UTC. The metric is the ground truth; empty log search is a lag artifact for this high-volume service.
 
+**Exact command — daily aggregate via `get-metric-statistics` (reliable even when logs lag):**
+```bash
+aws cloudwatch get-metric-statistics --region ap-northeast-2 \
+  --namespace ConsoleErrors \
+  --metric-name '/aws/ecs/notifly-services-prod/api-service 4xx error' \
+  --start-time 'YYYY-MM-DDTHH:00:00Z' \
+  --end-time 'YYYY-MM-DDTHH:15:00Z' \
+  --period 86400 \
+  --statistics Sum \
+  --output json | jq -r '.Datapoints | sort_by(.Timestamp) | .[] | [.Timestamp, .Sum] | @tsv'
+```
+Note: `get-metric-statistics` returns `.Timestamp` as an ISO string (not epoch milliseconds), so do not divide by 1000 before piping to `todate`.
+
 ## Classification guidance
 
 - **`no_action`** (default): when the alarm-window breakdown shows ≥ 90 % volume from a known false-positive signature and all logs are `level: warn`. This covers:
