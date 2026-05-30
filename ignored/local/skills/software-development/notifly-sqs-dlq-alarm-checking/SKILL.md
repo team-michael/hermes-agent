@@ -64,6 +64,11 @@ Check queue attributes with boto3 SQS:
 - `RedrivePolicy`
 - `RedriveAllowPolicy`
 
+When sampling DLQ messages for root-cause evidence:
+- Use `VisibilityTimeout=0` for a small non-mutating sample, or a short positive visibility timeout only if walking many messages and deduping is required.
+- If using a positive visibility timeout, retain all receipt handles, restore non-target messages with `change_message_visibility_batch(..., VisibilityTimeout=0)`, inspect `Failed` entries, and re-check queue attributes before reporting. A diagnostic scan must not leave unrelated DLQ messages in-flight.
+- Dedupe by `MessageId`; with `VisibilityTimeout=0`, SQS can return the same visible message repeatedly.
+
 Check live alarms with boto3 CloudWatch:
 - `describe_alarms()`
 - filter on `Dimensions[].Name == "QueueName"` and the exact queue name

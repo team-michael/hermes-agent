@@ -116,6 +116,50 @@ for dbi in ['notifly-db-prod-a', 'notifly-db-prod-b', 'notifly-db-prod-c', 'noti
 | Multiple unrelated projects affected simultaneously | Usually scoped to one project or one campaign |
 | RDS ReadLatency spikes correlate in time | RDS metrics stay flat |
 
+## Other service manifestations
+
+- **`api-service`** — `Failed to get user data` via `packages/common/dist/db.js` retry paths (`userdb/dist/index.js`).
+- **`segment-publisher`** — Rare; usually isolated single occurrences. When the ERROR log stream also contains a campaign ID (`Scheduled Campaign ID: <id>`), verify delivery counts before concluding no impact. See Proactive delivery verification below.
+- **`delivery-result-webhook-receiver` Lambda** — `Failed to track delivery log row` with `db_error` EMF `RowOutcome` metric. This drives the `nhn-receiver-row-db-error` alarm. See `references/nhn-receiver-row-db-error-triage.md` for bounded trace commands and classification specific to this Lambda/EMF pattern.
+
+## Proactive delivery verification for segment-publisher campaign-scoped conflicts
+
+When the Aurora reader conflict log contains a visible campaign ID (e.g. `Scheduled Campaign ID: <id>` or `campaignId: <id>`) and a sharded table suffix (`users_<project_id>` / `device_<project_id>`), verify whether any delivery was actually lost **before** finalizing the answer. This preempts the "확실해?" challenge by turning an uncertain "probably okay" into an evidence-backed "confirmed okay."
+
+### Checklist
+
+1. **Extract identifiers** from the same log-stream window as the ERROR:
+   - `campaign_id` from segment-publisher batch lines (`Scheduled Campaign ID: <id>`).
+   - `project_id` from the failed query table name (`users_<project_id>`).
+   - Map `project_id` via DynamoDB `project` table.
+
+2. **Check campaign status** in `campaigns_<project_id>`:
+   ```
+   SELECT id, status, channel, starts, "end"
+   FROM campaigns_<project_id>
+   WHERE id = '<campaign_id>' LIMIT 1;
+   ```
+   - `status = 3` (`TERMINATED`) = completed successfully.
+   - Other statuses may warrant deeper investigation.
+
+3. **Cross-check delivery counts**:
+   ```
+   SELECT COUNT(*) FROM delivery_result_<project_id>
+   WHERE campaign_id = '<campaign_id>' AND created_at >= '<date>';
+
+   SELECT COUNT(*) FROM message_events_<project_id>
+   WHERE campaign_id = '<campaign_id>' AND created_at >= '<date>';
+   ```
+
+4. **Compare against published recipients**:
+   - Search segment-publisher logs for `<campaign_id>, <N> recipients published.` near the alarm window.
+   - `delivery_result + message_events` total should approximate `N` (allowing a few minutes of async Lambda lag).
+   - If the ERROR timestamp is after the last published batch and delivery counts match published recipients, no data loss occurred.
+
+### Pitfall — do not conflate ERROR timing with batch timing
+
+The Aurora conflict ERROR may land at the very tail of a segment-publisher task (e.g. `Total processing time: <N> ms`). If ERROR occurs after all recipient batches were already published, the failure only hit a cleanup or verification query, not the delivery pipeline itself. Confirm by checking whether `recipients published` lines precede the ERROR.
+
 ## Long-term remediation options
 
 1. **Log-level audit** — These logs are emitted as `ERROR` from the `pg` driver retry path. Consider whether a transient replica conflict should be `WARN` (retried and may succeed on next attempt) rather than `ERROR`, so the coarse `ConsoleErrors` metric filter does not treat Aurora maintenance spikes as service incidents.

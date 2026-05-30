@@ -1,4 +1,4 @@
-Andrej GWS: source `/home/ubuntu/.hermes/profiles/andrej/.env`; if `gws` missing use `/home/ubuntu/.nvm/versions/node/v24.15.0/bin/gws`.
+Andrej GWS: source `/home/ubuntu/.hermes/profiles/andrej/.env`; use `/home/ubuntu/.nvm/versions/node/v24.15.0/bin/gws`; set `HOME=/home/ubuntu` in execute_code.
 §
 Notifly project: MCP/CS agents know requester project; gold flows don't call `list_projects` to resolve it. project_id→DDB product/name; per-project PG `table_${project_id}`; AI admin fallback after lookup.
 §
@@ -12,7 +12,7 @@ CloudCheckr AU 2000841/a4dcbb7d uses `cloudcheckr-service-cost-api-fetch`; MaxSe
 §
 Git commit identity used in prior Notifly agent work: `Andrej Karpathy <team@greyboxhq.com>`.
 §
-Cloudflare: for Access-protected endpoints, use available service-token headers when present; for Notifly front-door/config debugging, use `CLOUDFLARE_READONLY_API_TOKEN` read-only API before relying only on Terraform. Token values are secrets; never print/store.
+Cloudflare: Access endpoints use service-token headers; Notifly front-door/debug use CLOUDFLARE_READONLY_API_TOKEN before Terraform; never print tokens. 전송자격인증은 글로벌 서비스라 해외 IP 전면차단 대신 WAF 위험기반 선별차단으로 설명.
 §
 Remote/workflow ops: local Hermes isn't target; verify host; env/VPN/secrets tests use workflow_dispatch.
 §

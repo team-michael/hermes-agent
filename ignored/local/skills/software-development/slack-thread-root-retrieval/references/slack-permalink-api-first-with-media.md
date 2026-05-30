@@ -17,8 +17,11 @@ Do not start with browser navigation. Slack web permalinks often land on a sign-
    - `conversations.history` with a tight window around `ts`, or
    - `conversations.replies(channel, ts)` if it may be a thread/root.
 4. If the message/thread contains `files[]`, inspect `url_private_download` or `url_private` metadata.
-5. Download screenshot/image files with `Authorization: Bearer <token>` without printing the token.
-6. Run OCR/vision on downloaded images before summarizing.
+   - For PDFs, download under `~/.hermes/workspace/<task>/`, run `pdfinfo`, `pdftotext -layout`, and `pdfdetach -list` to distinguish referenced attachments from embedded files.
+   - If the PDF is slide-like or an exported email thread with screenshot evidence, run `pdfimages -list` or render pages with `pdftoppm` and OCR/vision only the relevant pages.
+   - If the message also contains Google Docs/Sheets links or Google-native Drive files, follow with authenticated Google Workspace access rather than treating the Slack file metadata as the document content.
+5. Download screenshot/image/PDF files with the Slack bearer token in the `Authorization` header, without printing or logging the token.
+6. Run OCR/vision/local extraction on downloaded files before summarizing.
 7. Only use browser Slack access as a last fallback, and only after Slack API failure codes are known.
 
 ## Evidence to include in final answer

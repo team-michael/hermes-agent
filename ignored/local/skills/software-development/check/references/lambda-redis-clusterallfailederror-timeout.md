@@ -84,7 +84,9 @@ Then map `<project_id>` through DynamoDB `project` table and report the `product
    aws sqs get-queue-attributes --queue-url https://sqs.ap-northeast-2.amazonaws.com/<account>/<queue-name> --attribute-names RedrivePolicy ApproximateNumberOfMessages --region ap-northeast-2
    ```
 
-5. Cross-check deployed Lambda config (`MemorySize`, `Timeout`) against repo source (`serverless.yml` or Terraform). Config drift can mask root-cause signals. For example, `ses-bounce-tracker/serverless.yml` declares `memorySize: 512, timeout: 300` but deployed config may show `128 MB / 60 s`.
+5. Cross-check deployed Lambda config (`MemorySize`, `Timeout`) against repo source (`serverless.yml` or Terraform). Config drift can mask root-cause signals.
+   - **Concrete `ses-bounce-tracker` drift**: `serverless.yml` declares `memorySize: 512, timeout: 300`, but deployed config shows `128 MB / 60 s` (`get-function-configuration`). This drift means the function runs with less memory and a tighter timeout than the source declares, which can amplify Redis-reconnection latency into functional failure (auto-protection bypass) even when the source code expects 300 s.
+   - Always verify `MemorySize` and `Timeout` via `get-function-configuration` before concluding a timeout is an application bug rather than a deploy drift.
 
 ## Classification guidance
 

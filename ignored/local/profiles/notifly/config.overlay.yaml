@@ -17,7 +17,7 @@ lsp:
   enabled: false
 compression:
   enabled: true
-  threshold: 0.55
+  threshold: 0.38
   target_ratio: 0.35
   protect_last_n: 20
   hygiene_hard_message_limit: 400
@@ -25,6 +25,7 @@ auxiliary:
   compression:
     provider: openai
     model: gpt-5.4-mini
+    api_mode: codex_responses
     base_url: ""
     api_key: ""
     timeout: 240

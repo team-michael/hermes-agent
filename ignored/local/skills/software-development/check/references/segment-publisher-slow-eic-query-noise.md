@@ -59,7 +59,7 @@ This means `filter_log_events` with a quoted phrase `"took too long"` returns **
 - Pattern B: roughly daily. Two distinct daily windows observed:
   - Stepup UL1T00 (`[만보기] 매일 적립 리마인드`) at ~11:47 UTC (20:47 KST), project `32d8d9d6294d52e7a5427c036b471f91` (product `stepup`). Typically 18 batches, ~880K recipients, durations ~2977–3214 s.
   - Class101 multi-campaign batch at ~06:30 UTC (15:30 KST), project `b2b4a8f879a75673b755bff42fc1deb6` (product `class101`). Ten parallel campaigns (CNGJjd, 3KWfBG, HxbGSr, WPE9J6, VMyJo5, IdxUZt, a84kiE, FQgbL9, sOk5Yk, C5Zpf0), ~49 batches, durations ~1807–1882 s. Observed 2026-05-14 and 2026-05-15; see reference entries below.
-- Pattern A: observed sporadically for munice (`031b18009978590188e49e6777447fc2`) and regather (`b57754a9497a545ab9b0e4aadd6f53b6`).
+- Pattern A: observed sporadically for munice (`031b18009978590188e49e6777447fc2`), regather (`b57754a9497a545ab9b0e4aadd6f53b6`), and playio (`ffde3a7a000b5b2198961b3fff400acd`).
 
 ### Scope-attribution caveat for `UL1T00`
 The user-journey ID `UL1T00` has been observed under **multiple projects**:
@@ -861,6 +861,72 @@ Classification: `no_action` — publish completed, no DLQ/ECS failure, companion
 05-05=1, 05-06=1, 05-07=3, 05-08=1, 05-09=1, 05-10=1, 05-11=5, 05-12=3,
 05-13=1, 05-14=5, 05-15=1, 05-16=1, 05-17=1, 05-18=2, 05-19=1, 05-20=1,
 05-21=6, 05-22=1, 05-23=2, 05-24=1, 05-25=1, 05-26=1, 05-27=1
+```
+
+## 2026-05-29 session — `segment-publisher slow eic query` ALARM (Pattern A, playio)
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`
+Transition: `OK -> ALARM` at 2026-05-29 10:04:03 UTC (KST 19:04)
+Datapoint: `Sum=1.0` at 2026-05-29 10:03:00 UTC (metric period 60s)
+Recovery: `ALARM -> OK` at 2026-05-29 10:05:03 UTC
+Companion alarm: `segment-publisher long running alam` remained `INSUFFICIENT_DATA` throughout the window — confirming this is **not** Pattern B.
+
+Evidence:
+- Trigger log (2026-05-29 10:03:57.097 UTC, stream `prod/segment-publisher/<active-stream>`): `EventCounterCteManager.extract:ffde3a7a000b5b2198961b3fff400acd took too long: 264820ms`
+- Same-stream context: standard segment extraction publishing batches for campaign `yTtQsp` (`playio`). Recipient publishing continued normally after the slow query log (70 242 → 112 006 recipients across concurrent campaigns).
+- `Schedule context setup completed` followed the slow query at 10:03:57 UTC with segment extraction query:
+  ```sql
+  SELECT device_table.notifly_device_id, ...
+  FROM device_ffde3a7a000b5b2198961b3fff400acd device_table
+  RIGHT OUTER JOIN users_ffde3a7a000b5b2198961b3fff400acd user_table
+    ON device_table.notifly_user_id = user_table.notifly_user_id
+  WHERE (device_table.device_token > '' AND device_table.sdk_type not like 'js%')
+  ```
+- Project mapping: `project_id: ffde3a7a000b5b2198961b3fff400acd` → DynamoDB `project` → product `playio`.
+- `campaign_id` was not present in the slow-query log line; surrounding stream context showed concurrent campaigns `6Y3O7A`, `PwA2mO`, `Xq5rMp` in the same batch window, but no explicit link between the slow EIC query and any single campaign ID was established.
+- Zero ERROR logs in the alarm window (10:00–10:10 UTC).
+- `describe_log_streams` stale-metadata pitfall **not reproduced**: Logs Insights query on the current alarm window recovered the trigger within seconds.
+
+Daily recurrence context:
+- 30-day metric sum (`ConsoleErrors` `segment-publisher-prod slow eic query`, `Period=86400`, `Statistics=Sum`): 61 total over 30 days, ~1–6/day baseline.
+- 2026-05-29 count = 1.0 so far.
+- This is the first documented Pattern A occurrence for `playio` (previous Pattern A projects: munice, regather). The query shape is a `device_* RIGHT OUTER JOIN users_*` segment extraction rather than the `event_intermediate_counts_*` aggregation more commonly seen in munice Pattern A.
+
+Classification: `no_action` — query completed, batch publishing finished normally, no ECS failure or DLQ signal. The playio Pattern A occurrence is within the 1–7/day baseline.
+
+## 2026-05-29 session — `segment-publisher slow eic query` ALARM (Pattern B, stepup), 20:55 KST
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`
+Transition: `OK -> ALARM` at 2026-05-29 11:55:12 UTC (KST 20:55)
+Datapoint: `Sum=1.0` at 2026-05-29 11:54:00 UTC (metric period 60s)
+Companion alarm: `segment-publisher long running alam` (`Custom/segment-publisher` / `SegmentPublisher.ExecutionTimeOverThreshold`) in `ALARM` with datapoint `Sum=1.0` at 2026-05-29 11:50:00 UTC (metric period 300s).
+
+Evidence:
+- Trigger log (2026-05-29 11:54:46 UTC, stream `prod/segment-publisher/030f2cae9c2a41138f1b6e43e8150e9a`): `[WARN] Processing took longer than expected: 3322073.25 ms` (~55.4 min)
+- Same-stream context: 18 batches, final `campaignId: UL1T00, 894951 recipients published. (batch index: 18)`
+- Received event payload (stream head, 2026-05-29 10:59:24 UTC) shows `schedule_type: "user_journey"`, id `UL1T00`, name `[만보기] 매일 적립 리마인드`
+- Project explicit in stream: `project_id: 32d8d9d6294d52e7a5427c036b471f91` → DynamoDB `project` → product `stepup`
+- Zero ERROR logs in the alarm window (11:40–12:00 UTC); only the single WARN line.
+- `describe_log_streams` stale-metadata pitfall **not reproduced**: `lastEventTimestamp=2026-05-29T11:54:46Z` matched the actual final event exactly.
+- `filter-log_events` with the exact phrase `"Processing took longer than expected"` returned exactly 1 match, confirming the trigger directly.
+- This is a **mixed-pattern day**: playio Pattern A occurred earlier at 10:03 UTC (19:04 KST), and stepup Pattern B occurred at 11:54 UTC (20:55 KST). Companion alarm `long running alam` remained `INSUFFICIENT_DATA` during the playio occurrence, then transitioned to `ALARM` for the stepup occurrence — the definitive classifier separating Pattern A from Pattern B on the same day.
+
+Daily recurrence update:
+- 2026-05-29 had **2 ALARM transitions** for this alarm (playio Pattern A at 10:04 UTC, stepup Pattern B at 11:55 UTC). The `ConsoleErrors` metric daily sum = 2.0.
+- Recipient volume for stepup UL1T00 reached **894,951** (new high for this user journey, up from 893,672 on 2026-05-27).
+- Durations for stepup UL1T00: ~2977s (2026-05-08) → ~3390s (2026-05-26) → ~3322s (2026-05-29). The 2026-05-26 record of 3390s remains the all-time high.
+
+Classification: `no_action` — publish completed, no DLQ/ECS failure, companion `long running alam` already covers same signal.
+
+**Updated daily counts** (2026-05-29 added):
+```
+2026-04-13=7, 04-14=3, 04-15=2, 04-16=0, 04-17=4, 04-18=1,
+04-19=1, 04-20=5, 04-21=3, 04-22=2, 04-23=3, 04-24=6, 04-25=2, 04-26=2,
+04-27=4, 04-28=3, 04-29=5, 04-30=2, 05-01=1, 05-02=3, 05-03=1, 05-04=2,
+05-05=1, 05-06=1, 05-07=3, 05-08=1, 05-09=1, 05-10=1, 05-11=5, 05-12=3,
+05-13=1, 05-14=5, 05-15=1, 05-16=1, 05-17=1, 05-18=2, 05-19=1, 05-20=1,
+05-21=6, 05-22=1, 05-23=2, 05-24=1, 05-25=1, 05-26=1, 05-27=1, 05-28=1,
+05-29=2
 ```
 
 For deeper project segment extraction, EIC Large Scale conversion workflows, and user-journey session analysis, see `notifly-segment-publisher-alarm-analysis`.

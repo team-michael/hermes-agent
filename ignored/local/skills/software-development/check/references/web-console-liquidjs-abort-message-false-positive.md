@@ -66,9 +66,28 @@ aws logs get-log-events \
   --region ap-northeast-2
 ```
 
-Look for these exact strings:
-- `abort_message()` in a Liquid frame (`>> n| ...`)
-- `From AbortError: message is aborted`
-- `RenderError: message is aborted`
+## Concrete `connected_content` → PostgREST 404 variant
 
-If all three are present and no other ERROR patterns exist, classify as `no_action`.
+When a Liquid template uses the `connected_content` tag to query a PostgREST/Supabase endpoint, a 404 (`PGRST205`) can trigger `abort_message()` from inside the tag render. The log chain looks like:
+
+```
+<url> responded with 404:
+{
+  "code": "PGRST205",
+  "details": null,
+  "hint": "Perhaps you meant the table 'public.<table_name>'",
+  "message": "Could not find the table 'public.<misspelled_table>' in the schema cache"
+}
+message is aborted, line:1, col:<n>
+>> 1| {%- assign today = "now" | date: "%Y-%m-%d", "Asia/Seoul" -%}{%- connected_content <url> ...
+^
+RenderError: message is aborted, line:1, col:<n>
+at Render.renderTemplates ...
+...
+From AbortError: message is aborted
+at Tag.render (/app/services/server/web-console/.next/server/chunks/8693.js:1:9626)
+```
+
+In this variant the Liquid source line shows `connected_content`, not `abort_message()` directly. The compiled `Tag.render` at `chunks/8693.js` is still the definitive anchor because that is the compiled `abort_message` tag handler.
+
+Classification is the same: `no_action` if this is isolated test/playground traffic or a single-template misconfiguration. `needs_fix` only if the same project shows a sustained spike caused by a broken `connected_content` dependency.
