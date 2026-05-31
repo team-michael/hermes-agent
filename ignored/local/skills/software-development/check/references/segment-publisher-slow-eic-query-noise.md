@@ -929,5 +929,40 @@ Classification: `no_action` — publish completed, no DLQ/ECS failure, companion
 05-29=2
 ```
 
+## 2026-05-30 session — `segment-publisher slow eic query` ALARM (Pattern B, proudp)
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`
+Transition: `OK -> ALARM` at 2026-05-30 11:54:12 UTC (KST 20:54)
+Datapoint: `Sum=1.0` at 2026-05-30 11:53:00 UTC (metric period 60s)
+Companion alarm: `segment-publisher long running alam` in `ALARM` with datapoint `Sum=1.0` at 2026-05-30 11:49:00 UTC (metric period 300s).
+
+Evidence:
+- Trigger log (2026-05-30 11:53:02 UTC, stream `prod/segment-publisher/<active-stream>`): `[WARN] Processing took longer than expected: 3218212.45 ms` (~53.6 min)
+- Same-stream context: `campaignId: UL1T00, 817841 recipients published. (batch index: 16)` at 11:48:14 UTC; batch indices 15→16 visible, final index 18 inferred from prior proudp UL1T00 pattern.
+- `Received event` payload (stream head, 2026-05-30 11:49:27 UTC) shows `project_id: bcf172129f80521a9a3b2d72b58ecb29` and a `campaigns` array with 14 parallel push-notification campaigns (4r6G1s, pinXPI, cM1ZMW, 5ZQyOw, 6keUEs, OajdWS, 07HPzs, pkUOaU, WmT5Ky, Oeb2oo, etc.), all targeting "new users who haven't done their first UFM" in different languages/timezones.
+- Project mapping: `bcf172129f80521a9a3b2d72b58ecb29` → DynamoDB `project` → product `proudp`.
+- Zero ERROR logs in the alarm window (11:45–12:00 UTC); only the single WARN line.
+- This is **Pattern B** (batch-processing WARN in `sqs_publisher.ts`), not Pattern A. The companion `long running alam` confirms it.
+- The `ConsoleErrors` metric filter `took too long` (unquoted three-term AND) matched the WARN line:
+  - `took` → `Processing **took** longer than expected`
+  - `too` → `Processing t**oo**k longer than expected`
+  - `long` → `Processing took lo**ng**er than expected`
+- Alarm history (manual `HistoryData` parsing): **30d=59, 7d=11, 1d=1**. The helper returned `can_answer_root_cause: false` because the alarm name parser failed on the log-group-prefix form; the text parser pitfall is already documented in the main `SKILL.md`.
+
+Scope note: `UL1T00` under `proudp` was previously observed on 2026-05-13. Today's payload confirms `proudp` again (not `stepup`). The `campaigns` array structure (14 concurrent standard campaigns under one project batch) is similar in scale to the `class101` 10-campaign batch but for a different project. Both are Pattern B.
+
+Classification: `no_action` — publish completed, no DLQ/ECS failure, companion `long running alam` already covers same signal.
+
+**Updated daily counts** (2026-05-30 added):
+```
+2026-04-13=7, 04-14=3, 04-15=2, 04-16=0, 04-17=4, 04-18=1,
+04-19=1, 04-20=5, 04-21=3, 04-22=2, 04-23=3, 04-24=6, 04-25=2, 04-26=2,
+04-27=4, 04-28=3, 04-29=5, 04-30=2, 05-01=1, 05-02=3, 05-03=1, 05-04=2,
+05-05=1, 05-06=1, 05-07=3, 05-08=1, 05-09=1, 05-10=1, 05-11=5, 05-12=3,
+05-13=1, 05-14=5, 05-15=1, 05-16=1, 05-17=1, 05-18=2, 05-19=1, 05-20=1,
+05-21=6, 05-22=1, 05-23=2, 05-24=1, 05-25=1, 05-26=1, 05-27=1, 05-28=1,
+05-29=2, 05-30=1
+```
+
 For deeper project segment extraction, EIC Large Scale conversion workflows, and user-journey session analysis, see `notifly-segment-publisher-alarm-analysis`.
 

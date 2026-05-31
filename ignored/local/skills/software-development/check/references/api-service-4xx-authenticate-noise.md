@@ -376,6 +376,18 @@ Result: identical to the known daily ~02:11 KST `/authenticate` authentication r
 
 Result: identical to the known daily ~02:11 KST `/authenticate` authentication rejection burst. All signals are handled `warn` validation rejections; no customer impact. The metric datapoint 888.0 at 17:01 UTC confirms the burst peaked in the same 5-minute bucket as prior days.
 
+2026-05-30 alarm window (16:56–17:20 UTC / 2026-05-31 01:56–02:20 KST):
+- **Alarm transitions**: OK→ALARM at 17:11 UTC, ALARM→OK at 17:14 UTC, OK→ALARM at 17:16 UTC, ALARM→OK at 17:19 UTC (2 back-to-back transitions within 10 minutes)
+- Metric datapoints confirming breach (from `StateReasonData`): **850.0** (17:04), **706.0** (17:09), 9.0 (17:14), 6.0 (17:19); threshold 100.0 with 3 of 4 datapoints required
+- Total `error-response` with status ≥ 400 (17:00–17:20 UTC): **~1,571**
+- `/authenticate` 400: **1,556** (~99.0%); breakdown: 1,542 (`Apache-HttpClient/5.3.1 (Java/17.0.19)`), 14 (`python-requests/2.32.3`)
+- Levels: **100% `warn`**; `error` level count: **0**
+- `projectId`: **explicitly `"unknown"`** on all `/authenticate` lines (validation occurs before project resolution)
+- Secondary signatures (sparse): `POST /track-event` 401 (6, `warn`, `ffde3a7a000b5b2198961b3fff400acd`), `DELETE /projects/80fd28969702573797f4d7f77063e47b/messages/text-message/blockservice/recipients/removes` 400 (4, `warn`), `POST /projects/b2b4a8f879a75673b755bff42fc1deb6/campaigns/icKePI/send` 400 (3, `warn`, `class101`), `POST /campaign/300ef7dd1ea459a2bb0dbafd2aabc0c7/j4k6UJ/send` 400 (1, `warn`, `museclinic`), `GET /user-state/2b9f5a6685ba5b839803f1338a539724/...` 400 (1, `warn`)
+- 30-day OK→ALARM count: **25** / 7-day: **13** / 1-day: **2** / 10-minute window: **2**
+
+Result: identical to the known daily ~02:11 KST `/authenticate` authentication rejection burst. The back-to-back transitions within 10 minutes are caused by the 17:04 bucket (850.0) still contributing to the rolling evaluation after the first brief ALARM→OK recovery. All signals are handled `warn` validation rejections; no customer impact. The 30-day OK→ALARM count of 25 is lower than prior entries because `TreatMissingData: missing` causes many transitions to be `INSUFFICIENT_DATA → ALARM` rather than `OK → ALARM`; see the pitfall below.
+
 ## Pitfall — `INSUFFICIENT_DATA → ALARM` undercounts in transition history
 
 This alarm uses `TreatMissingData: missing`. During low-traffic periods (midnight KST), the `ConsoleErrors` metric may have no data points, so the alarm state drops to `INSUFFICIENT_DATA`. The daily ~02:11 KST burst then transitions `INSUFFICIENT_DATA → ALARM`, not `OK → ALARM`.
