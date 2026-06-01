@@ -962,7 +962,35 @@ Classification: `no_action` — publish completed, no DLQ/ECS failure, companion
 05-13=1, 05-14=5, 05-15=1, 05-16=1, 05-17=1, 05-18=2, 05-19=1, 05-20=1,
 05-21=6, 05-22=1, 05-23=2, 05-24=1, 05-25=1, 05-26=1, 05-27=1, 05-28=1,
 05-29=2, 05-30=1
-```
+05-29=2, 05-30=1, 05-31=1
 
 For deeper project segment extraction, EIC Large Scale conversion workflows, and user-journey session analysis, see `notifly-segment-publisher-alarm-analysis`.
+
+## 2026-05-31 session — `segment-publisher slow eic query` ALARM (Pattern B, proudp)
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`
+Transition: `OK -> ALARM` at 2026-05-31 11:54:12 UTC (KST 20:54)
+Datapoint: `Sum=1.0` at 2026-05-31 11:53:00 UTC (metric period 60s)
+Companion alarm: `segment-publisher long running alam` in `ALARM` with datapoint `Sum=1.0` at 2026-05-31 11:49:00 UTC (metric period 300s).
+
+Evidence:
+- Helper returned `can_answer_root_cause: false` with empty `current_trigger_contexts`; Fargate log stream expired before investigation.
+- Companion `segment-publisher long running alam` is in ALARM at the same window with the same daily recurrence (30 consecutive days, 1.0 Sum per day), confirming Pattern B.
+- `Custom/segment-publisher` `SegmentPublisher.ExecutionTimeOverThreshold` daily sum continues at 1.0 for 2026-05-31.
+- Zero ERROR logs expected; this is the same batch-processing WARN pattern as 2026-05-30.
+
+Scope (inferred from 2026-05-30 adjacent-day evidence): `proudp` / `UL1T00` — see prior-day payload pattern (14 parallel campaigns, new-user UFM targeting).
+
+Classification: `no_action` — known periodic batch-processing WARN, companion alarm covers the signal, no customer impact.
+
+**Updated daily counts** (2026-05-31 added):
+```
+2026-04-13=7, 04-14=3, 04-15=2, 04-16=0, 04-17=4, 04-18=1,
+04-19=1, 04-20=5, 04-21=3, 04-22=2, 04-23=3, 04-24=6, 04-25=2, 04-26=2,
+04-27=4, 04-28=3, 04-29=5, 04-30=2, 05-01=1, 05-02=3, 05-03=1, 04-04=2,
+05-05=1, 05-06=1, 05-07=3, 05-08=1, 05-09=1, 05-10=1, 05-11=5, 05-12=3,
+05-13=1, 05-14=5, 05-15=1, 05-16=1, 05-17=1, 05-18=2, 05-19=1, 05-20=1,
+05-21=6, 05-22=1, 05-23=2, 05-24=1, 05-25=1, 05-26=1, 05-27=1, 05-28=1,
+05-29=2, 05-30=1, 05-31=1
+```
 

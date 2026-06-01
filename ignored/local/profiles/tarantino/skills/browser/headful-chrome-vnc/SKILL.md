@@ -463,7 +463,15 @@ xdotool search --onlyvisible --name 'Google Chrome' windowactivate %@ windowrais
 
 If a Selenium/webdriver-controlled Chrome is already running against the `Tarantino` user-data-dir (for example, because `p2_weekly_report.py` halted on CAPTCHA and left chromedriver alive), launching a second `google-chrome --user-data-dir=.../Tarantino` **silently exits** — Chrome detects the existing instance's `SingletonLock` and bails without an error message. Symptom: `ps -eo pid,comm | grep chrome` still shows the old `chromedriver` + children with `--test-type=webdriver` and no new window appears.
 
-**Cron-specific common case (verified 2026-05-09)**: The previous cron tick's probe/scrape is still parked. When §4's "driver INTENTIONALLY not quit; parking 24h" policy triggers, the Python process sits in `time.sleep(86400)` with chromedriver + Chrome attached. The next cron tick (~24h later) finds them still alive. Check for this first:
+**Cron-specific common case (verified 2026-05-09, recurred 2026-05-31)**: The previous cron tick's probe/scrape is still parked. When §4's "driver INTENTIONALLY not quit; parking 24h" policy triggers, the Python process sits in `time.sleep(86400)` with chromedriver + Chrome attached. The next cron tick (~24h later) finds them still alive.
+
+**Unsolved-overnight variant (verified 2026-05-31)**: If the user did NOT solve the previous tick's handoff in VNC, today's tick starts with the previous tick's parked Python + chromedriver + Chrome still pinned to yesterday's `/sorry/` URL. Detection: `xdotool getwindowname` on the Chrome window shows yesterday's blocked URL string verbatim (e.g. `https://www.google.com/search?...&hl=ko - Google Chrome`). Recovery is the same kill-then-sweep recipe below; the behavioral subtlety is what today's run will look like AFTER recovery:
+
+- Google SERP usually passes clean (the host IP's rate-limit window decayed naturally over 24h, even without a human solve). Observed 5/31: 18/18 clean Google run on the very first attempt of the recovered tick.
+- TikTok DOM-verify is more likely to hit Stage-2 captcha than usual, because the TikTok cookie layer is now ~48h stale (last warm session was the day before yesterday's parked tick). Observed 5/31: clean Google → TikTok captcha at candidate #10/16 of DOM verification.
+- This matches the "Two-stage captcha on recovery runs" section (Google + TikTok are separate cookie layers) — but the unsolved-overnight case escalates the TikTok-captcha probability further. Plan ahead: budget a Stage-2 VNC handoff if the previous tick wasn't solved.
+
+Check for this first:
 
 **Sibling failure mode — zombie chromedriver from completed pipeline stage (verified 2026-05-10)**: A DOM-verify / ranker / post-processing script from the *previous* pipeline run can exit normally but leave its chromedriver child as a defunct process (`STAT=Z`, `comm=[chromedriver] <defunct>`). The Python parent is gone but the zombie still holds the profile's SingletonLock via its parent reaping. Symptom on next cron tick:
 ```

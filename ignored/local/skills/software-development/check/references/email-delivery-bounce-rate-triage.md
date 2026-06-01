@@ -66,8 +66,13 @@ When `resource_type = 'user_journey'`, the correct scope is a **user journey**, 
 
 ## Classification guidance
 
-- `needs_fix` — email delivery is paused for affected recipients; the project has a list-quality issue (stale or invalid addresses). Track for customer outreach.
-- `no_action` — only when the event is clearly a false positive (e.g., test project, synthetic data). For real projects with non-zero `send_count`, default to `needs_fix` because customer-visible delivery was blocked.
+- `no_action` is correct when:
+  - The trigger shows a single campaign with bounce rate > 5% on a single day.
+  - `email-delivery` Lambda Runtime `Errors` are zero and SES account status is `HEALTHY`.
+  - The alarm is a sporadic single-campaign spike (different campaigns on different days), indicating an intentional circuit breaker operating as designed.
+- `needs_fix` is only appropriate when the same project/campaign triggers repeatedly over multiple days with escalating blocked send counts, indicating stale/low-quality email lists that the customer has not cleaned.
+- This alarm counts circuit-breaker events (`Sum > 50` in 5 minutes), not a catastrophic SES account failure. The metric line is `INFO`, not `ERROR`.
+- See `email-delivery-bounce-rate-circuit-breaker.md` for full historical baseline and Terraform source.
 
 ## Terraform / code locations
 

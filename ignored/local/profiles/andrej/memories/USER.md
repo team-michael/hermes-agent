@@ -6,12 +6,12 @@ User studies Notifly infra; wants exact user/project/device timelines and strict
 §
 In DMs, user wants infra explanations tailored to Mobile/iOS+SDK Eng background: use analogies only when mechanisms match; flag SDK implications for contracts/retries/offline/telemetry/DX.
 §
-Slack: concise formal KR, fixed-width milestone tables. Linear: reuse thread bot ticket; no duplicates.
+Slack: concise formal KR, fixed-width tables. Linear: reuse thread bot ticket; no dups.
 §
 MSP/Zendesk: show draft; no internal Slack refs.
 §
-API prefs: REST nouns/no PII/users=`notifly_user_id`; PG/docs canonical. Campaign/Journey create detail must include editable fields; no draft endpoint. CS eval: source→intent, tools+params, Answer flow, no keyword lists, 10-row batches.
+API prefs: REST nouns/no PII/users=`notifly_user_id`; PG/docs canonical. Campaign/Journey detail=editable; no draft endpoint. PR validation: local stage-env OK; matrix explicit; split unsupported/env-failed. CS eval: source→intent/tools+params/Answer/no keywords/10 rows.
 §
-Post-session: proactive memory + umbrella skills. Sheets QA: new tabs, compact columns, color split rows, avoid over-splitting/context blocks.
+Post-session: proactive memory + umbrella skills.
 §
 For Cognito Hosted UI visual refinements, user prefers updated CSS as an attachment for browser-console testing before Terraform.

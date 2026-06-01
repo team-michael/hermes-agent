@@ -768,6 +768,8 @@ Without (3), every VNC handoff recovery leaves the operator with a choice betwee
 
 A clean VNC solve of Google `/sorry/` does NOT seed TikTok cookies. Observed 2026-05-11 01:12 UTC: immediately after a successful Google tail-recovery run (5/5 queries clean, 0 blocks), `dom_verify_run.py` spawned a fresh `create_driver()` against the same Tarantino profile and hit **TikTok rotation captcha on video #1** (`@_makaylajade_`). The Google cookies were warm; the TikTok cookies were stale/absent.
 
+**Unsolved-overnight escalation (verified 2026-05-31)**: If the previous day's cron tick handoff went unsolved (user didn't click into VNC), today's recovered tick is at higher Stage-2 risk because the TikTok cookie layer is now ~48h stale, not ~24h. Observed 5/31 sequence: yesterday's Q14 Google handoff sat unsolved overnight → today's tick killed yesterday's parked process, swept SingletonLock, ran clean Google 18/18 → TikTok DOM-verify hit captcha at candidate #10/16. Two consecutive days of staleness compounded into a Stage-2 hit even though the same-day Google scrape was perfect. Operational rule: **on any unsolved-overnight recovery, assume Stage-2 will fire and budget a second VNC handoff post.** Don't promise jace 16/16 DOM verification on the recovered tick — promise 8-12/16 with a Stage-2 escalation plan.
+
 Implication for recovery flow: **expect a second VNC handoff** when moving from the SERP-scraping stage to the DOM-verify stage, if it's been more than ~a day since the last TikTok session. Two-stage captcha runs are normal:
 - Stage 1 (Google `/sorry/`) → human solves, tail recovery runs clean
 - Stage 2 (TikTok rotation puzzle on first DOM-verify) → human solves again, DOM verify runs clean for the remaining 14-15 videos
