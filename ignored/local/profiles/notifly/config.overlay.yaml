@@ -1,8 +1,11 @@
 model:
-  provider: openai
+  provider: openai-codex
   base_url: ''
   default: gpt-5.5
 providers:
+  openai-codex:
+    request_timeout_seconds: 900
+    stale_timeout_seconds: 900
   openai:
     name: OpenAI
     base_url: https://api.openai.com/v1
@@ -23,9 +26,8 @@ compression:
   hygiene_hard_message_limit: 400
 auxiliary:
   compression:
-    provider: openai
+    provider: openai-codex
     model: gpt-5.4-mini
-    api_mode: codex_responses
     base_url: ""
     api_key: ""
     timeout: 240
