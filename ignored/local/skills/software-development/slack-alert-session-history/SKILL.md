@@ -18,6 +18,8 @@ Use this when a user asks:
 
 This skill is for **Hermes session archive inspection**, not live Slack history.
 
+Important boundary: when the user gives a Slack permalink/thread URL and asks to inspect the actual thread history, do **not** default to Hermes archives. First use the live Slack Web API workflow from `slack-thread-root-retrieval`: parse `channel`/`thread_ts`, load `SLACK_BOT_TOKEN` from the active profile `.env` if needed, and call `conversations.replies` / `conversations.history`. Use this archive skill only after the live API is unavailable, fails with an API-level error, or the user specifically asks for Hermes-visible prior sessions.
+
 It also covers routing recovery when Slack group/channel delivery fails (for example `not_in_channel`) and you need to resolve a named person's DM target from Hermes archives. See `references/slack-dm-target-resolution.md`.
 
 ## Core idea
@@ -150,6 +152,10 @@ This skill compresses that into **one command**.
 - If `session_search` or the script finds nothing, check whether another Hermes profile handled the thread. For cross-profile archive inspection, see `references/cross-profile-session-archive-inspection.md`.
 
 ## Good workflow in practice
+
+For a live Slack permalink/thread URL, prefer `slack-thread-root-retrieval` first. Only use this archive workflow if Slack API access is unavailable or returns an explicit error.
+
+Archive workflow:
 
 1. Try `--channel-id + --thread-ts` if you have them.
 2. If you do not know the thread, run list mode on the channel.

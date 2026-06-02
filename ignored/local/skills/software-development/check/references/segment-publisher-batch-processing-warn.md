@@ -45,10 +45,12 @@ The triggering stream varies per invocation (different ECS tasks handle differen
 
 1. Identify the active stream around the alarm-datapoint time via `describe_log_streams(orderBy='LastEventTime', descending=True)`. For large-batch tasks the trigger stream may be ranked 5th–10th because it finishes earlier than smaller active tasks; see the `ecs-log-manual-trace.md` reference.
 2. Use `get_log_events` on that stream bounded to the alarm window (±5 min).
+   - **AWS CLI v2 pitfall**: use `--no-start-from-head` instead of `--start-from-head false`.
 3. Look for:
    - `campaignId: <id>` lines.
-   - `Received event` JSON containing the project_id key and a `user_journeys` array (when `schedule_type` is `"user_journey"`, the `campaignId` refers to the user journey ID).
+   - `Received event` JSON containing `project_id`, `campaigns[].id`, and especially a `user_journeys` array.
    - `project_id` and `campaign_id` in structured `Used user property names in message:` or `Used user property names in segments:` logs.
+   - **User-journey fast check**: when `Received event` contains `"schedule_type":"user_journey"`, the top-level `campaignId` in the same payload refers to the user journey ID (e.g. `UL1T00`). Extract the actual name/ID from the `user_journeys` array, not from the `campaigns` array.
 4. Map `project_id` via DynamoDB `project` table.
 
 When the `Received event` payload contains `"schedule_type": "user_journey"` and a `user_journeys` array, report the scope as **user journey** (mutually exclusive with campaign), using the ID from the array.

@@ -122,6 +122,16 @@ curl -s -H "Authorization: Bearer xoxb-..." \
   "https://slack.com/api/conversations.replies?channel=C12345678&ts=1712345678.123456"
 ```
 
+### Reusable local script
+
+For Notifly/Hermes Slack permalink work, a reusable script is available at `scripts/fetch_slack_thread.py`:
+
+```bash
+python <skill_dir>/scripts/fetch_slack_thread.py C12345678 1712345678.123456
+```
+
+It loads `SLACK_BOT_TOKEN` from the active env or `/home/ubuntu/.hermes/profiles/andrej/.env`, fetches `conversations.replies`, extracts message text/attachments/blocks into a compact summary, and writes raw + summary JSON under `~/.hermes/profiles/andrej/slack_api_cache/` without printing the token.
+
 Interpret response:
 - `ok: true` → retrieval works
 - `missing_scope` → scopes/reinstall problem

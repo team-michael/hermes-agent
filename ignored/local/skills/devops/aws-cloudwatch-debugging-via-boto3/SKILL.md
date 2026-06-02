@@ -113,7 +113,22 @@ session = boto3.Session(
    - explicitly check for recent code changes in the exact callsites (`git log -- <cache file> <service path> <redis wrapper>`), and also verify whether an ECS deploy happened even if code did not change
    - do not overfit to the user's intuition; it is common that "last week increased" is false once you compare recent 7 days to the prior 7 days, while the real increase happened earlier as a step-up in baseline
 
-8. **For RDS CPU alarms, correlate with Performance Insights**
+8. **For RDS large DDL/index timing, choose a window from recent metrics**
+   - For requests like “when should we trigger `CREATE INDEX CONCURRENTLY`?”, pull at least the last 72h for the writer instance and summarize by local/KST hour.
+   - Use CloudWatch `AWS/RDS` metrics on the writer `DBInstanceIdentifier`:
+     - `CPUUtilization`
+     - `DBLoad`, `DBLoadCPU`, `DBLoadNonCPU`
+     - `ReadIOPS`, `WriteIOPS`
+     - `ReadLatency`, `WriteLatency`
+     - `FreeableMemory`
+   - Also inspect cluster-level metrics where relevant:
+     - `VolumeReadIOPs`, `VolumeWriteIOPs`
+     - replica lag metrics if available
+   - Rank candidate windows by low p95 CPU, low p95 DBLoad, low p95 read/write IOPS, and stable latency. Prefer a start time before the absolute quietest window if the operation may run several hours and the quietest window is followed by a known spike.
+   - For Notifly Aurora examples, KST `03:00–05:00` may be the lowest slot, but KST `01:30–02:00` can be a safer trigger time for 2–6h index builds so the job finishes before the KST `08:00–12:00` spike. Recompute this each time; do not reuse old windows blindly.
+   - Report both “best observed window” and “recommended trigger time,” plus explicit avoid windows and abort thresholds.
+
+9. **For RDS CPU alarms, correlate with Performance Insights**
    - call `rds.describe_db_clusters()` / `describe_db_instances()` to identify writer vs readers and collect `DbiResourceId`
    - use Performance Insights (`pi.get_resource_metrics`, `pi.describe_dimension_keys`) on the offending instance
    - inspect:
@@ -410,6 +425,7 @@ When the user asks for alarms that adapt automatically to instance churn or fail
 - Do not stop at alarm metadata; always correlate with logs.
 - Alarm metrics may aggregate unrelated app errors; identify the specific one tied to the alarm window.
 - Some application logs may include full serialized payloads or embedded credentials/config (for example, raw `Received event:` messages). Prefer aggregated/parsing queries over dumping raw payloads, and redact any sensitive fields before reporting.
+- Treat SQS `ReceiveMessage` on a production main queue as potentially mutating, not harmless read-only inspection. If `RedrivePolicy.maxReceiveCount` is very low (for example `1`), sampling a visible message can hide it and later push it to DLQ. Prefer CloudWatch metrics, Lambda consumer logs, and DLQ-only sampling with a tiny visibility timeout unless the user explicitly accepts the risk.
 - Convert UTC timestamps to the user's likely timezone if operationally relevant.
 
 ## Example learned pattern
