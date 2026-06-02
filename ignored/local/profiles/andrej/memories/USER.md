@@ -10,8 +10,10 @@ Slack/incidents: concise formal KR; non-dev-friendly handoffs; current evidence/
 §
 MSP/Zendesk: show draft; no internal Slack refs.
 §
-API prefs: REST nouns/no PII/users=`notifly_user_id`; PG/docs canonical. PR validation: local stage OK; matrix explicit. CS eval: source-only, tool-use not prose, no over-call; compact row# layout, OOS/GTO colors.
+CS eval: source-only, normalize tool families, row examples. Notifly agent prompts: MCP-only runtime-discovery; keep prompt/API/benchmarks separate.
 §
 Post-session: proactive memory + umbrella skills.
 §
 For Cognito Hosted UI visual refinements, user prefers updated CSS as an attachment for browser-console testing before Terraform.
+§
+GFSA 외부심사용 문서는 내부 ID/PR/티켓/SHA/Slack 링크를 빼고, 기능·KR 진행률·근거만 간결히 쓴다.

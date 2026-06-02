@@ -28,6 +28,7 @@ So prefer **Python via `terminal`** and explicitly construct a boto3 `Session` f
 ## Workflow
 
 Reference for noisy p95/p99/p99.9 alarm tuning: `references/noisy-percentile-alarm-tuning.md`.
+Reference for Aurora/RDS reader fleet right-sizing and 3→2 reduction reviews: `references/rds-reader-rightsizing.md`.
 
 1. **Check environment first**
    - `aws --version`

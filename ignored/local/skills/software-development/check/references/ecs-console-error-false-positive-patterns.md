@@ -106,3 +106,28 @@ fields @timestamp, @message
 If the 30d count is single-digit and no other ERROR patterns exist, classify as `no_action` — this is a handled business rejection, not a service bug.
 
 See `references/web-console-kakao-image-upload-validation-error.md` for full triage and remediation direction.
+
+## Node.js internal object properties with `error`/`errored` substring
+
+**Alarm**: `/aws/ecs/notifly-services-prod/web-console console error` (and potentially any ECS service with a coarse `%ERROR|Exception%` metric filter)  
+**Metric filter**: `%ERROR|Exception%`  
+**Trigger log**: Property-dump lines such as:
+```
+      error: [Function: contextWrapper],
+      [Symbol(events.errorMonitor)]: [Function: contextWrapper]
+    [Symbol(errored)]: null,
+      error: [WeakMap],
+      [Symbol(events.errorMonitor)]: [WeakMap]
+      [Symbol(errored)]: null,
+```
+
+**Mechanism**: These are Node.js internal object property names (from `net.Socket`, `tls.TLSSocket`, or HTTP client objects) that contain the substring `error` or `errored` (e.g. `error`, `[Symbol(errored)]`, `[Symbol(events.errorMonitor)]`, `_closeAfterHandlingError`). When a library or code path serializes an error object with deep property enumeration via `console.error(e)` or `console.dir(e, {depth: ...})`, the resulting log dump includes these property names. The case-insensitive `%ERROR%` arm of the metric filter matches them even though no application-level error occurred. The surrounding context often reveals the source object (e.g. `encrypted: true`, `_host: 'mud-kage.kakao.com'`, `ssl: [TLSWrap]`, `timeout: 5000`), confirming this is a serialized network client state, not a service fault.
+
+**Triage**: When the current alarm window shows only property-dump lines and no actual stack traces or application ERROR logs:
+1. Run `filter-log-events` with `ERROR` to see the matching lines.
+2. Run `filter-log-events` with `Exception` on the same window.
+3. If the `Exception` query returns empty and the `ERROR` results are exclusively object-property dumps (no `at ` stack frames, no `Error:` messages), classify as `no_action`.
+
+**Classification**: `no_action` when this signature dominates and no real ERROR/Exception patterns coexist in the same alarm window.
+
+**Remediation direction**: If this becomes frequent, consider narrowing the metric filter to require a stack trace anchor (`at `) or an `Error:` prefix, instead of the raw `%ERROR%` substring. Alternatively, move object-serialization debugging lines to a lower log level in the emitting code path.

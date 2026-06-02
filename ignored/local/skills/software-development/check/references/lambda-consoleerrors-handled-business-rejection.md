@@ -123,6 +123,91 @@ for e in resp.get('events', []):
 "
 ```
 
+### cafe24-worker: missing user table on shop-delete DELETE (42P01)
+
+- Trigger string: `Failed to delete <mallName> from notifly, error: error: relation "user_<hash>" does not exist`
+- **Exact log line**:
+  ```
+  ERROR	<request_id>	Failed to delete heodakmkt from notifly, error: error: relation "user_f3d350d0d5bb50ccaf875b6bafd1442c" does not exist
+  Query: DELETE FROM device_f3d350d0d5bb50ccaf875b6bafd1442c WHERE notifly_user_id IN ( SELECT notifly_user_id FROM user_f3d350d0d5bb50ccaf875b6bafd1442c WHERE source = 'cafe24' )
+  ```
+- Code path: `services/lambda/cafe24-worker/lib/jobs/shopDelete.js` (or equivalent shop-deletion job) constructs a cross-table DELETE that joins `device_<hash>` with `user_<hash>` filtered by `source = 'cafe24'`.
+- Why it happens: When a Cafe24 shop deletion webhook arrives, the Lambda tries to delete Cafe24-sourced users and their devices. If the project's `user_<hash>` table does not exist (e.g., project migrated to a different shard scheme, or users were never created via Cafe24), PostgreSQL returns `42P01` (`relation does not exist`). The error is caught and logged at `ERROR` level, tripping the `%ERROR%` metric filter.
+- Invocation health: `AWS/Lambda Errors == 0`, `Throttles == 0`, `Duration` normal (< 2 s). Lambda completes normally.
+- Impact: no data is deleted because the source table doesn't exist. No customer-visible failure occurs; the webhook response to Cafe24 is not affected.
+- Scope extraction: Extract the 32-char hex hash from the table name in the ERROR log (e.g. `user_f3d350d0d5bb50ccaf875b6bafd1442c` → `f3d350d0d5bb50ccaf875b6bafd1442c`). Map via DynamoDB `project` table. In the observed case this resolves to `fresheasy` (`product_id: fresheasy`). The shop name (e.g. `heodakmkt`) is present in the log line. No `campaign_id` or `user_journey_id` is involved.
+- Frequency observed: 30d 4 / 7d 2 / 1d 1 / 10m 1. The 7d window shows two OK→ALARM transitions (2026-05-28, 2026-06-02), suggesting a low-rate recurring pattern tied to shop-deletion events for this or other projects.
+- Queue / DLQ state: `cafe24-worker-queue` has `maxReceiveCount: 6`, DLQ depth 0, queue depth 0. Even when the SQS record carries the deletion event, redrive handles transient failures; this specific pattern is not an SQS retry issue.
+- Classification: `no_action`. Lambda `Errors=0`, queue healthy, and the root cause is a missing target table for a handled deletion request.
+- Action target (if recurrence becomes noisy, e.g. > 1/week for multiple projects):
+  - In the shop-deletion job, verify `user_<hash>` table existence before issuing the DELETE (e.g. via `pg_class` or a try/catch with `42P01` downgrade), or simply downgrade the caught `42P01` log to `WARN` when the table is known not to exist.
+  - Alternative: log only `mallName`, `projectId`, and a compact code (`USER_TABLE_MISSING`) rather than the full SQL statement.
+
+**Bounded log check** (when helper returns empty `current_trigger_contexts`):
+```bash
+python3 -c "
+import boto3, datetime
+session = boto3.Session(region_name='ap-northeast-2')
+logs = session.client('logs')
+start = int(datetime.datetime(YYYY, MM, DD, HH, MM, tzinfo=datetime.timezone.utc).timestamp() * 1000)
+end   = int(datetime.datetime(YYYY, MM, DD, HH, MM, tzinfo=datetime.timezone.utc).timestamp() * 1000)
+resp = logs.filter_log_events(
+    logGroupName='/aws/lambda/cafe24-worker',
+    startTime=start, endTime=end,
+    filterPattern='does not exist',
+    limit=20
+)
+for e in resp.get('events', []):
+    print(e['message'].strip()[:400])
+"
+```
+**7-day recurrence check**:
+```bash
+aws logs start-query --region ap-northeast-2 \
+  --log-group-name '/aws/lambda/cafe24-worker' \
+  --start-time $(python3 -c "import datetime; print(int((datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(days=7)).timestamp()))") \
+  --end-time $(python3 -c "import datetime; print(int(datetime.datetime.now(datetime.timezone.utc).timestamp()))") \
+  --query-string 'fields @timestamp, @message | filter @message like "does not exist" | stats count() by bin(1d)'
+# Then poll with get-query-results
+```
+
+- Trigger strings: `Record <messageId> failed, will retry via SQS:`, `Unsupported command:`, `The body from sqs record is not in JSON format.`, `Invalid record format`, `Project id or token not found for mallId`, `Failed to add user of <mallId>`, `Failed to update user properties of <mallId>`, `API request failed with`
+- Code path: `services/lambda/cafe24-worker/index.js` and `lib/jobs/*.js`
+- Why it happens: `cafe24-worker` is an SQS consumer Lambda that processes Cafe24 webhook events (`add_user`, `order_completed`, `add_to_cart`, etc.). It uses `Promise.allSettled()` and returns `batchItemFailures` for any rejected task. Rejected — including those logged with `console.error` — are **handled by the Lambda runtime**: SQS will retry per the queue's `RedrivePolicy` (`maxReceiveCount: 6` for `cafe24-worker-queue`). The Lambda itself returns normally with `return { batchItemFailures }`.
+- Invocation health: `AWS/Lambda Errors == 0`, `Throttles == 0`, `Duration` well under `Timeout` (typically < 2 s, p99 < 1.2 s). `REPORT` lines show normal completion.
+- Impact: individual SQS records retry through standard SQS redrive. No data loss because `maxReceiveCount: 6` provides ample retry budget before DLQ. DLQ depth is typically zero.
+- Scope extraction: the ERROR log often carries `mallId` (e.g. `chosunhnb`, `vorio01`). Map `mallId` → `project_id` via DynamoDB `cafe24_integration` table or use the `mall_id` field in the SQS body. When the log line is a generic `index.js` handler error (`Unsupported command`, `Invalid record format`), `mallId` may still be present. No `campaign_id` or `user_journey_id` is involved in this Lambda.
+- Metric-filter note: the `%ERROR|Status: timeout%` filter catches all of the above because they contain the literal substring `ERROR`. There is no separate `timeout` signal here; the `|Status: timeout` clause is the metric-filter's catch-all for other Lambda failure modes.
+- **Log-ingestion pitfall**: `cafe24-worker` has low traffic and short-lived log streams. When an alarm fires, `filter-log-events` may return zero results even though the metric filter demonstrably breached, because the matching log line has not yet been indexed or the stream already rotated. In this state, do not conclude the alarm is unclassifiable. Cross-check `AWS/Lambda Errors`, queue depth, and DLQ depth instead.
+- Classification: `no_action` when `Lambda Errors=0`, queue metrics are healthy, and recurrence is sparse (observed ~1/week, e.g. 30d 4 / 7d 1 / 1d 1). Each alarm is a transient handled rejection, not a service fault.
+- Action target (if noise threshold is crossed, e.g. > 1/day sustained):
+  - In `services/lambda/cafe24-worker/index.js`, change the non-rate-limit rejection log from `console.error` to `console.warn`:
+    ```js
+    // Line ~93
+    console.warn(`Record ${tasks[i].messageId} failed, will retry via SQS:`, reason);
+    ```
+  - Keep `batchItemFailures.push(...)` unchanged so SQS retry still works.
+  - For job-level errors (`lib/jobs/*.js`), prefer `console.warn` for expected failures (missing project/token, invalid params) and keep `console.error` only for unexpected exceptions (network failure, DB write failure).
+  - No Terraform or alarm changes needed; the metric filter still catches real Lambda invocation failures (`Errors > 0`).
+- Bounded log check (when helper returns empty `current_trigger_contexts`):
+```bash
+python3 -c "
+import boto3, datetime
+session = boto3.Session(region_name='ap-northeast-2')
+logs = session.client('logs')
+start = int(datetime.datetime(YYYY, MM, DD, HH, MM, tzinfo=datetime.timezone.utc).timestamp() * 1000)
+end   = int(datetime.datetime(YYYY, MM, DD, HH, MM, tzinfo=datetime.timezone.utc).timestamp() * 1000)
+resp = logs.filter_log_events(
+    logGroupName='/aws/lambda/cafe24-worker',
+    startTime=start, endTime=end,
+    filterPattern='ERROR',
+    limit=50
+)
+for e in resp.get('events', []):
+    print(e['message'].strip()[:300])
+"
+```
+
 ### Other patterns (see dedicated references)
 
 - `message-event-consumer`: `delivery_policy_inspection_failed__global_frequency_limit` — handled frequency-limit rejection. See `references/message-event-consumer-delivery-policy-error.md`.

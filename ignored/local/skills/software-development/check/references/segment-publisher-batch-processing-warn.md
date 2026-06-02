@@ -36,7 +36,9 @@ Total processing time: <duration_ms> ms
 ```
 
 - No ERROR logs co-occur.
-- Memory (`[MEMORY USAGE REPORT] rss`) is frequently below the ECS task limit (3072 MB), but large multi-campaign batches can push it well above the limit (observed **4655 MB** on 2026-05-24 for melting `k6bkO6`). The container does not necessarily OOM-kill; swap-driven latency may contribute to the total batch time.
+- Memory (`[MEMORY USAGE REPORT] rss`) is frequently below the ECS task limit (3072 MB), but large multi-campaign batches can push it well above the limit.
+  - Observed **4655 MB** on 2026-05-24 (melting `k6bkO6`).
+  - Observed **4717 MB** on 2026-06-02 (class101 multi-campaign batch, 10 campaigns simultaneously). The container does not necessarily OOM-kill; swap-driven latency may contribute to the total batch time.
 - The task continues publishing recipients normally; batch index increments.
 
 ## Scope extraction
@@ -47,15 +49,17 @@ The triggering stream varies per invocation (different ECS tasks handle differen
 2. Use `get_log_events` on that stream bounded to the alarm window (±5 min).
    - **AWS CLI v2 pitfall**: use `--no-start-from-head` instead of `--start-from-head false`.
 3. Look for:
-   - `campaignId: <id>` lines.
+   - `campaignId: <id>` lines. In a multi-campaign batch you will see interleaved `campaignId: <id>, N recipients published. (batch index: N)` lines from many campaigns in the same stream.
    - `Received event` JSON containing `project_id`, `campaigns[].id`, and especially a `user_journeys` array.
-   - `project_id` and `campaign_id` in structured `Used user property names in message:` or `Used user property names in segments:` logs.
-   - **User-journey fast check**: when `Received event` contains `"schedule_type":"user_journey"`, the top-level `campaignId` in the same payload refers to the user journey ID (e.g. `UL1T00`). Extract the actual name/ID from the `user_journeys` array, not from the `campaigns` array.
+     - **Multi-campaign batch**: when the payload contains `"schedule_type":"campaign"` and a `campaigns[]` array with many objects, report the dominant campaigns (or the full list if short) and the shared `project_id`.
+     - **Finding `Received event`**: it is often the first line of the stream. If `get_log_events` with a time-window returns only later lines, read from the stream start with `--start-from-head` and scan the first ~20 events.
+   - `project_id` and `campaign_id` in structured `Used user property names in message:` or `Used user property names in segments:` logs. These are reliable fallback scope sources when the `Received event` JSON is too long or truncated.
 4. Map `project_id` via DynamoDB `project` table.
 
 When the `Received event` payload contains `"schedule_type": "user_journey"` and a `user_journeys` array, report the scope as **user journey** (mutually exclusive with campaign), using the ID from the array.
 
 Observed projects/campaigns in recent triggers (scope varies by day because `UL1T00` is not globally unique):
+- **`class101`** / multi-campaign batch `CNGJjd`, `C5Zpf0`, `WPE9J6`, `VMyJo5`, `3KWfBG`, `a84kiE`, `FQgbL9`, `sOk5Yk`, `IdxUZt`, `HxbGSr` (2026-06-02 06:29 UTC, ~30.3 min, **campaign**, rss peaked at **4717 MB**)
 - **`melting`** / `k6bkO6` (2026-05-24 06:29 UTC, ~30.4 min, multi-campaign batch, rss peaked at **4655 MB**)
 - `melting` / `k6bkO6` (2026-05-15 06:30 UTC, ~31.4 min)
 - `proudp` / `UL1T00` (2026-05-14 11:52 UTC, ~53.6 min, 884k recipients)

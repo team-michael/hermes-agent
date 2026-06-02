@@ -42,6 +42,30 @@ The reusable pattern:
 - `project` table maps `id -> product_id, name`
 - `products` table can be queried for product metadata if needed
 - Worker logs are in `/aws/lambda/cafe24-worker`
+- **User table naming**: `@notifly/userdb` rewrites `user_${projectId}` → `users_${projectId}` (encrypted dual-write), but raw queries via `@notifly/common`'s `executeQuery` do not. See `cafe24-worker` code in `lib/db.js` (especially `deleteCafe24Users`).
+
+## Related alarm: `cafe24-worker lambda error` (ConsoleErrors, not DLQ)
+
+The same Lambda also has a ConsoleErrors alarm driven by metric filter `%ERROR|Status: timeout%`. One known false-positive signature is:
+
+```
+ERROR  Failed to delete <mallId> from notifly, error: error: relation "user_<project_id>" does not exist
+```
+
+### Why this is a false positive
+- Lambda `Errors = 0`, `Throttles = 0`.
+- The error is caught in `lib/jobs/delete.js` `deleteMall()` inside a `try...catch` and logged with `console.error`.
+- The metric filter catches the literal string `ERROR`, not a runtime failure.
+
+### Root cause
+`lib/db.js` `deleteCafe24Users` sends two DELETE queries. The first uses `@notifly/userdb` `executeWriteQueryToUserTable`, which rewrites the legacy `user_${projectId}` table name to `users_${projectId}`. The second query (device deletion with a subquery) calls `db.executeQuery` directly, bypassing the dual-write layer and sending the raw `user_${projectId}` name to Postgres. Projects created after the encryption migration only have `users_${projectId}`, so the subquery fails with `relation does not exist`.
+
+### Scope extraction
+Same as DLQ: extract `project_id` from the table suffix in the log line, map via DynamoDB `project`.
+
+### Classification
+- `no_action` when sporadic (handled rejection, Errors=0).
+- `needs_fix` when recurrent, because the device-cleanup query should reference `users_${projectId}` or route through `@notifly/userdb`.
 
 ## Step 1 — Verify live queue state
 
