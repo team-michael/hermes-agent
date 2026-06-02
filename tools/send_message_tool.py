@@ -1430,14 +1430,14 @@ def _derive_forum_thread_name(message: str) -> str:
 # Process-local cache for Discord channel-type probes.  Avoids re-probing the
 # same channel on every send when the directory cache has no entry (e.g. fresh
 # install, or channel created after the last directory build).
-_DISCORD_CHANNEL_TYPE_PROBE_CACHE: Dict[str, bool] = {}
+_DISCORD_CHANNEL_TYPE_PROBE_CACHE: dict[str, bool] = {}
 
 
 def _remember_channel_is_forum(chat_id: str, is_forum: bool) -> None:
     _DISCORD_CHANNEL_TYPE_PROBE_CACHE[str(chat_id)] = bool(is_forum)
 
 
-def _probe_is_forum_cached(chat_id: str) -> Optional[bool]:
+def _probe_is_forum_cached(chat_id: str) -> bool | None:
     return _DISCORD_CHANNEL_TYPE_PROBE_CACHE.get(str(chat_id))
 
 
