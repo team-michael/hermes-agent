@@ -559,7 +559,7 @@ Flow:
 6. if AI gateway or Workers AI dependency is suspected, verify Cloudflare status per `references/cloudflare-workers-ai-status-check.md`
 
 **Pitfall — `api-service` 4xx alarm triggered by handled validation rejections**: The `ConsoleErrors` metric filter `{ $.message = "error-response" && $.status >= 400 }` on `/aws/ecs/notifly-services-prod/api-service` counts every `error-response` log, but the underlying logs are emitted at `WARN` level for handled validation rejections. Two dominant false-positive patterns breach `Sum > 100`:
-1. **Weekday ~17:00 UTC (KST 02:00) `/authenticate` burst**: ~500–1000 `POST /authenticate` 400 requests from `Apache-HttpClient/5.3.1 (Java/17.0.19)` with `"Missing required fields"`. Weekend volume drops to near zero.
+1. **daily ~17:00 UTC (KST 02:00) `/authenticate` burst**: ~1,500–1,900 `POST /authenticate` 400 requests from `Apache-HttpClient/5.3.1 (Java/17.0.19)` with `"Missing required fields"`. Occurs every day including weekends; timing is tight (±2 minutes).
 2. **Campaign send burst**: repeated `POST /projects/{pid}/campaigns/{cid}/send` 400 with `"Bad request: campaign <id> does not exist"` from a single client IP (e.g. `Apache-HttpClient/5.5`), typically 500–900 requests in 30 minutes to one non-existent campaign.
 
 Both are client-side bad requests, not service faults. Before classifying as `needs_fix`, inspect the alarm-window logs for the dominant signature and check the `level` field (`warn` vs `error`). See `references/api-service-4xx-authenticate-noise.md` for bounded trace commands, daily trend verification, and the `level` fast classifier.

@@ -43,6 +43,7 @@ The reusable pattern:
 - `products` table can be queried for product metadata if needed
 - Worker logs are in `/aws/lambda/cafe24-worker`
 - **User table naming**: `@notifly/userdb` rewrites `user_${projectId}` → `users_${projectId}` (encrypted dual-write), but raw queries via `@notifly/common`'s `executeQuery` do not. See `cafe24-worker` code in `lib/db.js` (especially `deleteCafe24Users`).
+- **Partial batch response**: `cafe24-worker` uses Lambda `ReportBatchItemFailures`. A message can be returned to SQS without incrementing `AWS/Lambda Errors`. With `maxReceiveCount=6`, persistent rate-limit failures (e.g., Cafe24 429 window longer than retry budget) can still exhaust retries and reach DLQ despite healthy Lambda metrics.
 
 ## Related alarm: `cafe24-worker lambda error` (ConsoleErrors, not DLQ)
 
@@ -288,6 +289,56 @@ for e in events:
 print(json.dumps(by_mall.most_common(), ensure_ascii=False, indent=2))
 PY
 ```
+
+### Bounded trace: extract Redis backoff events per mall
+
+When the `maxReceiveCount=6` retry budget is exhausted by a persistent Cafe24 rate limit, the Lambda log shows explicit backoff settings via `lib/redis-rate-limiter.js`:
+
+```bash
+python - <<'PY'
+import boto3, os, json, datetime, re, collections
+session=boto3.Session(
+    aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
+    aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY'),
+    aws_session_token=os.environ.get('AWS_SESSION_TOKEN'),
+    region_name=os.environ.get('AWS_DEFAULT_REGION','ap-northeast-2'),
+)
+logs=session.client('logs')
+start_ms=int(datetime.datetime(2026,6,2,20,0,tzinfo=datetime.timezone.utc).timestamp()*1000)
+end_ms=int(datetime.datetime(2026,6,2,22,0,tzinfo=datetime.timezone.utc).timestamp()*1000)
+kwargs=dict(
+    logGroupName='/aws/lambda/cafe24-worker',
+    startTime=start_ms,
+    endTime=end_ms,
+    filterPattern='"Backoff set for"'
+)
+events=[]
+while True:
+    resp=logs.filter_log_events(**kwargs)
+    events.extend(resp.get('events', []))
+    token=resp.get('nextToken')
+    if not token or token==kwargs.get('nextToken'):
+        break
+    kwargs['nextToken']=token
+backoff_re=re.compile(r'Backoff set for ([^:]+): (\d+)s')
+by_mall=collections.Counter()
+max_ttl=0
+for e in events:
+    m=backoff_re.search(e['message'])
+    if m:
+        mall=m.group(1)
+        ttl=int(m.group(2))
+        by_mall[mall]+=1
+        if ttl>max_ttl:
+            max_ttl=ttl
+print(json.dumps({'max_ttl_s': max_ttl, 'by_mall': by_mall.most_common()}, ensure_ascii=False, indent=2))
+PY
+```
+
+**Interpretation:**
+- High `by_mall` count for a single mall → persistent rate limit on that mall.
+- `max_ttl >= 600` → Redis backoff duration matches typical Cafe24 rate-limit window (10 minutes).
+- If backoff logs cluster within the alarm window, DLQ entries are likely from that same rate-limit episode.
 
 ### What to look for
 

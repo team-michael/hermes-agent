@@ -20,7 +20,7 @@ lsp:
   enabled: false
 compression:
   enabled: true
-  threshold: 0.38
+  threshold: 0.55
   target_ratio: 0.35
   protect_last_n: 20
   hygiene_hard_message_limit: 400

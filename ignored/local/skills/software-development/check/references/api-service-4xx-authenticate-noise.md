@@ -326,7 +326,15 @@ aws cloudwatch get-metric-statistics --region ap-northeast-2 \
   --statistics Sum \
   --output json | jq -r '.Datapoints | sort_by(.Timestamp) | .[] | [.Timestamp, .Sum] | @tsv'
 ```
-Note: `get-metric-statistics` returns `.Timestamp` as an ISO string (not epoch milliseconds), so do not divide by 1000 before piping to `todate`.
+Result: identical to the known daily ~02:11 KST `/authenticate` authentication rejection burst. All signals are handled `warn` validation rejections; no customer impact. The 30-day OK→ALARM count of 25 is consistent with the `TreatMissingData: missing` undercount pattern documented above.
+
+2026-06-02 alarm window (16:56–17:06 UTC / 2026-06-03 01:56–02:06 KST):
+- **Alarm transitions**: OK→ALARM at 17:11 UTC, ALARM→OK at 17:19 UTC; second OK→ALARM at 17:16 UTC (2 transitions within 10 minutes, sliding-window artifact)
+- Metric datapoints: 175.0 (16:56), 893.0 (17:01), 487.0 (17:06); threshold 100.0, 3 of 4 datapoints
+- Total `error-response` status ≥ 400: **~1,574**; `/authenticate` 400: **1,536** (97.6%), all `level: warn`, `projectId: "unknown"`
+- Secondary signatures: `DELETE /projects/.../blockservice/recipients/removes` 400×10 (`handys`), `POST /track-event` 401×5 (`playio`), `POST /projects/.../user-journeys/Rbc3W7/enter` 400×3 (`class101`), `GET /user-state/2b9f5a6685ba5b839803f1338a539724/...` 400×3 (project not found in DynamoDB), plus sparse `sconn`, `mmtalk`, `arooo` campaign/event rejections
+- 30d/7d/1d/10m OK→ALARM: **25 / 11 / 2 / 2**
+- Result: identical known daily ~02:11 KST `/authenticate` burst; all handled `warn` rejections; no customer impact
 
 ## Classification guidance
 

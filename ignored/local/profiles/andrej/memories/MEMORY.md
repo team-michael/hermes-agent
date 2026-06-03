@@ -1,4 +1,4 @@
-Andrej GWS: source `/home/ubuntu/.hermes/profiles/andrej/.env`; use `/home/ubuntu/.nvm/versions/node/v24.15.0/bin/gws`; set `HOME=/home/ubuntu` in execute_code.
+Andrej env: terminal HOME can be profile home; set `HOME=/home/ubuntu` for gh/GWS, use `/home/ubuntu/.hermes/workspace`. GWS: `/home/ubuntu/.nvm/versions/node/v24.15.0/bin/gws`.
 §
 Notifly project: project_id→DDB `project` product_id/name; product created_at lives in DDB `products` keyed by product_id; per-project PG `table_${project_id}`; AI admin fallback after lookup.
 §

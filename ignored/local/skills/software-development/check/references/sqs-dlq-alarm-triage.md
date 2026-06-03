@@ -116,6 +116,43 @@ When the consumer Lambda uses partial batch failure response (`batchItemFailures
 - Short-term: raise `maxReceiveCount` to 3–5 in SQS Terraform so transient per-message failures can retry.
 - Long-term: pre-validate campaign/user-journey Liquid templates before publish, or catch render failures earlier with a fallback (`common_message`) instead of `batchItemFailure`.
 
+## Persistent external failure with ReportBatchItemFailures and maxReceiveCount>1
+
+When a Lambda uses `ReportBatchItemFailures` with `maxReceiveCount > 1` (e.g., 6), messages can still reach the DLQ if the failure is **persistent** rather than transient:
+
+1. Lambda receives a batch containing message M.
+2. Message M fails due to an external dependency error (e.g., Cafe24 API rate limit, upstream 429).
+3. Lambda logs the error and returns M in `batchItemFailures`.
+4. Lambda invocation succeeds → `AWS/Lambda Errors=0`.
+5. SQS returns M to the queue (receive count +1).
+6. After `VisibilityTimeout` expires, M is re-received. If the external dependency is still failing (e.g., a 600-second rate-limit window has not expired), repeat steps 2–5.
+7. After `maxReceiveCount` exhausted (e.g., 6), M moves to DLQ.
+
+**Signals:**
+- `AWS/Lambda Errors=0`, `Throttles=0`, `Duration` well below `Timeout`.
+- Lambda logs contain `batchItemFailures` arrays with message IDs (JSON in `END` log line).
+- Lambda logs also show a **specific persistent error** tied to an external entity — e.g., rate-limit backoff messages (`Backoff set for <entity>: 600s`), `429 Too Many Requests`, or upstream API errors — not a generic timeout or unhandled exception.
+- DLQ messages share the same external entity identifier (same `mallId`, same provider account, same template) across multiple payloads.
+- Main queue `ApproximateAgeOfOldestMessage` is elevated for the duration of the external dependency outage, then recovers.
+
+**Scope attribution:** Unlike shared-pipeline DLQs, these payloads usually contain `project_id`, `mallId`, or `event_type`. Extract the entity identifier from Lambda logs or DLQ body and map via DynamoDB when `project_id` is present.
+
+**Classification:**
+- `no_action` when the external dependency is known to self-recover and DLQ count is low (transient rate-limit spike).
+- `needs_fix` when the same external entity is repeatedly rate-limited, suggesting insufficient backoff, missing exponential-backoff, or a structural mismatch between retry window and external dependency outage duration.
+
+**Example pattern: `cafe24-worker-queue-dlq`**
+- Consumer: `cafe24-worker` Lambda (`ReportBatchItemFailures` enabled).
+- `maxReceiveCount=6`.
+- Common trigger: Cafe24 API rate limit on `points_updated` events for a specific `mallId` (e.g., `chosunhnb`).
+- Lambda log signature: `[Cafe24 RedisRateLimiter] Backoff set for <mallId>: 600s`.
+- After ~6 retry cycles spaced by `VisibilityTimeout`, the message reaches DLQ while the 600-second rate-limit window may still be active.
+- See `references/cafe24-worker-dlq-pattern.md` for exact bounded commands and scope extraction.
+
+**Fix targets:**
+- Lambda backoff code — increase duration or make it exponential so a single retry window spans the external dependency outage.
+- SQS Terraform — consider raising `VisibilityTimeout` so retries occur less frequently, or raising `maxReceiveCount` if the outage is known to be long.
+
 ## Representative case: `kinesis-record-dispatcher-queue-dlq`
 
 - **Main queue:** `kinesis-record-dispatcher-queue`
