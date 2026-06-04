@@ -18,7 +18,12 @@ The `notifly-db-prod-cluster` runs mixed instance classes:
 `AuroraOptimizedReadsCacheHitRatio` is a cluster-level average.
 Instances without NVMe cache contribute no cache hits, pulling the average down.
 Reader instances with NVMe cache naturally show ratios in the 6–35% range
-depending on working-set fit.
+depending on working-set fit. Recent hourly peaks on reader nodes have
+observed ~28–39% during active load windows.
+
+Cluster-level daily averages are typically much lower (7–17%) because
+non-NVMe writer nodes contribute zero cache hits, and off-peak hours drive
+the average down even when peak-hour reader values are healthy.
 
 ## Quick diagnosis
 
@@ -47,6 +52,23 @@ for inst in instances:
 
 - **NVMe-less instances** (`db.r6g.*`): no datapoints (or `null`).
 - **NVMe-capable instances** (`db.r6gd.*`): values 6–35% are normal for this workload.
+
+**Shell equivalent** (bounded to alarm window, for quick triage):
+
+```bash
+for inst in notifly-db-prod-a notifly-db-prod-b notifly-db-prod-c notifly-db-prod-d; do
+  echo "=== $inst ==="
+  aws cloudwatch get-metric-statistics --region ap-northeast-2 \
+    --namespace AWS/RDS --metric-name AuroraOptimizedReadsCacheHitRatio \
+    --dimensions Name=DBInstanceIdentifier,Value="$inst" \
+    --start-time '2026-06-02T20:00:00Z' --end-time '2026-06-03T02:30:00Z' \
+    --period 3600 --statistics Average --output json \
+    | jq -r '.Datapoints | sort_by(.Timestamp) | .[] | [.Timestamp, .Average] | @tsv'
+done
+```
+
+Replace the `--start-time` / `--end-time` with the alarm
+`StateReasonData.startDate` ± 3 hours window.
 
 2. **Cross-check actual health** (cluster-level):
 

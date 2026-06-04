@@ -1,8 +1,8 @@
-Notifly GitHub: share findings pre-PR unless direct push; Conventional Commits; assign `clix-so-bot`; verify checks/reviews; ops mitigation may close PR.
+Notifly GitHub: share findings pre-PR unless direct push; Conventional Commits; assign `clix-so-bot`; verify checks/reviews; keep related PR docs/audits current.
 §
 Remote/container tasks: never assume local Hermes is target; verify intended system first, and never destructively mutate home dirs like /ubuntu/home, /home/ubuntu, or $HOME.
 §
-User studies Notifly infra; incidents/perf need scope/denominator, observed-vs-inferred, code-grounded semantics, full access-pattern coverage, and live-metric-backed ops timing.
+User studies Notifly infra; incidents/perf/AI-agent UI anomalies need scope/denominator, observed-vs-inferred, code/log-grounded semantics, full access-pattern coverage, and live-metric-backed ops timing before fixes.
 §
 In DMs, user wants infra explanations tailored to Mobile/iOS+SDK Eng background: use analogies only when mechanisms match; flag SDK implications for contracts/retries/offline/telemetry/DX.
 §

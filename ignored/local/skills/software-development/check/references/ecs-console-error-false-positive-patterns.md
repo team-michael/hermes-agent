@@ -131,3 +131,52 @@ See `references/web-console-kakao-image-upload-validation-error.md` for full tri
 **Classification**: `no_action` when this signature dominates and no real ERROR/Exception patterns coexist in the same alarm window.
 
 **Remediation direction**: If this becomes frequent, consider narrowing the metric filter to require a stack trace anchor (`at `) or an `Error:` prefix, instead of the raw `%ERROR%` substring. Alternatively, move object-serialization debugging lines to a lower log level in the emitting code path.
+
+## AWS Athena `INTERNAL_ERROR: RESOURCE_UNHEALTHY` — handled transient backend failure (`campaign-event-data-export`)
+
+**Alarm**: `campaign-event-data-export ECS task error`  
+**Metric filter**: `%ERROR|Error%`  
+**Trigger log** (structured):
+```
+{
+  "event": "EXPORT_FAILED",
+  "timestamp": "2026-06-03T20:11:58.279Z",
+  "error": {
+    "message": "Query failed with state: FAILED",
+    "name": "Error",
+    "durationMs": 1220
+  },
+  "input": {
+    "projectId": "<project_id>",
+    "exportId": "<uuid>",
+    "start": "...",
+    "end": "...",
+    "isMessageDataIncluded": true
+  },
+  "context": { "memoryUsage": {...} }
+}
+```
+
+**Underlying cause log line**:
+```
+"StateChangeReason": "[ErrorCode: INTERNAL_ERROR: RESOURCE_UNHEALTHY] Amazon Athena experienced an internal error while executing this query..."
+```
+
+**Mechanism**: `campaign-event-data-export` is a batch ECS task that runs Athena queries against `notifly_message_events` (and `notifly_event_logs`) to export campaign event data. When Athena returns a transient internal `RESOURCE_UNHEALTHY` error, the task catches the exception, logs `EXPORT_FAILED` at ERROR level via `console.error`, and updates the export status to `failed` in S3 (`services/task/campaign-event-data-export/lib/exporter.ts`). The ERROR log exists only because the application records the failure so the user can see it; there is no code bug, data loss, or retry exhaustion.
+
+**Triage**:
+1. When the helper returns empty `current_trigger_contexts` for this alarm, run a bounded `filter-log-events` on `/aws/ecs/notifly-services-prod/campaign-event-data-export` with `Error` in the alarm window.
+2. Look for `EXPORT_FAILED` structured logs with `error.message = "Query failed with state: FAILED"`.
+3. Read the surrounding stream lines for the Athena `StateChangeReason` containing `INTERNAL_ERROR` and `RESOURCE_UNHEALTHY`.
+4. If confirmed, verify recurrence: this pattern is typically a single isolated occurrence with no 7-day or 30-day repetition.
+
+**Classification**: `no_action` when:
+- The alarm window shows only this Athena internal-error signature,
+- No other ERROR patterns exist in the same window,
+- The occurrence is isolated (single 10m/1d transition, no rapid recurrence).
+
+**Scope**: Extract `projectId` from the `EXPORT_FAILED` JSON input field and map via DynamoDB `project` table. Campaign/user journey is typically unknown because the export is a batch job, not a specific campaign send.
+
+**Remediation direction**: The `EXPORT_FAILED` log is intentionally ERROR-level so that export failures are visible in operation dashboards. Re-classifying it to WARN is only viable if the export status is already reliably surfaced to the calling user via the S3 status file or an upstream API response. The metric filter on `/aws/ecs/notifly-services-prod/campaign-event-data-export` could instead be narrowed to exclude the known `EXPORT_FAILED` event name, but doing so would hide real export failures caused by application bugs or persistent Athena query errors. Prefer to keep the current filter and classify these transient AWS errors as `no_action` during triage.
+
+**Generalisation**: Any ECS batch task that calls external AWS services (Athena, Glue, EMR, SageMaker, etc.) and logs handled failures at ERROR level will trigger `ConsoleErrors` alarms when the upstream service has transient internal errors. The triage pattern is the same: verify that the ERROR log is a structured handled-failure event (not an unhandled stack trace), check the upstream service error for `INTERNAL_ERROR` / `RESOURCE_UNHEALTHY` / `ThrottlingException` / `ServiceUnavailable`, confirm isolation, and classify as `no_action`.

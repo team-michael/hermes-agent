@@ -56,6 +56,8 @@ then the robust solution is to use **resource tags** and filter by tag.
 
 ## Recommended architecture
 
+For Aurora Optimized Reads cache-hit alarms specifically, see `references/aurora-optimized-reads-cache-hit-ratio.md`. Key lesson: treat `AuroraOptimizedReadsCacheHitRatio` as a warning/diagnostic signal, require persistence for noisy boundary flaps, and keep existing Terraform alarm names/`for_each` keys when tuning so the plan remains in-place under `prevent_destroy`.
+
 ### Step 1: tag cluster instances with a stable cluster key
 Good tag name:
 - `DBClusterIdentifier`

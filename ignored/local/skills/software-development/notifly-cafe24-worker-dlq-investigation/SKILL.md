@@ -68,6 +68,53 @@ Same as DLQ: extract `project_id` from the table suffix in the log line, map via
 - `no_action` when sporadic (handled rejection, Errors=0).
 - `needs_fix` when recurrent, because the device-cleanup query should reference `users_${projectId}` or route through `@notifly/userdb`.
 
+## Related alarm: `cafe24-token-refresher lambda error` (ConsoleErrors, not Lambda `Errors`)
+
+When the monitoring channel shows repeated `cafe24-token-refresher lambda error` every 10 minutes, triage it separately from `cafe24-worker` DLQ/rate-limit incidents.
+
+Reusable live pattern:
+- Function is EventBridge-scheduled by `every-ten-minutes`.
+- CloudWatch alarm is usually a log-derived `ConsoleErrors` metric with filter `%ERROR|Status: timeout%`; AWS/Lambda `Errors` can be `0` because `getFreshToken()` catches `fetch` failures, logs `console.error`, returns `null`, and the handler continues.
+- Exact log signature:
+  - `ERROR Failed to get fresh token: <mallId> TypeError: fetch failed ... ConnectTimeoutError ... code: 'UND_ERR_CONNECT_TIMEOUT'`
+- `services/lambda/cafe24-token-refresher/lib/cafe24.js` calls `fetch(url, requestBody)` and catches errors at lines around `getFreshToken`; `index.js` refreshes all candidates with `Promise.all(...)` and then `flushCandidates(candidates, tokens)` writes only non-null tokens.
+- Stale candidates can keep reappearing every scheduled run. Check current unresolved candidates with the same DDB predicate as production code: `token.expires_at <= now + 600` in `cafe24_integration`.
+- If failed malls have `status=token_issued` and no `project_id`, customer impact is usually low, but the alert is still real operational noise and can hide real completed-mall token refresh failures.
+
+Recommended report/fix framing:
+- Distinguish log-derived alarm from Lambda runtime failure (`AWS/Lambda Errors=0`, throttles=0, short duration).
+- Count failures by `mall_id` and error code over 24h/7d; map only completed/project-backed malls to project/product.
+- Treat `UND_ERR_CONNECT_TIMEOUT` as an external Cafe24 connectivity/transient endpoint failure unless there is broader Lambda networking evidence.
+- Small code fixes: sanitize `Failed candidates` logging so access/refresh tokens are not written to CloudWatch; log only `mall_id/status/project_id`; downgrade or classify expected unreachable/stale token candidates so alerting only pages on completed/project-backed integrations or sustained high failure rate.
+
+### Cafe24 integration status lifecycle: interpret `token_issued` carefully
+
+Do not call `token_issued` an initialization failure. In the web-console Cafe24 onboarding path, it means only the OAuth callback succeeded and an access/refresh token was stored:
+
+```text
+OAuth callback + authorization_code exchange succeeds
+  -> cafe24_integration row: status=token_issued, token present, usually no product_id/project_id yet
+User selects Notifly product/site
+  -> getReadyForCafe24Integration(): status=ready, product_id/project_id stored
+cafe24-worker initialize job starts
+  -> status=initializing
+Initialize succeeds
+  -> status=completed
+Initialize fails
+  -> status=init_failed
+Cafe24RateLimitError during initialize
+  -> rollback to ready and retry via SQS path
+```
+
+Operational interpretation:
+- `token_issued` + no `project_id` / no `product_id` usually means abandoned or incomplete onboarding before product selection, not a customer product integration failure.
+- `ready` / `initializing` / `init_failed` are the statuses that indicate the user selected a product and initialization started or was attempted.
+- `completed` is the state most webhook/customer-impacting worker jobs require; many worker handlers skip non-`completed` integrations.
+- `cafe24-token-refresher` currently selects refresh candidates only by `attribute_exists(token) AND token.expires_at <= now + 10m`, so stale `token_issued` rows with no project can repeatedly generate token refresh log alarms.
+- When explaining user impact, separate "OAuth token row exists" from "Notifly product/project is connected". Project-backed impact generally requires `project_id` and a later status than bare `token_issued`.
+- Treat `UND_ERR_CONNECT_TIMEOUT` as an external Cafe24 connectivity/transient endpoint failure unless there is broader Lambda networking evidence. If the mall row later disappears from `cafe24_integration`, call out that cleanup/deletion likely stopped future alerts, while historical logs still explain why Slack fired.
+- Small code fixes: sanitize `Failed candidates` logging so access/refresh tokens are not written to CloudWatch; log only `mall_id/status/project_id` and token expiry metadata; filter refresh candidates to completed/project-backed integrations or archive/skip expired refresh-token stale rows; downgrade or classify expected unreachable/stale token candidates so alerting only pages on completed/project-backed integrations or sustained high failure rate.
+
 ## Step 1 — Verify live queue state
 
 Use boto3 from `terminal`, not `execute_code`, because AWS creds are available in shell env.
@@ -353,6 +400,19 @@ Important operational nuance:
 - the `cafe24-worker lambda error` alarm is driven by the metric filter `%ERROR|Status: timeout%`
 - a window full of handled quota/rate-limit retries can therefore produce **zero lambda-error alerts** even while messages are exhausting SQS retries into the DLQ
 - if `will retry via SQS` is high but `ERROR`/`Status: timeout` is zero, explain clearly that this is a handled retry-path failure mode, not an unhandled Lambda crash
+
+## Non-429 Cafe24 API failures can be log-only but still drop individual jobs
+
+Do not assume every `cafe24-worker lambda error` represents Lambda `Errors` or SQS retry. In `cafe24-worker/index.js`, only promises that reject become `batchItemFailures`. Several job handlers intentionally catch non-`Cafe24RateLimitError` failures and only log them, for example:
+- `handlePointsUpdated()` logs `Cafe24 API call failed...` / `Failed for mallId...` and returns;
+- `addUser()` / `updateUserProperties()` log `Failed to ... to notifly` and return.
+
+So logs such as `ERROR API request failed with AxiosError: read ECONNRESET` can trigger the ConsoleErrors alarm while:
+- AWS/Lambda `Errors = 0`;
+- the SQS message is considered successfully processed/deleted;
+- the specific add/update/points refresh may not retry.
+
+For these, count unique underlying API failures, not duplicate console lines. Recommended fix framing is different from the 429 path: make transient network/5xx errors retryable or return `batchItemFailures` for the message, with bounded retry/backoff and DLQ visibility, instead of swallowing them as success.
 
 ## Step 5 — Correlate with SQS metrics
 

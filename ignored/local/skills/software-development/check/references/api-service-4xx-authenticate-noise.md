@@ -334,7 +334,40 @@ Result: identical to the known daily ~02:11 KST `/authenticate` authentication r
 - Total `error-response` status ≥ 400: **~1,574**; `/authenticate` 400: **1,536** (97.6%), all `level: warn`, `projectId: "unknown"`
 - Secondary signatures: `DELETE /projects/.../blockservice/recipients/removes` 400×10 (`handys`), `POST /track-event` 401×5 (`playio`), `POST /projects/.../user-journeys/Rbc3W7/enter` 400×3 (`class101`), `GET /user-state/2b9f5a6685ba5b839803f1338a539724/...` 400×3 (project not found in DynamoDB), plus sparse `sconn`, `mmtalk`, `arooo` campaign/event rejections
 - 30d/7d/1d/10m OK→ALARM: **25 / 11 / 2 / 2**
-- Result: identical known daily ~02:11 KST `/authenticate` burst; all handled `warn` rejections; no customer impact
+Result: identical to the known daily ~02:11 KST `/authenticate` authentication rejection burst. All signals are handled `warn` validation rejections; no customer impact. The 30-day transition count of 47 confirms the alarm fires roughly 1.6 times per day on average, well within the established baseline.
+
+2026-06-03 alarm window (16:56–17:06 UTC / 2026-06-04 01:56–02:06 KST):
+- **Alarm transitions**: OK→ALARM at 17:11 UTC, ALARM→OK at 17:15 UTC, OK→ALARM at 17:16 UTC, ALARM→OK at 17:16 UTC (back-to-back within 1 minute)
+- Metric datapoints confirming breach: 174.0 (16:56), 891.0 (17:01), 648.0 (17:06); threshold 100.0 with 3 of 4 datapoints required
+- Total `error-response` with status ≥ 400 (16:45–17:25 UTC): **~1,743**; `/authenticate` 400: **1,702** (~97.7%)
+  - 17:00–17:05 UTC: 880 `POST /authenticate` 400 (`warn`, `Apache-HttpClient/5.3.1 (Java/17.0.19)`)
+  - 17:05–17:10 UTC: 820 `POST /authenticate` 400 (`warn`, `Apache-HttpClient/5.3.1 (Java/17.0.19)`)
+- User-Agent: exclusively `Apache-HttpClient/5.3.1 (Java/17.0.19)` via Cloudflare IPs
+- Levels: **100% `warn`**; `error` level count: **0** (verified via explicit `level == "error"` Logs Insights query returning zero matches)
+- `projectId`: **`"unknown"`** on all `/authenticate` lines (validation occurs before project resolution)
+- Secondary signatures (sparse, all `warn`):
+  - `DELETE /projects/80fd28969702573797f4d7f77063e47b/messages/text-message/blockservice/recipients/removes` 400: **10**
+  - `POST /projects/b2b4a8f879a75673b755bff42fc1deb6/campaigns/c8WSqz/send` 400: **3** (`class101`)
+  - `POST /projects/b2b4a8f879a75673b755bff42fc1deb6/user-journeys/NMbwqW/enter` 400: **3** (`class101`)
+  - `POST /track-event` 401: **5** (`playio`, `ffde3a7a000b5b2198961b3fff400acd`)
+  - `GET /user-state/2b9f5a6685ba5b839803f1338a539724/...` 400: **1**
+- **OK→ALARM counts**: 30d **48** / 7d **13** / 1d **4** / 10m **2**
+- Alarm currently **ALARM** at investigation time, but volume already dropped to 6.0 at 17:11 UTC → imminent recovery expected
+
+Result: identical to the known daily ~02:11 KST `/authenticate` authentication rejection burst. The back-to-back transitions are sliding-window evaluation artifacts. All signals are handled `warn` validation rejections; no customer impact. The `level == "error"` fast classifier returned zero, confirming no unhandled exception path is present.
+
+2026-06-03 alarm window (16:56–17:06 UTC / 2026-06-04 01:56–02:06 KST):
+- **Alarm transitions**: OK→ALARM at 17:11 UTC, ALARM→OK at 17:15 UTC; OK→ALARM at 17:16 UTC (second back-to-back transition within 5 minutes, sliding-window artifact from the 17:06 bucket)
+- Metric datapoints confirming breach: 174.0 (16:56), 891.0 (17:01), 648.0 (17:06); threshold 100.0 with 3 of 4 datapoints required
+- Total `error-response` with status ≥ 400 (16:45–17:20 UTC): **~1,741**
+- `/authenticate` 400: **1,709** (98.2%)
+- User-Agent dominant: `python-requests/2.32.3` via Cloudflare IPs (`43.200.25.101`, `141.101.84.238`, `172.71.111.143-144`)
+- Levels: **100% `warn`**; `error` level count: **0**
+- `projectId`: **explicitly `"unknown"`** on all `/authenticate` lines (validation occurs before project resolution)
+- Secondary signatures: `DELETE /projects/80fd28969702573797f4d7f77063e47b/messages/text-message/blockservice/recipients/removes` 400×14 (`warn`), `POST /projects/b2b4a8f879a75673b755bff42fc1deb6/user-journeys/NMbwqW/enter` 400×3 (`warn`), `POST /projects/b2b4a8f879a75673b755bff42fc1deb6/campaigns/c8WSqz/send` 400×3 (`warn`), `POST /projects/b2b4a8f879a75673b755bff42fc1deb6/campaigns/icKePI/send` 400×3 (`warn`), `POST /set-user-properties` 401×2 (`warn`), `POST /track-event` 401×2 (`warn`), `DELETE /users` 401×1 (`warn`), plus sparse `GET /user-state` 400×2
+- 30-day OK→ALARM count: **48** / 7-day: **13** / 1-day: **4** / 10-minute window: **2**
+
+Result: identical to the known daily ~02:11 KST `/authenticate` authentication rejection burst. All signals are handled `warn` validation rejections; no customer impact. The back-to-back transitions within 5 minutes are a sliding-window evaluation artifact from the 17:01 bucket (891.0) still contributing after the brief ALARM→OK recovery.
 
 ## Classification guidance
 

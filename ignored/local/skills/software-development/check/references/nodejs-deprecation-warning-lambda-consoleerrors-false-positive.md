@@ -42,8 +42,39 @@ These are **handled rejections** in `services/lambda/payment-executor/lib/candid
 
 - `no_action` when `Lambda Errors=0` and the dominant signal is the deprecation warning or a handled business rejection.
 
-## Remediation
+## Remediation (ranked)
 
-- The deprecation warning itself is runtime-level and cannot be trivially suppressed without a Node.js version or dependency upgrade.
-- For handled business rejections (e.g., missing spreadsheet entry), the fix is usually a **data/business configuration change**, not an engineering code change.
-- Long-term, consider narrowing the metric filter to exclude `DeprecationWarning` or downgrading handled payment-failure logs to `WARN` after confirming the path is fully safe.
+### 1. Suppress the warning — `NODE_NO_WARNINGS=1` (fastest)
+
+Add the environment variable to the Lambda. Node.js 22.x respects `NODE_NO_WARNINGS=1` and stops emitting `DeprecationWarning` to stderr:
+
+```bash
+aws lambda update-function-configuration \
+  --function-name payment-executor \
+  --environment '{"Variables":{"NODE_NO_WARNINGS":"1"}}' \
+  --region ap-northeast-2
+```
+
+**Pitfall — Terraform drift**: The `notifly-event` lambda_function module sets `lifecycle { ignore_changes = [environment] }` (see `infra/terraform/modules/lambda_function/main.tf:305`). Because Terraform ignores environment changes, the CLI update above **does not create drift**; subsequent Terraform plans will show no diff for the Lambda.
+
+### 2. Terraform-module change (structural)
+
+If the module is updated to support `environment_variables` and `ignore_changes` is narrowed or removed, add the variable in `functions.tf`:
+
+```hcl
+"environment_variables" = {
+  "NODE_NO_WARNINGS" = "1"
+}
+```
+
+This requires a module PR and coordinated apply.
+
+### 3. Metric filter narrowing (limited)
+
+CloudWatch log metric filters **do not support reliable NOT patterns**. You cannot express `"ERROR" but not "DeprecationWarning"`. Narrowing the filter to exclude the warning string risks missing real errors. Prefer environment-variable suppression instead.
+
+---
+
+## Legacy note
+
+Earlier versions of this reference claimed "the deprecation warning cannot be trivially suppressed without a Node.js version or dependency upgrade." That was incorrect — `NODE_NO_WARNINGS=1` suppresses it cleanly, and the Notifly Terraform module's `ignore_changes = [environment]` makes CLI application safe.

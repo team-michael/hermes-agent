@@ -95,8 +95,22 @@ Distinguish these cases:
 
 For deploy workflows, always check whether the deploy step itself succeeded before blaming tokens.
 
+## 3b. The real error may be in a PR comment, not the run log
+
+Some workflows redirect a step's stdout/stderr to a file (`terraform plan … > plan.stdout.txt 2> plan.stderr.txt`) and then upsert that captured output into a **bot PR comment** via `actions/github-script`, while the job step itself only sets an outcome var and `exit 0`s. The final job failure then comes from a separate `Fail leg if checks or apply errored` step that just runs `exit 1` based on an outcome var — so the raw run log shows only `exit 1` with no diagnostic.
+
+In that case the actual error text lives in the upserted PR comment, keyed by an HTML marker like `<!-- terraform:plan:<root> -->`, usually inside a `<details><summary>Plan output</summary>` block. Fetch it from the issue comments API:
+
+```bash
+gh api "repos/$OWNER/$REPO/issues/$PR/comments" --jq '.[].body' > /tmp/pr_comments.txt
+# then grep for: Error:, prevent_destroy, "will be destroyed", ❌, "failed"
+```
+
+Tell-tale that you're in this pattern: a step named like "Fail leg …" / "Fail if …" is the failing one, the actual build/plan/test step shows `success` or no useful output, and the workflow uses `> file.txt` redirection + a `github-script` comment upsert. Read the comment before concluding the underlying step "passed".
+
+Beware misleading summary fields: if the captured tool exits non-zero, downstream parse steps may fall back to zeroed/empty summaries (e.g. a destructive-change detector reporting `destroy=0` because the plan JSON was never produced). Don't trust a "0 changes / not destructive" summary when the upstream step failed.
+
 ## 4. Correlate with workflow definition
-Read the workflow file and inspect:
 - required secrets/env names
 - deploy command
 - post-deploy health-check logic
@@ -136,6 +150,21 @@ If logs show:
 
 Then root cause is **not missing Cloudflare credentials**. It's a **post-deploy readiness/health-check failure** (route propagation, app not ready, endpoint not responding, or poor observability in the curl command).
 
+## PR closeout after long-running checks
+When a background `gh pr checks --watch` or polling process completes, do not rely only on its final notification text. It may be truncated or contain partial/malformed output. Re-query live GitHub state before reporting completion:
+
+```bash
+gh pr checks "$PR" --repo "$OWNER/$REPO" \
+  --json name,state,workflow,link \
+  --jq '[.[] | {name,state,workflow,link}] | sort_by(.workflow,.name)'
+
+gh pr view "$PR" --repo "$OWNER/$REPO" \
+  --json headRefOid,mergeStateStatus,reviewDecision,statusCheckRollup \
+  --jq '{headRefOid,mergeStateStatus,reviewDecision,checks:[.statusCheckRollup[]? | {name:.name,status:.status,conclusion:.conclusion,workflowName:.workflowName}]}'
+```
+
+Report CI/check status separately from branch-protection status. A PR can be fully green (`SUCCESS`/expected `SKIPPED`) while still `mergeStateStatus: BLOCKED` because `reviewDecision: REVIEW_REQUIRED`. In that case say: code/CI is green; remaining blocker is review approval, not a failing check.
+
 ## Recommended report format
 - Job name / URL
 - Failed step
@@ -144,6 +173,7 @@ Then root cause is **not missing Cloudflare credentials**. It's a **post-deploy 
 - Exact terminal failure condition (timeout, 404, TLS, empty response, bad SHA, etc.)
 - Most likely root cause layer
 - Optional next instrumentation step
+- For PR closeout: check summary, head SHA, worktree cleanliness, `mergeStateStatus`, and `reviewDecision`
 
 ## Common follow-up improvement
 If health-check logs are uninformative, patch workflow commands to surface the failure mode:

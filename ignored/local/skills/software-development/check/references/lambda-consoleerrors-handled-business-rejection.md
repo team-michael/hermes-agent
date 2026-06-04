@@ -84,6 +84,34 @@ for e in resp.get('events', []):
 "
 ```
 
+### cafe24-token-refresher: Cafe24 API connect timeout (UND_ERR_CONNECT_TIMEOUT)
+
+- Trigger string: `Failed to get fresh token: <mall_id> TypeError: fetch failed` with `[cause]: ConnectTimeoutError: Connect Timeout Error (attempted addresses: <ip>:443, timeout: 10000ms)`
+- Exact log line: `ERROR\t<request_id>\tFailed to get fresh token: testesetest TypeError: fetch failed... ConnectTimeoutError...`
+- Code path: `services/lambda/cafe24-token-refresher/lib/cafe24.js:71` (`try/catch` around `fetch(url, requestBody)`). The catch logs `console.error('Failed to get fresh token:', mid, error)` and returns `null`.
+- Invocation health: `AWS/Lambda Errors == 0`, `Throttles == 0`, `Duration` p99 ~1-10 s (well under `Timeout` 300 s). `REPORT` shows normal completion.
+- Why it happens: `cafe24-token-refresher` is a scheduled Lambda (no event-source mapping) that iterates over Cafe24 `cafe24_integration` DynamoDB rows and calls `<mall_id>.cafe24api.com/api/v2/oauth/token`. If Cafe24's edge infrastructure or the specific mall's endpoint drops TCP SYNs (connect timeout 10 s), `undici`/`node:fetch` throws a `TypeError: fetch failed` wrapping `UND_ERR_CONNECT_TIMEOUT`. The error is caught, logged, and the loop continues with remaining candidates.
+- Impact: no token is refreshed for that single mall, but other candidates proceed normally. The Lambda exits cleanly.
+- **Scope-attribution technique**: The ERROR log contains only `mall_id`, not a Notifly `project_id`. Use DynamoDB `cafe24_integration` table `Scan` or `GetItem` by `mall_id` to recover `project_id`/`product_id`.
+  ```bash
+  python3 -c "
+  import boto3
+  ddb = boto3.resource('dynamodb', region_name='ap-northeast-2')
+  table = ddb.Table('cafe24_integration')
+  resp = table.get_item(Key={'mall_id': '<MALL_ID>'}, ProjectionExpression='mall_id, project_id, product_id, #st')
+  print(resp.get('Item'))
+  "
+  ```
+- **Stale/test mall pitfall**: When the `mall_id` (e.g. `testesetest`) has **no row** in `cafe24_integration`, the mall is either a pre-production artifact, a deleted tenant whose row was already purged, or a test fixture. In this case, the `getCandidatesToRefreshAccessToken` scan is still picking it up, which points to a wider stale-data issue in the scan filter. Treat scope as **untraceable** and classify based solely on Lambda health.
+- Frequency observed: 30d 6 (INSUFFICIENT_DATA→ALARM) / 7d 2 / 1d 1 / 10m 1. This is the same low-rate pattern as the `invalid_client` variant; both share the same root cause of the scan returning stale/deleted/test rows. Daily `ConsoleErrors` metric counts show 1 hit on isolated days (e.g. 2026-05-31 and 2026-06-03) with zero on all other days.
+- **Alarm-transition pitfall for scheduled Lambdas**: `cafe24-token-refresher` runs on a schedule, so between invocations the `ConsoleErrors` metric has no data → `INSUFFICIENT_DATA`. When an invocation produces an ERROR log, the alarm transitions `INSUFFICIENT_DATA → ALARM`; the helper counts `OK→ALARM` as 0, which can mislead investigators into thinking this is a first-ever spike. Always fall back to daily `ConsoleErrors` metric `Sum` or `INSUFFICIENT_DATA → ALARM` transition counts.
+- Classification: `no_action` when `Lambda Errors=0` and it is an isolated connect timeout. The invocation is healthy and the failure is handled.
+- Action target:
+  - Immediate: None. One-off transient timeout is external infra noise.
+  - If the same `mall_id` recurs (especially one with no DynamoDB row): purge the stale `mall_id` from the scan result or add a `status` filter in `getCandidatesToRefreshAccessToken` so only active rows are refreshed.
+  - Structural: treat this identically to the `invalid_client` variant above — add `FilterExpression` on `status` (only rows with active/stub status should be candidates) or remove rows for deleted/completed projects.
+  - Log-level fix: Because the error is handled and the loop continues, the `console.error` in `lib/cafe24.js:71` can be downgraded to `console.warn` when the error is a known transient network failure (timeout, DNS failure) and the `mall_id` is a stale/test row. Keep `console.error` for unexpected exceptions.
+
 ### cafe24-worker: handled SQS record rejection / invalid command / malformed payload
 
 - Trigger strings: `Record <messageId> failed, will retry via SQS:`, `Unsupported command:`, `The body from sqs record is not in JSON format.`, `Invalid record format`, `Project id or token not found for mallId`, `Failed to add user of <mallId>`, `Failed to update user properties of <mallId>`, `API request failed with`

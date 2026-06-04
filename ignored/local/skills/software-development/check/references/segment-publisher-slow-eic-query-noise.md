@@ -984,16 +984,33 @@ Classification: `no_action` — publish completed, no DLQ/ECS failure, companion
 
 For deeper project segment extraction, EIC Large Scale conversion workflows, and user-journey session analysis, see `notifly-segment-publisher-alarm-analysis`.
 
-## 2026-05-31 session — `segment-publisher slow eic query` ALARM (Pattern B, proudp)
+## 2026-06-03 session — `segment-publisher slow eic query` ALARM (Pattern B, class101)
 
 Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`
-Transition: `OK -> ALARM` at 2026-05-31 11:54:12 UTC (KST 20:54)
-Datapoint: `Sum=1.0` at 2026-05-31 11:53:00 UTC (metric period 60s)
-Companion alarm: `segment-publisher long running alam` in `ALARM` with datapoint `Sum=1.0` at 2026-05-31 11:49:00 UTC (metric period 300s).
+Transition: `OK -> ALARM` at 2026-06-03 06:30:12 UTC (KST 15:30)
+Datapoint: `Sum=1.0` at 2026-06-03 06:29:00 UTC (metric period 60s)
+Companion alarm: `segment-publisher long running alam` in `ALARM` with datapoint `Sum=1.0` at 2026-06-03 06:25:00 UTC (metric period 300s).
 
 Evidence:
-- Helper returned `can_answer_root_cause: false` with empty `current_trigger_contexts`; Fargate log stream expired before investigation.
-- Companion `segment-publisher long running alam` is in ALARM at the same window with the same daily recurrence (30 consecutive days, 1.0 Sum per day), confirming Pattern B.
+- Trigger log (2026-06-03 06:29:45 UTC, stream `prod/segment-publisher/f4b08b1e33c54163b193ca90482623fd`): `[WARN] Processing took longer than expected: 1820407.49 ms`
+- Same-stream context: 51 batches across 10 concurrent campaigns (CNGJjd, 3KWfBG, HxbGSr, WPE9J6, VMyJo5, IdxUZt, a84kiE, FQgbL9, sOk5Yk, C5Zpf0). Final batch indices 50 and 51.
+- Received event payload (stream head, 2026-06-03 05:59:24 UTC) shows `project_id: b2b4a8f879a75673b755bff42fc1deb6` → DynamoDB `project` → product `class101`.
+- Zero ERROR logs in the alarm window (06:20–06:35 UTC); only the single WARN line.
+- The `ConsoleErrors` `slow eic query` datapoint at 06:29:00 UTC lagged the companion `long running alam` datapoint at 06:25:00 UTC by ~4 minutes because the metric filter period differs (60s vs 300s).
+- Daily recurrence: class101 multi-campaign batch continues at ~06:25–06:30 UTC every day (observed 2026-05-14, 05-15, 05-18, 05-23, 06-03).
+
+Classification: `no_action` — publish completed, no DLQ/ECS failure, companion `long running alam` already covers same signal.
+
+**Updated daily counts** (2026-06-03 added):
+```
+2026-04-13=7, 04-14=3, 04-15=2, 04-16=0, 04-17=4, 04-18=1,
+04-19=1, 04-20=5, 04-21=3, 04-22=2, 04-23=3, 04-24=6, 04-25=2, 04-26=2,
+04-27=4, 04-28=3, 04-29=5, 04-30=2, 05-01=1, 05-02=3, 05-03=1, 05-04=2,
+05-05=1, 05-06=1, 05-07=3, 05-08=1, 05-09=1, 05-10=1, 05-11=5, 05-12=3,
+05-13=1, 05-14=5, 05-15=1, 05-16=1, 05-17=1, 05-18=2, 05-19=1, 05-20=1,
+05-21=6, 05-22=1, 05-23=2, 05-24=1, 05-25=1, 05-26=1, 05-27=1, 05-28=1,
+05-29=2, 05-30=1, 05-31=1, 06-01=2, 06-02=확인 불가(미수집), 06-03=1
+```
 - `Custom/segment-publisher` `SegmentPublisher.ExecutionTimeOverThreshold` daily sum continues at 1.0 for 2026-05-31.
 - Zero ERROR logs expected; this is the same batch-processing WARN pattern as 2026-05-30.
 
