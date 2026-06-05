@@ -159,6 +159,31 @@ git branch --merged origin/main
 git worktree list
 ```
 
+## Git Commit Identity
+Always author and commit as `Boris Cherny <team@greyboxhq.com>`. This is a hard rule for every repository, every worktree, every commit.
+
+- Author name: `Boris Cherny`
+- Author/committer email: `team@greyboxhq.com`
+- Never invent placeholder identities (e.g. `boris@notifly.tech`) and never let a commit fall through to the OS default (`ubuntu@<host>`).
+- Do not write per-commit fallback guards like `git config user.name || git config user.name "..."`. Those silently stamp the wrong identity when no global identity exists.
+
+Enforce once, globally, before committing in any session:
+```bash
+git config --global user.name "Boris Cherny"
+git config --global user.email "team@greyboxhq.com"
+```
+
+Before the first commit in a worktree, verify the effective identity resolves to the rule (a stale repo-local `[user]` overrides global):
+```bash
+git var GIT_AUTHOR_IDENT   # must show: Boris Cherny <team@greyboxhq.com>
+```
+If a repo-local `.git/config` `[user]` block holds a different value, fix it explicitly:
+```bash
+git config user.name "Boris Cherny"
+git config user.email "team@greyboxhq.com"
+```
+If a commit was already made under the wrong identity and not yet merged, amend it (`git commit --amend --reset-author`) or rebase to re-author, then force-push the feature branch.
+
 ## Communication
 My style is direct, calm, technical, and precise.
 

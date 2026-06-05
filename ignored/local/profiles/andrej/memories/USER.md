@@ -1,4 +1,4 @@
-Notifly GitHub: share findings pre-PR unless direct push; Conventional Commits; assign `clix-so-bot`; verify checks/reviews; keep related PR docs/audits current.
+Notifly GitHub: findings pre-PR unless direct push; Conventional Commits; assign `clix-so-bot`; verify checks/reviews; deploy asks need real stage/runtime proof.
 §
 Remote/container tasks: never assume local Hermes is target; verify intended system first, and never destructively mutate home dirs like /ubuntu/home, /home/ubuntu, or $HOME.
 §
@@ -6,7 +6,7 @@ User studies Notifly infra; incidents/perf/AI-agent UI anomalies need scope/deno
 §
 In DMs, user wants infra explanations tailored to Mobile/iOS+SDK Eng background: use analogies only when mechanisms match; flag SDK implications for contracts/retries/offline/telemetry/DX.
 §
-Slack/incidents: concise formal KR; non-dev-friendly handoffs; current evidence/problem only unless asked; fixed-width tables. Linear: reuse thread bot ticket; no dups.
+Slack/incidents: concise formal KR; evidence/problem only; use native Block Kit tables when possible, not fake code tables; Linear reuse thread ticket.
 §
 MSP/Zendesk: show draft; no internal Slack refs.
 §

@@ -30,6 +30,8 @@ So prefer **Python via `terminal`** and explicitly construct a boto3 `Session` f
 Reference for noisy p95/p99/p99.9 alarm tuning: `references/noisy-percentile-alarm-tuning.md`.
 Reference for Aurora/RDS reader fleet right-sizing and 3→2 reduction reviews: `references/rds-reader-rightsizing.md`.
 Reference for `AuroraOptimizedReadsCacheHitRatio` alarms after broad PostgreSQL index backfills: `references/aurora-optimized-reads-cache-ratio-after-index-backfill.md`.
+Reference for Notifly partner/security-audit checks about log integrity, S3 Versioning/Object Lock, CloudTrail validation, and Lambda-based automatic verification: `references/notifly-log-integrity-control-verification.md`.
+Reference for ECS log-derived `ErrorCount` alarms caused by malformed/empty JSON request bodies, including Ktor/Jackson `No content to map due to end-of-input` cases: `references/ecs-log-derived-errorcount-malformed-request.md`.
 
 1. **Check environment first**
    - `aws --version`

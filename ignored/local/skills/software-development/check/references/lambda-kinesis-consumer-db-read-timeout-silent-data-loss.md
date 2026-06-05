@@ -92,3 +92,48 @@ A `Query read timeout` with `Duration` under `Timeout` but over `statement_timeo
 ### Pitfall — large daily log counts on a single bad day
 
 Check `logs.daily_counts_30d`. A single day with thousands of ERROR logs (e.g., 2026-05-15: 6,316) may be caused by an Aurora reader-replica conflict (`canceling statement due to conflict with recovery`) rather than the current DB read timeout pattern. Always inspect the current trigger context before assuming the historical high-volume day is the same cause as the current alarm.
+
+## Known pattern: kds-consumer (user-journey-sessions)
+
+### Trigger signatures
+
+- `ERROR Query read timeout Query: select "id", "current_node_id", "current_node_update_time", "notifly_user_id", "user_journey_id" from "user_journey_sessions_<project_id>" where "notifly_user_id" in (...) and "current_node_id" is not null and "current_node_update_time" is not null and "exit_time" is null`
+- `ERROR Failed to get current sessions Error: Query read timeout Query: select "id", ... from "user_journey_sessions_<project_id>" ...`
+
+### Code paths
+
+- `services/lambda/kds-consumer/lib/repositories/UserJourneySessionRepository.ts:56-65`
+  ```ts
+  } catch (e) {
+      console.error('Failed to get current sessions', e);
+      return [];
+  }
+  ```
+- The same repository has a second catch at `getSessions():
+  ```ts
+  } catch (e) {
+      console.error('Failed to get sessions', e);
+      return null;
+  }
+  ```
+
+### Why it is data loss
+
+`kds-consumer` is a Kinesis consumer (two EventSourceMappings: `notifly-pfavx6b9-streaming-data-solution-KdsDataStream` and `notifly-event-stream`). When `getCurrentSessions` or `getSessions` catches a DB `Query read timeout` and returns `[]`/`null`, the caller continues with empty sessions and the Lambda returns normally. The Kinesis checkpoint advances and the records are never retried.
+
+### Table-level root cause (large table + no partial index)
+
+Affected `user_journey_sessions_<project_id>` tables can exceed **100 million rows** (munice: 125M rows / 42 GB). The query filters on `exit_time IS NULL`, but active sessions are typically <1% of total rows. The existing index `ujs_nuid_<project_id>` is a plain `btree (notifly_user_id)` over **all rows**, so PostgreSQL may still scan a large range or perform expensive filtering. `query_timeout` for read queries in `@notifly/common` is **4 minutes** (`packages/common/src/db.ts:31`), and `statement_timeout` escalation is not retried by `async-retry` because timeout is not classified as a retryable connection error.
+
+### Remediation (structural)
+
+1. **Code change**: Do not `return []` on DB timeout in Kinesis consumers. Throw the error so Kinesis retry is triggered. Patch target: `services/lambda/kds-consumer/lib/repositories/UserJourneySessionRepository.ts:56-65` and `:84-87`.
+2. **Index change**: Add a partial index scoped to active sessions so the query reliably completes in milliseconds:
+   ```sql
+   CREATE INDEX CONCURRENTLY ujs_active_nuid_<project_id>
+   ON user_journey_sessions_<project_id> (notifly_user_id)
+   WHERE exit_time IS NULL
+     AND current_node_id IS NOT NULL
+     AND current_node_update_time IS NOT NULL;
+   ```
+3. **DDL update**: Add the partial index to `services/server/web-console/queries/create_tables.sql` so new projects get it automatically.

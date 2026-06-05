@@ -26,14 +26,22 @@ The Lambda code calls an external API inside a `try...catch` block and uses `con
   "timestamp": "..."
 }
 ```
+Also observed:
+- `code: 'GW.INTERNAL_SERVER_ERROR'`, `message: '작업 중 오류가 발생하였습니다.'` with HTTP 500.
+- `504 Gateway Timeout` returning an HTML error page (`일시적인 서비스 장애 입니다.`).
 
 **Trigger log excerpt**:
 ```
-ERROR	Error fetching last changed statuses, token: <token>, error: {
-  code: '9999',
-  message: '일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요.'
+ERROR	Error fetching product order details, token: <token>, error: {
+  code: 'GW.INTERNAL_SERVER_ERROR',
+  message: '작업 중 오류가 발생하였습니다.',
+  traceId: '...',
+  timestamp: '...'
 }
-ERROR	Failed to sync orders AxiosError: Request failed with status code 500
+ERROR	Error fetching page 1 for Token <token>: AxiosError: Request failed with status code 500
+    at settle (...)
+    ...
+ERROR	Failed to sync orders for Token <token>: AxiosError: Request failed with status code 500
     at settle (...)
     ...
 ```
@@ -51,6 +59,7 @@ try {
 
 - **Immediate**: `no_action` when Lambda `Errors = 0`, the provider error indicates a transient issue, and the alarm recovers to OK within minutes.
 - **Escalate to `needs_fix` only if**: the external error is sustained for hours, the same API endpoint fails across multiple provider tokens, or the `Errors` metric becomes non-zero (indicating an unhandled exception or timeout).
+- **Deploy correlation**: If the Lambda `LastModified` is within hours of the alarm, verify the same signature existed before the deploy (via `filter-log-events` or Logs Insights on prior days). If the signature is historic, the deploy is likely not causal.
 
 ## Evidence to collect
 

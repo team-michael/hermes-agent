@@ -4,12 +4,8 @@ Hashimoto Slack alert replies use a compact Korean five-field shape: 원인, 범
 §
 Hashimoto Slack completion reactions require `message_subscriptions` with the target channel, source bot, and `reactions=true`; `channel_skill_bindings` only controls skill auto-loading and does not enroll messages in the reaction lifecycle.
 §
-HERMES_HOME points to `~/.hermes/profiles/hashimoto/`, not base `~/.hermes/`. Construct skill script paths as `${HERMES_HOME}/skills/...` without adding `/profiles/hashimoto/`.
-§
-`check` skill: `references/cafe24-token-refresher-external-timeout.md` added. Covers Cafe24 API timeout → Lambda caught error → `%ERROR%` metric filter false positive, scope untraceable because `cafe24_integration` table lacks `project_id`.
-§
 Projects with names starting with `notifly-` (e.g., notifly-gamelog, notifly-test, notifly-internal, etc.) are Notifly internal testing/demo projects. Alerts or errors tied to these projects indicate synthetic/test data or internal tooling gaps, not customer-facing production issues. When scoping alerts, explicitly flag `notifly-` prefixed projects as internal to avoid misrepresenting customer impact.
 §
-check skill SKILL.md is ~100,472 chars and exceeds the 100,000-char skill_manage patch limit. In-place SKILL.md patches fail. New triage guidance must be added as reference files under the skill until the SKILL.md is split.
+The most recent live-verification entry for `api-service` 4xx authenticate noise is now 2026-06-04, confirming the daily ~02:11 KST `Apache-HttpClient/5.3.1 (Java/17.0.19)` burst remains stable with ~1,760 handled `warn` rejections per alarm window. Future investigators can rely on this as current evidence.
 §
-The most recent live-verification entry for `api-service` 4xx authenticate noise is now 2026-06-03, confirming the daily ~02:11 KST `python-requests/2.32.3` burst remains stable with ~1,700 handled `warn` rejections per alarm window. Future investigators can rely on this as current evidence.
+`KakaoBrandMessage-P1-BatchFailure` (`Notifly/KakaoBrandMessageDelivery` EMF `BatchCompletion` `outcome=error`) maps to Lambda `kakao-brand-message-delivery`. Trigger is typically handled validation rejection at `services/lambda/kakao-brand-message-delivery/lib/utils.ts:51` (`Missing required data: invalid kakao_bizmessage sender info`) when `channel_id` missing in SQS payload. Common cause: `kakao-delivery-result-poller` re-enqueued message with incomplete sender metadata (check `SenderId`). When `AWS/Lambda Errors == 0` classify `no_action`. Scope from EMF line `project_id`/`campaign_id` or SQS body. Full triage recipe lives in skill `check` reference `kakao-brand-message-delivery-batchcompletion-error.md`.

@@ -429,6 +429,25 @@ Result: identical to the known daily ~02:11 KST `/authenticate` authentication r
 
 Result: identical to the known daily ~02:11 KST `/authenticate` authentication rejection burst. The back-to-back transitions within 10 minutes are caused by the 17:04 bucket (850.0) still contributing to the rolling evaluation after the first brief ALARM→OK recovery. All signals are handled `warn` validation rejections; no customer impact. The 30-day OK→ALARM count of 25 is lower than prior entries because `TreatMissingData: missing` causes many transitions to be `INSUFFICIENT_DATA → ALARM` rather than `OK → ALARM`; see the pitfall below.
 
+2026-06-04 alarm window (16:56–17:06 UTC / 2026-06-05 01:56–02:06 KST):
+- **Alarm transitions**: OK→ALARM at 17:11 UTC, OK→ALARM at 17:16 UTC (back-to-back within 5 minutes, sliding-window artifact)
+- Metric datapoints confirming breach: 178.0 (16:56), 895.0 (17:01), 712.0 (17:06); threshold 100.0 with 3 of 4 datapoints required
+- Total `error-response` with status ≥ 400 (16:50–17:20 UTC): **1,806**
+- `/authenticate` 400: **1,761** (97.6%)
+  - User-Agent: `Apache-HttpClient/5.3.1 (Java/17.0.19)` 1,751, `python-requests/2.32.3` 10
+  - Level: **100% `warn`**; explicit `level == \"error\"` Logs Insights query returned **0** matches
+  - `projectId`: **explicitly `\"unknown\"`** on all `/authenticate` lines (validation occurs before project resolution)
+- Secondary signatures (sparse, all `warn`):
+  - `POST /track-event` 401: **12** (`python-requests/2.33.1`)
+  - `DELETE /projects/80fd28969702573797f4d7f77063e47b/messages/text-message/blockservice/recipients/removes` 400: **12** (`ReactorNetty/1.2.17`, `handys`)
+  - `POST /projects/b2b4a8f879a75673b755bff42fc1deb6/campaigns/5Qnugu/send` 400: **3** (`class101`)
+  - `POST /projects/b2b4a8f879a75673b755bff42fc1deb6/user-journeys/U86OKs/enter` 400: **3** (`class101`)
+  - `POST /projects/b2b4a8f879a75673b755bff42fc1deb6/campaigns/icKePI/send` 400: **3** (`class101`)
+  - `POST /projects/0c61d690f3425c13875c2c4902616b40/campaigns/CJDzWt/send` 400: **1** (`sconn`)
+  - `POST /messages/kakao-alimtalk` 401: **1** (`Apache-HttpClient/4.5.3`)
+- 30d/7d/1d/10m OK→ALARM counts: **47 / 13 / 4 / 2**
+Result: identical to the known daily ~02:11 KST `/authenticate` authentication rejection burst. All signals are handled `warn` validation rejections; no customer impact.
+
 ## Pitfall — `INSUFFICIENT_DATA → ALARM` undercounts in transition history
 
 This alarm uses `TreatMissingData: missing`. During low-traffic periods (midnight KST), the `ConsoleErrors` metric may have no data points, so the alarm state drops to `INSUFFICIENT_DATA`. The daily ~02:11 KST burst then transitions `INSUFFICIENT_DATA → ALARM`, not `OK → ALARM`.

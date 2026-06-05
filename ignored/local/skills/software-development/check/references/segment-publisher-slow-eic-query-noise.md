@@ -1029,3 +1029,60 @@ Classification: `no_action` — known periodic batch-processing WARN, companion 
 05-29=2, 05-30=1, 05-31=1
 ```
 
+## 2026-06-04 session — `segment-publisher slow eic query` ALARM (Pattern B, companion alarm absent)
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`
+Transition: `OK -> ALARM` at 2026-06-04 11:53:13 UTC (KST 20:53)
+Datapoint: `Sum=1.0` at 2026-06-04 11:52:00 UTC (metric period 60s)
+
+Evidence:
+- `Custom/segment-publisher` `SegmentPublisher.ExecutionTimeOverThreshold` metric returned **empty datapoints** for the alarm window and the entire day. The companion `segment-publisher long running alam` alarm no longer exists or has been removed/renamed.
+- Therefore the "companion-alarm shortcut rule" could not be applied.
+- `filter-log-events` with the unquoted three-term form (`"took" "too" "long"`) returned zero matches in the 11:40–12:00 UTC window.
+- `describe_log_streams` showed short-lived Fargate streams ending before the alarm window. The trigger stream had already expired.
+- Daily Sum counts from `ConsoleErrors` `segment-publisher-prod slow eic query` (Period=86400) were used as the primary evidence:
+  - 7d (05-28~06-04): 1,2,1,1,2,2,2,1 → total 12, well within baseline.
+  - 30d total: 62.
+- Alarm time (~11:52 UTC, 20:52 KST) matches the established stepup/proudp UL1T00 batch window.
+- Zero ERROR logs retrieved.
+
+Scope: user journey UL1T00 (`[만보기] 매일 적립 리마인드`), project unknown for this window (no explicit `project_id` in current window).
+
+Classification: `no_action` — stable daily baseline, no companion alarm required for classification.
+
+**Updated daily counts** (2026-06-04 added):
+```
+2026-04-13=7, 04-14=3, 04-15=2, 04-16=0, 04-17=4, 04-18=1,
+04-19=1, 04-20=5, 04-21=3, 04-22=2, 04-23=3, 04-24=6, 04-25=2, 04-26=2,
+04-27=4, 04-28=3, 04-29=5, 04-30=2, 05-01=1, 05-02=3, 05-03=1, 04-04=2,
+05-05=1, 05-06=1, 05-07=3, 05-08=1, 05-09=1, 05-10=1, 05-11=5, 05-12=3,
+05-13=1, 05-14=5, 05-15=1, 05-16=1, 05-17=1, 05-18=2, 05-19=1, 05-20=1,
+05-21=6, 05-22=1, 05-23=2, 05-24=1, 05-25=1, 05-26=1, 05-27=1, 05-28=1,
+05-29=2, 05-30=1, 05-31=1, 06-01=2, 06-02=확인 불가(미수집), 06-03=1, 06-04=1
+```
+
+### Quick daily count verification
+
+When the helper returns empty trigger contexts and manual log searches fail due to Fargate stream expiration, use this command to verify the daily baseline:
+
+```bash
+aws cloudwatch get-metric-statistics --region ap-northeast-2 \
+  --namespace 'ConsoleErrors' --metric-name 'segment-publisher-prod slow eic query' \
+  --start-time 'YYYY-MM-DDT00:00:00Z' --end-time 'YYYY-MM-DDT23:59:59Z' \
+  --period 86400 --statistics Sum \
+  --output json | jq -r '.Datapoints[] | [.Timestamp, .Sum] | @tsv' | sort
+```
+
+### Pitfall — companion alarm absent
+
+If the dedicated `segment-publisher long running alam` (`Custom/segment-publisher` / `SegmentPublisher.ExecutionTimeOverThreshold`) no longer exists or returns empty metric data:
+
+1. Do **not** require the companion alarm for classification.
+2. Use the `ConsoleErrors` daily Sum counts over 7d/30d as the primary frequency evidence.
+3. If counts remain stable (1–7/day) and the alarm time matches known batch windows (~06:30 UTC class101, ~11:47–11:55 UTC stepup/proudp), classify as Pattern B `no_action`.
+4. Only run bounded manual trace with `"took" "too" "long"` when:
+   - daily count spikes above 10, or
+   - the alarm timing shifts outside known windows, or
+   - ERROR logs / DLQ / ECS failure signals coexist.
+5. Only escalate to `needs_fix` when Pattern A (`EventCounterCteManager.extract...`) dominates in a spiked window or real failure signals appear.
+

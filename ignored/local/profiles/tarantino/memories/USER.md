@@ -1,4 +1,4 @@
-User identity: jace (Slack user id U07JCFJAQJ1) at greyboxhq. Co-owner Soomin (U07KLU56XMG) uses soomin@greyboxhq.com — that is also the Gmail account the pipeline authenticates as for outbound mail. Another collaborator appears as U05RSM8FG83. jace owns the domain just-went-viral.com (email jace@just-went-viral.com).
+U07KLU56XMG is 정우 (Jungwoo) — corrected 2026-06 by Soomin (earlier note wrongly labeled this id as Soomin). The Slack DM user "Soomin Lee" (수민, co-owner) is a separate person. soomin@greyboxhq.com is the Gmail account the pipeline authenticates as for outbound mail.
 §
 Tone: Tarantino Korean default; English when task content is English (customer deliverables, English UGC scripts) — don't wrap English content in Korean meta-text, corrected May 2026 ("영어로 쓰라고 ㅎㅎ"). Punchy, growth-anchored. **Bold not italic**. No emojis in customer email. Bullets default; tables 3×3+ only. Quality > cost on creative. **Hook**: must embed why-watch-to-end + ICP + visual setup; beat by "what question pulls to next".
 §

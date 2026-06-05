@@ -11,7 +11,11 @@ Class-level reference for Lambda alarms in the `ConsoleErrors` namespace where t
 
 ## Known patterns
 
-### kakao-brand-message-delivery: 080 unsubscribe number missing
+### kakao-brand-message-delivery: handled validation rejections in `lib/utils.ts`
+
+This Lambda emits handled `console.error` lines in two code areas. Both are caught by the coarse `%ERROR|Status: timeout%` metric filter even though the Lambda returns normally (`Errors=0`).
+
+#### Pattern A: 080 unsubscribe number missing
 
 - Trigger string: `080 unsubscribe number missing, skipping batch: <projectId>/<campaignId>`
 - **Log-volume pitfall**: Because this Lambda logs full Kakao Bizmessage request/response bodies at INFO level for every batch, the INFO log volume far exceeds ERROR volume. When only 1-2 `080 unsubscribe number missing` ERROR lines exist in the alarm window, helper `current_top_signatures` and `current_trigger_contexts` may show only INFO request-body patterns and report `current_error_detail` as missing. Run a bounded `filter_log_events` with `filterPattern='ERROR'` on the exact alarm window to locate the trigger line when the helper's ERROR detail is empty.
@@ -34,7 +38,37 @@ Class-level reference for Lambda alarms in the `ConsoleErrors` namespace where t
 - No Terraform changes are required; the metric filter continues to work for real failures while the handled path stops tripping it.
 - Prior implementation: PR #3673 (`hashimoto/fix-kakao-brand-080-noise`) demonstrates the one-line change.
 
-**Bounded log check** (when helper returns empty `current_trigger_contexts`):
+#### Pattern B: `Missing required data: invalid kakao_bizmessage sender info`
+
+- Trigger string: `Missing required data: invalid kakao_bizmessage sender info from event data`
+- Code path: `services/lambda/kakao-brand-message-delivery/lib/utils.ts:51`
+- Called from: `services/lambda/kakao-brand-message-delivery/index.ts:70`
+- Why it happens: `isValidEventData()` checks `eventData.sender_info` via `isValidKakaoBizmessageSenderInfo()`. When the sender info is missing or invalid (e.g. `channel_id` is absent), it logs `console.error('Missing required data: invalid kakao_bizmessage sender info from event data')` and returns `false`. The handler skips the record and continues.
+- Scope-attribution pitfall: The ERROR log line itself does **not** carry `projectId` or `campaignId`. The adjacent `INFO` SQS payload lines (`Received event`) and the EMF `BatchCompletion` metric line contain both IDs. If the helper's `current_trigger_contexts` show only the generic ERROR line, use `filter_log_events` with `filterPattern='Missing required data'` to confirm the trigger, then pull `project_id`/`campaign_id` from the matching stream's `Received event` or `BatchCompletion` lines.
+- INFO payload ERROR-embedding pitfall: This Lambda logs the full SQS `Received event` JSON at `INFO` level. If the payload contains a value with the literal substring `ERROR`, the coarse metric filter can match the INFO line even when the real trigger is the `Missing required data` ERROR line. Always isolate the true trigger with a bounded `filterPattern='ERROR'` search before accepting INFO-only signatures as the root cause.
+- Classification: `no_action` when isolated and `AWS/Lambda Errors == 0`. The batch is intentionally skipped due to invalid sender configuration.
+- Action target: downgrade `console.error` to `console.warn` in `lib/utils.ts:51` (and the other `Missing required data` lines in the same file) when recurrence becomes noisy. See `references/kakao-brand-message-delivery-sender-info-validation.md` for full details.
+
+**Bounded log check (Pattern B)**:
+```bash
+python3 -c "
+import boto3, datetime
+session = boto3.Session(region_name='ap-northeast-2')
+logs = session.client('logs')
+start = int(datetime.datetime(YYYY, MM, DD, HH, MM, tzinfo=datetime.timezone.utc).timestamp() * 1000)
+end   = int(datetime.datetime(YYYY, MM, DD, HH, MM, tzinfo=datetime.timezone.utc).timestamp() * 1000)
+resp = logs.filter_log_events(
+    logGroupName='/aws/lambda/kakao-brand-message-delivery',
+    startTime=start, endTime=end,
+    filterPattern='Missing required data',
+    limit=20
+)
+for e in resp.get('events', []):
+    print(e['message'].strip()[:400])
+"
+```
+
+**Bounded log check (when helper returns empty `current_trigger_contexts`)**:
 ```bash
 python3 -c "
 import boto3, datetime
