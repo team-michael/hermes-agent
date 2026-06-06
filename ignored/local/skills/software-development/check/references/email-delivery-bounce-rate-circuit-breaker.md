@@ -40,6 +40,8 @@ The log stream events are structured and carry explicit IDs:
 
 The same Lambda invocation also writes `delivery_result_<project_id>` and `delivery_failure_log_<project_id>` rows with `event_name: email_send_blocked_bounce`.
 
+**Pitfall — Postgres sharded campaign lookup may return empty for valid campaigns**: The `campaigns_<project_id>` shard table may not contain every campaign ID that appears in Lambda logs (e.g., `8slb3k` returned empty in `campaigns_0c61d690...` while `i5oPIt` in the same shard succeeded). When the sharded lookup fails, trust the Lambda `EMAIL_CB_TRIGGERED` log as the authoritative scope source rather than concluding the campaign is deleted. Do not force a Postgres lookup if the log already supplies `project_id` and `campaign_id`.
+
 ## Investigation when the helper fails
 The helper text parser does not detect `email-delivery blocked due to bounce rate` because it lacks heuristics for custom-namespace alarm names and the `blocked due to bounce` phrasing.
 
@@ -62,14 +64,32 @@ Manual trace (bounded, read-only):
   - The campaign is not an internal test project (i.e., actual customer campaign).
 - `needs_fix` is only appropriate when the same campaign or project triggers repeatedly over multiple days with escalating blocked send counts, indicating stale/low-quality email lists that the customer has not cleaned.
 
+## Multi-campaign sequential firing pattern
+On a single day the same project can trigger the circuit breaker across **multiple campaigns** in sequence, not just one. Example (2026-06-05):
+- `i5oPIt` → `pZKtr6` → `8slb3k`, all under `sconn`, all with bounce rate > 5%.
+When this occurs, the root cause is **project-level email list hygiene** (stale or low-quality addresses shared across campaigns), not an isolated bad template or audience segment.
+
+## Reclassification guidance
+- `no_action` when:
+  - A **single** campaign triggers on a single day.
+  - `email-delivery` Lambda Errors are zero.
+  - SES account status is `HEALTHY`.
+- `needs_fix` when **either**:
+  - The **same project** triggers across **multiple campaigns on the same day** (sequential multi-campaign pattern above).
+  - The same project triggers on **3+ days within 7 days**.
+  - The metric transitions exceed `1d: 3` or show consecutive-day recurrence.
+  In these cases, the bounce-rate circuit breaker is still functioning correctly, but the underlying list quality is deteriorating and real customer delivery work is being blocked for hours. Track as a customer-success / list-hygiene follow-up.
+
 ## Historical baseline
 The `EmailBlockDueToBounce` metric existed before the alarm was created. Daily Sum from `get-metric-statistics` (Period=86400) shows sporadic spike days:
 - 2026-05-08: 1,389
 - 2026-05-10: 482
 - 2026-05-16: 1,347
 - 2026-05-29: 341 (first day the alarm fired after creation)
+- 2026-06-01: 2 transitions (sconn campaigns)
+- 2026-06-05: 5 transitions (sconn campaigns `i5oPIt`, `pZKtr6`, `8slb3k`)
 
-Between spike days the metric is typically 0–3/day. A single spike day for one campaign is normal operational behavior.
+Between spike days the metric is typically 0–3/day. A single spike day for one campaign is normal operational behavior. A single day with 3+ transitions for the same project is the multi-campaign sequential pattern.
 
 ## Known Terraform source
 - `infra/terraform/prod/ap-northeast-2/lambda/functions.tf` — `email-delivery` Lambda inventory entry

@@ -235,6 +235,8 @@ python "${HERMES_HOME:-$HOME/.hermes}/skills/software-development/check/scripts/
 4. Write the alarm name to a file and use `--alarm-names file:///tmp/alarm.txt`.
 Do not retry the same bare quoted string; the CLI JSON parser will reject it regardless of shell quoting.
 
+**Pitfall — CloudWatch Metrics Insights `metric_query` alarms return null metric fields in helper output**: When an alarm uses `metric_query` (e.g., `SELECT MAX(CPUUtilization) FROM SCHEMA(...) WHERE tag.DBClusterIdentifier = '...' GROUP BY DBInstanceIdentifier`), the `check` helper cannot resolve `Namespace`, `MetricName`, or `Dimensions` from `describe-alarms` and will return `metric.namespace: null`, `metric.name: null`, `metric.dimensions: []`. This is expected — the alarm uses a dynamic query, not a static metric. Do not treat null metric fields as missing data. Instead, read the `metric_query.expression` from the helper's `code` output or Terraform, then manually run per-instance metric breakdowns (e.g., `CPUUtilization` per `DBInstanceIdentifier`) to identify the breaching instance. See `references/aurora-writer-cpu-batch-lambda-spike.md` for the full dynamic Aurora instance alarm trace.
+
 **Pitfall — alarm name embeds stale or incorrect threshold**: Alarm names are human-readable labels that may drift from the actual CloudWatch threshold over time. Always verify `Threshold`, `EvaluationPeriods`, and `DatapointsToAlarm` from `describe-alarms` output. Do not rely on the numeric value in the alarm name when classifying severity or estimating margin. Example: `[api-service] 4xx error response is greater than 300 in 5m` has an actual `Threshold: 100.0` with `EvaluationPeriods: 4` and `DatapointsToAlarm: 3`.
 
 **Pitfall — DLQ creation alarm names**: alarm names matching the literal pattern `<queue-name>-dlq has been created` are not auto-detected because `has been created` is prose, not a metric. Pass `--alarm-name` explicitly, e.g. `--alarm-name 'kinesis-record-dispatcher-queue-dlq has been created'`. **If the helper still returns `{}` or empty JSON**, immediately run the bounded manual SQS/Lambda trace: get queue attributes → peek DLQ messages for scope → check Lambda Errors/Throttles/Duration → read `RedrivePolicy.maxReceiveCount`. Do not retry helper parameters.
@@ -369,6 +371,8 @@ Flow:
 3. CloudWatch datapoints that actually breached
 4. instance topology (writer/readers)
 5. Performance Insights `db.load.avg` grouped by `db.sql` on the offending instance
+   - **PI fallback**: if `pi:DescribeDimensionKeys` returns `NotAuthorizedException`, correlate the CPU spike with `AWS/Lambda` `Invocations` metrics for `scheduled-batch-delivery`, `scheduled-batch-kakao-alimtalk-delivery`, `user-journey-node-runner`, and `kds-consumer`. A simultaneous invocation surge (e.g., ~250 → ~900/min) at ~01:00 UTC (~10:00 KST) indicates the daily scheduled campaign batch window. Check Lambda `Duration` and `Errors` to confirm normal completion.
+   - See `references/aurora-writer-cpu-batch-lambda-spike.md` for bounded commands and classification.
 6. use the current alarm focus window first; report dominant `current_top_projects_by_load` instead of listing every project seen in the broader PI lookback
 7. if `current_unattributed_top_sql` has significant focus load, report it separately as unattributed DB load instead of assigning it to every detected project
 8. if sharded table suffix/project_id appears in SQL -> map via DynamoDB and include the project/product
@@ -382,6 +386,8 @@ Questions to answer:
 - Which project/product is dominant in the current alarm focus window, and which projects are only background/minor contributors?
 - Which project/product/campaign/user journey is connected to the SQL table suffix or aggregate? Do not print campaign and user journey together.
 - Is this a noisy alert or a real incident signal?
+
+**Performance Insights fallback — batch Lambda EMF logs**: When PI returns `NotAuthorizedException` and the CPU spike correlates with scheduled batch hours, query the `scheduled-batch-delivery` Lambda EMF logs (`/aws/lambda/scheduled-batch-delivery`, namespace `Notifly/ScheduledBatchDelivery`) for `project_id`/`campaign_id` grouped by `table:"delivery_result"`. This reveals which project's `delivery_result_*` table contributed most to the writer load even without PI SQL fingerprints. See `references/rds-cpu-spike-scope-via-batch-lambda-emf.md`.
 
 ### A2. RDS / Aurora VolumeReadIOPs / ReadIOPS batch workload
 
@@ -463,7 +469,13 @@ Do not claim a metric filter is matching unrelated messages unless the helper's 
 
 **Pitfall — web-console "maximum number of registered templates" is an external provider limit, not our code**: When the current trigger is `Error: The maximum number of registered templates.` during campaign upsert, the error originates from **Kakao Biz Message Center** or **NHN Cloud** template creation APIs — not from AWS, not from our code. The string does not exist in the `notifly-event` codebase. The code path is `CampaignService.upsertCampaign` → `MessageTransformer.transform` → external provider template registration. This is a handled business rejection (provider quota exhausted), not a service bug. The alert itself is typically `no_action`; the long-term fix is log-level downgrade or pre-flight quota check. See `references/web-console-max-registered-templates-external-provider.md` for verification commands and exact file paths.
 
-**Pitfall — web-console `FailedToUploadImageException` / `InvalidImageFormatException` / `Failed to create Kakao BizMessage template` is a Kakao external-provider validation error, not our code**: When the current trigger is `[FailedToUploadImageException(유효하지 않은 URL입니다. : <url>)]`, `[InvalidImageFormatException(<filename>)]`, or `Error: Failed to create Kakao BizMessage template: 변수명 형식이 올바르지 않습니다. 변수명은 최대 20자 이내 한/영/숫자/'-','_'로 작성 가능합니다.`, the error originates from an external Kakao SDK/wrapper. None of these strings exist in the `notifly-event` codebase. These are handled business rejections (client-provided invalid image, unsupported format, or malformed template variable name), not service bugs. 30-day combined volume for all three patterns is typically 30–60. Classify as `no_action` when no other ERROR patterns coexist. See `references/web-console-kakao-image-upload-validation-error.md` for triage commands and remediation direction.
+**Pitfall — web-console Kakao BizMessage external-provider validation errors (`FailedToUploadImageException`, `InvalidImageFormatException`, failed template variable name, and invalid template link) are not service bugs**: When the current trigger is any of:
+1. `[FailedToUploadImageException(유효하지 않은 URL입니다. : <url>)]`
+2. `[InvalidImageFormatException(<filename>)]`
+3. `Error: Failed to create Kakao BizMessage template: 변수명 형식이 올바르지 않습니다. 변수명은 최대 20자 이내 한/영/숫자/'-','_'로 작성 가능합니다.`
+4. `Error: 템플릿 링크 검증 실패: [모바일 웹 링크] 유효하지 않은 링크입니다: <url>`
+
+The first three originate from an external Kakao SDK/wrapper and do not exist in the `notifly-event` codebase. The fourth originates from `KakaoBrandMessageTransformer.ts:145` (`validateResolvedTemplateLinks`), but it is still a **handled business rejection** of client-provided input — the console user entered an invalid mobile-web link in the Kakao brand-message template editor. All four are handled business rejections, not service bugs. 30-day combined volume for the first three is typically 30–60; the fourth is additional on top. Classify as `no_action` when any of these is the dominant or sole ERROR pattern and no other ERROR patterns coexist. See `references/web-console-kakao-image-upload-validation-error.md` for triage commands and remediation direction.
 
 **Pitfall — web-console LiquidJS `abort_message()` is an intentional template control-flow abort, not a service error**: When the current trigger shows `From AbortError: message is aborted` or `RenderError: message is aborted` with a LiquidJS frame containing `abort_message()`, the root cause is a user-journey or campaign template that intentionally stops rendering when a condition is not met (e.g. no matching data for the day). The broad `%ERROR|Exception%` metric filter matches the literal error strings even though the abort is handled and the request continues normally. Classify as `no_action` when this signature dominates and no other ERROR patterns coexist. See `references/web-console-liquidjs-abort-message-false-positive.md` for verification commands, scope recovery via `user_journey_sessions_<hash>`, and remediation options.
 
@@ -501,8 +513,6 @@ Bad candidates / keep `ERROR`:
 - database/SQS/Kinesis write failures
 - Lambda unhandled exceptions, timeout/OOM, DLQ/retry exhaustion
 - provider unknown, network, auth, or rate-limit failures unless explicitly handled/suppressed
-- cache initialization or delivery-policy missing data when it may hide a real initialization/data bug
-
 ### D. SQS / DLQ alert
 
 Pattern examples:
@@ -663,30 +673,6 @@ See `references/sqs-dlq-new-consumer-deployment-failure.md`.
 
 **Pitfall — Lambda Kinesis consumer DB read timeout with silent data loss**: When a Kinesis consumer Lambda (e.g., `user-journey-node-runner`) logs `ERROR Query read timeout` for sharded PG tables such as `user_journey_nodes_<project_id>` or `user_journeys_<project_id>`, but `AWS/Lambda Errors == 0`, the code is catching the DB timeout and returning an empty result (`[]` or `undefined`). Because the Lambda returns normally, the Kinesis checkpoint advances and the failed records are silently skipped without retry. This is real data loss, not a false positive. Check `Duration` for values near `statement_timeout` multiples (e.g., 240s, 480s) rather than the Lambda `Timeout`. Verify Kinesis `GetRecords.IteratorAgeMilliseconds` is near zero (consumer is not falling behind, just dropping records). Classify as `needs_fix` because the error-handling policy should throw or return a batch-item failure to trigger Kinesis retry, not return an empty result. See `references/lambda-kinesis-consumer-db-read-timeout-silent-data-loss.md` for full triage, scope extraction, and remediation.
 
-## H. Kinesis stream iterator age / throughput alarm
-
-Pattern examples:
-- `notifly-event-stream High GetRecords Iterator Age`
-- `ReadProvisionedThroughputExceeded`
-- Metric namespace `AWS/Kinesis` with `GetRecords.IteratorAgeMilliseconds`
-
-Flow:
-1. alarm metadata + exact threshold (this is a native AWS metric alarm, not log-derived)
-2. alarm history and recurrence pattern
-3. **Stream status**: `describe-stream` to confirm `ACTIVE` and record shard count
-4. **Consumer topology**: `list-stream-consumers` for EFO consumers; `list-event-source-mappings` to find the actual Lambda consumer. Do not guess the Lambda name from the stream name.
-5. **EventSourceMapping config**: `BatchSize`, `ParallelizationFactor`, `MaximumRetryAttempts`, `BisectBatchOnFunctionError`, `DestinationConfig` (DLQ)
-6. **Lambda function config**: `MemorySize`, `Timeout`, `LastModified` (deploy time correlation)
-7. **Producer traffic**: `IncomingRecords` trend over the past hour to identify spikes
-8. **Consumer health**: Lambda `Errors`, `Duration`, `Invocations` in the same window
-9. **Iterator age trend**: `GetRecords.IteratorAgeMilliseconds` over the past hour to see if the spike is transient or sustained
-10. **Bounded Lambda log check**: `filter-log-events` on `/aws/lambda/<actual_name>` for ERROR lines around the alarm datapoint time; anchor to `StateReasonData.startDate`, not Slack message time
-11. Determine if the alarm is a transient spike (`no_action`), throughput bottleneck (`needs_fix` if recurring), or consumer failure (`needs_fix`/`urgent`)
-
-Scope is typically infra-wide because Kinesis streams are shared pipelines with no per-project dimensions on `AWS/Kinesis` metrics. Do not force a project scope unless Lambda logs contain explicit `project_id`/`campaign_id`.
-
-See `references/kinesis-stream-iterator-age-triage.md` for exact bounded commands and interpretation heuristics.
-
 ## DynamoDB project mapping rule
 
 Whenever you find a `project_id`, fetch from DynamoDB `project` table with a projection expression and report:
@@ -740,18 +726,6 @@ Examples:
 - Accepting "project unknown for campaign" in the final answer when neither source is available.
 
 Never mutate data.
-
-## Output shape
-
-For interactive user requests, answer in this order:
-1. direct conclusion
-2. mandatory scope: project/product and exactly one of campaign or user journey, or explicit Korean unknown/service-wide/infra-wide wording
-3. DB instance + SQL fingerprint when DB-shaped, or exact evidence from AWS/logs/metrics otherwise
-4. exact evidence from AWS/logs/metrics
-5. tradeoff: real issue vs noisy alert
-6. concrete next action naming the implementation file/function, SQL/index/table family, or Terraform resource/path to change
-
-For automated Slack subscription alerts, obey the automated Slack alert contract instead of this longer shape.
 
 ## Practical note
 

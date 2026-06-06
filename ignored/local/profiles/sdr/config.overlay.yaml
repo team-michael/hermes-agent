@@ -94,3 +94,27 @@ skills:
   external_dirs:
   - /home/ubuntu/.hermes/hermes-agent/ignored/local/profiles/sdr/skills
   - /home/ubuntu/.hermes/hermes-agent/ignored/local/skills
+slack:
+  allow_bots: all
+  message_subscriptions:
+  - name: notifly-help-inbound-research
+    channels:
+    - C049CGKGG8L
+    subtypes:
+    - bot_message
+    bot_names:
+    - Notifly Help
+    reactions: true
+    final_reaction: processing_status
+  channel_prompts:
+    C049CGKGG8L: A Notifly Help inbound or prospect message was posted. Read the
+      new message and thread context, search prior sdr sessions for matching company,
+      domain, contact, and similar customer context, then research public evidence.
+      Return a concise Korean SDR brief with qualification, key evidence, relevant
+      prior context, recommended sales angle, next action, and uncertainty. This
+      is not a monitoring alert; do not use the check skill by default.
+  channel_skill_bindings:
+  - id: C049CGKGG8L
+    skills:
+    - notifly-sdr-lead-research
+    - notifly-sales-enablement

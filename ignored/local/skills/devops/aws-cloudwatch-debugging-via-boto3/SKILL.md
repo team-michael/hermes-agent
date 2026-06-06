@@ -27,6 +27,7 @@ So prefer **Python via `terminal`** and explicitly construct a boto3 `Session` f
 
 ## Workflow
 
+Reference for setting up least-privilege Clix CloudWatch access from an agent/GitHub-OIDC environment: `references/clix-cloudwatch-readonly-access.md`.
 Reference for noisy p95/p99/p99.9 alarm tuning: `references/noisy-percentile-alarm-tuning.md`.
 Reference for Aurora/RDS reader fleet right-sizing and 3→2 reduction reviews: `references/rds-reader-rightsizing.md`.
 Reference for `AuroraOptimizedReadsCacheHitRatio` alarms after broad PostgreSQL index backfills: `references/aurora-optimized-reads-cache-ratio-after-index-backfill.md`.
