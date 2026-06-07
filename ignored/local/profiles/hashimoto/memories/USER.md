@@ -5,3 +5,5 @@ Model provider is Cloudflare Workers AI with @cf/moonshotai/kimi-k2.6, chosen fo
 Slack gateway home channel is #monitoring (C04KT7EH5RQ); the bot responds to CloudWatch alarms and operational alerts in this channel.
 §
 User expects rigorous evidence chains for DLQ alarm conclusions. When classifying a DLQ as "transient AWS infrastructure error", must first show explicit supportive evidence (Lambda Errors=0, Throttles=0, no ERROR logs, maxReceiveCount=1, zero log-match for DLQ message content) before stating the hypothesis. Avoid stating conclusions as certainties without showing the supporting pattern.
+§
+Slack 채널로 메시지를 전달할 때, 마크다운(Markdown) 테이블 대신 `slack_table` (Native Block Kit Table block) 렌더링 방식을 항상 사용함.

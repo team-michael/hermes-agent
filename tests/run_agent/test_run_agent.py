@@ -1640,34 +1640,41 @@ class TestBuildApiKwargs:
         assert kwargs["extra_body"]["thinking"] == {"type": "enabled"}
         assert "reasoning_effort" not in kwargs
 
-    def test_workers_ai_kimi_disables_thinking_when_reasoning_none(self, agent):
-        """Cloudflare Kimi needs chat_template_kwargs.thinking=false."""
+    @pytest.mark.parametrize(
+        "model",
+        [
+            "@cf/moonshotai/kimi-k2.6",
+            "@cf/google/gemma-4-26b-a4b-it",
+            "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+        ],
+    )
+    def test_workers_ai_sends_reasoning_effort_for_any_model(self, agent, model):
         agent.provider = "workers-ai"
         agent.base_url = "https://api.cloudflare.com/client/v4/accounts/test/ai/v1"
         agent._base_url_lower = agent.base_url.lower()
-        agent.model = "@cf/moonshotai/kimi-k2.6"
-        agent.reasoning_config = {"enabled": False}
+        agent.model = model
+        agent.reasoning_config = {"enabled": True, "effort": "high"}
         messages = [{"role": "user", "content": "hi"}]
 
         kwargs = agent._build_api_kwargs(messages)
 
-        assert kwargs["extra_body"]["chat_template_kwargs"] == {"thinking": False}
-        assert "reasoning_effort" not in kwargs
-
-    def test_workers_ai_non_kimi_does_not_get_kimi_thinking_flags(self, agent):
-        agent.provider = "workers-ai"
-        agent.base_url = "https://api.cloudflare.com/client/v4/accounts/test/ai/v1"
-        agent._base_url_lower = agent.base_url.lower()
-        agent.model = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
-        agent.reasoning_config = {"enabled": False}
-        messages = [{"role": "user", "content": "hi"}]
-
-        kwargs = agent._build_api_kwargs(messages)
-
+        assert kwargs["reasoning_effort"] == "high"
         assert "chat_template_kwargs" not in kwargs.get("extra_body", {})
 
-    def test_custom_cloudflare_kimi_disables_thinking_when_reasoning_none(self, agent):
-        """Workers AI configured as a named custom provider also disables Kimi thinking."""
+    def test_workers_ai_reasoning_disabled_maps_to_none(self, agent):
+        agent.provider = "workers-ai"
+        agent.base_url = "https://api.cloudflare.com/client/v4/accounts/test/ai/v1"
+        agent._base_url_lower = agent.base_url.lower()
+        agent.model = "@cf/google/gemma-4-26b-a4b-it"
+        agent.reasoning_config = {"enabled": False}
+        messages = [{"role": "user", "content": "hi"}]
+
+        kwargs = agent._build_api_kwargs(messages)
+
+        assert kwargs["reasoning_effort"] == "none"
+        assert "chat_template_kwargs" not in kwargs.get("extra_body", {})
+
+    def test_custom_cloudflare_reasoning_disabled_uses_generic_think_false(self, agent):
         agent.provider = "custom"
         agent.base_url = "https://api.cloudflare.com/client/v4/accounts/test/ai/v1"
         agent._base_url_lower = agent.base_url.lower()
@@ -1678,7 +1685,7 @@ class TestBuildApiKwargs:
         kwargs = agent._build_api_kwargs(messages)
 
         assert kwargs["extra_body"]["think"] is False
-        assert kwargs["extra_body"]["chat_template_kwargs"] == {"thinking": False}
+        assert "chat_template_kwargs" not in kwargs["extra_body"]
 
     def test_provider_preferences_injected(self, agent):
         agent.provider = "openrouter"

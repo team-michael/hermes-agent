@@ -2,7 +2,7 @@
 
 The feature is opt-in via the `SLACK_TABLE_ENABLED_PROFILES` allow-list. Tests
 exercise:
-  - schema gating (parameter visible only on tarantino)
+  - schema gating (parameter visible only on enabled profiles)
   - validator (min/max shapes, type/shape errors, instructive messages)
   - block builder (raw_text cells, column_settings passthrough, header row prepended)
   - rasterizer (plain-text grid for session mirror)
@@ -42,8 +42,9 @@ def fresh_module(monkeypatch):
 # Schema gating
 # ---------------------------------------------------------------------------
 
-def test_schema_includes_slack_table_for_tarantino(fresh_module):
-    m = fresh_module("tarantino")
+@pytest.mark.parametrize("profile", ["andrej", "boris", "csm", "hashimoto", "notifly", "sdr", "tarantino"])
+def test_schema_includes_slack_table_for_enabled_profiles(fresh_module, profile):
+    m = fresh_module(profile)
     props = m.SEND_MESSAGE_SCHEMA["parameters"]["properties"]
     assert "slack_table" in props
     table_schema = props["slack_table"]
@@ -52,19 +53,20 @@ def test_schema_includes_slack_table_for_tarantino(fresh_module):
     assert "rows" in table_schema["required"]
 
 
-@pytest.mark.parametrize("profile", ["andrej", "boris", "csm", "hashimoto", "sdr", None])
-def test_schema_omits_slack_table_for_other_profiles(fresh_module, profile):
+@pytest.mark.parametrize("profile", ["unknown-profile", None])
+def test_schema_omits_slack_table_for_disabled_profiles(fresh_module, profile):
     m = fresh_module(profile)
     props = m.SEND_MESSAGE_SCHEMA["parameters"]["properties"]
     assert "slack_table" not in props
 
 
 def test_is_slack_table_enabled_predicate(fresh_module):
-    m_t = fresh_module("tarantino")
-    assert m_t._is_slack_table_enabled_for_current_profile() is True
+    for profile in ["andrej", "boris", "csm", "hashimoto", "notifly", "sdr", "tarantino"]:
+        m_enabled = fresh_module(profile)
+        assert m_enabled._is_slack_table_enabled_for_current_profile() is True
 
-    m_b = fresh_module("boris")
-    assert m_b._is_slack_table_enabled_for_current_profile() is False
+    m_disabled = fresh_module("unknown-profile")
+    assert m_disabled._is_slack_table_enabled_for_current_profile() is False
 
 
 # ---------------------------------------------------------------------------
@@ -259,11 +261,11 @@ def test_rasterize_handles_korean_unicode(m):
 # ---------------------------------------------------------------------------
 
 def test_runtime_gate_drops_slack_table_on_disabled_profile(fresh_module, monkeypatch):
-    """A caller on boris that programmatically passes slack_table should be
+    """A caller on a disabled profile that programmatically passes slack_table should be
     silently downgraded to the text path — not fail with a schema error and
     not actually post a Block Kit table.
     """
-    m_b = fresh_module("boris")
+    m_b = fresh_module("unknown-profile")
 
     # Patch the underlying senders so we can detect which path was taken.
     captured = {"text_called": False, "blocks_called": False}

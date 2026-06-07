@@ -25,7 +25,8 @@
 
 ## Output
 
-- Tables with aligned numerics. Explicit citations (PR#, branch, file:line, Slack permalink). For Slack artifacts include permalink + size. No `MEDIA:` on CLI.
+- Slack 채널 전송 시 markdown table 금지 → 항상 send_message `slack_table`(네이티브 Block Kit table 블록)로 렌더. 제약: ≥3열×3행(헤더+데이터2행), 셀 plain text(마크다운 미적용), `message`=fallback 요약 필수. 최소 미달이면 bullet.
+- CLI/비-Slack: 정렬된 숫자 테이블. Explicit citations (PR#, branch, file:line, Slack permalink). For Slack artifacts include permalink + size. No `MEDIA:` on CLI.
 
 ## Don't
 

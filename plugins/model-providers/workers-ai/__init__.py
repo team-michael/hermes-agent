@@ -2,9 +2,30 @@
 
 from typing import Any
 
-from agent.moonshot_schema import is_moonshot_model
 from providers import register_provider
 from providers.base import ProviderProfile
+
+
+_WORKERS_AI_REASONING_EFFORTS = {"none", "low", "medium", "high"}
+_WORKERS_AI_REASONING_ALIASES = {
+    "minimal": "low",
+    "xhigh": "high",
+    "max": "high",
+}
+
+
+def _normalize_reasoning_effort(reasoning_config: dict | None) -> str | None:
+    if not reasoning_config or not isinstance(reasoning_config, dict):
+        return None
+
+    enabled = reasoning_config.get("enabled", True)
+    raw_effort = (reasoning_config.get("effort") or "").strip().lower()
+
+    if enabled is False or raw_effort == "none":
+        return "none"
+    if raw_effort in _WORKERS_AI_REASONING_EFFORTS:
+        return raw_effort
+    return _WORKERS_AI_REASONING_ALIASES.get(raw_effort)
 
 
 class WorkersAIProfile(ProviderProfile):
@@ -17,18 +38,11 @@ class WorkersAIProfile(ProviderProfile):
         model: str | None = None,
         **context: Any,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        extra_body: dict[str, Any] = {}
-
-        if not is_moonshot_model(model):
-            return extra_body, {}
-
-        if reasoning_config and isinstance(reasoning_config, dict):
-            effort = (reasoning_config.get("effort") or "").strip().lower()
-            enabled = reasoning_config.get("enabled", True)
-            if effort == "none" or enabled is False:
-                extra_body["chat_template_kwargs"] = {"thinking": False}
-
-        return extra_body, {}
+        top_level: dict[str, Any] = {}
+        effort = _normalize_reasoning_effort(reasoning_config)
+        if effort:
+            top_level["reasoning_effort"] = effort
+        return {}, top_level
 
 
 workers_ai = WorkersAIProfile(

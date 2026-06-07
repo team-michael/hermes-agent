@@ -141,8 +141,8 @@ async def _send_telegram_message_with_retry(bot, *, attempts: int = 3, **kwargs)
 #   1. The option is Slack-only. Other adapters have no analogue.
 #   2. LLMs tend to misuse tables for anything that could be bullets, which is
 #      catastrophic on mobile.
-#   3. The code base is shared across 6 profiles (tarantino / andrej / boris /
-#      csm / hashimoto / sdr), so the blast radius of a bad default is large.
+#   3. The code base is shared across multiple profiles, so the blast radius of
+#      a bad default is large.
 #
 # The mitigation is an allow-list of profiles that *explicitly opt in*. When
 # the current profile is not in the allow-list:
@@ -154,7 +154,15 @@ async def _send_telegram_message_with_retry(bot, *, attempts: int = 3, **kwargs)
 #
 # Add a profile to the allow-list only after validating the feature in that
 # profile's Slack home channel.
-SLACK_TABLE_ENABLED_PROFILES = frozenset({"tarantino"})
+SLACK_TABLE_ENABLED_PROFILES = frozenset({
+    "andrej",
+    "boris",
+    "csm",
+    "hashimoto",
+    "notifly",
+    "sdr",
+    "tarantino",
+})
 
 
 def _is_slack_table_enabled_for_current_profile() -> bool:

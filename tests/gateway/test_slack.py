@@ -4149,7 +4149,7 @@ class TestSlackTableDirective:
 
     @pytest.mark.asyncio
     async def test_slack_table_directive_is_profile_gated(self, adapter, monkeypatch):
-        monkeypatch.setenv("HERMES_PROFILE", "boris")
+        monkeypatch.setenv("HERMES_PROFILE", "unknown-profile")
         adapter._app.client.chat_postMessage = AsyncMock(return_value={"ts": "ts1"})
         content = (
             "Visible\n\n"

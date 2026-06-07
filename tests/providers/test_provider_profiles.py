@@ -1,5 +1,7 @@
 """Tests for the provider module registry and profiles."""
 
+import pytest
+
 from providers import get_provider_profile, _REGISTRY
 from providers.base import ProviderProfile, OMIT_TEMPERATURE
 
@@ -94,6 +96,53 @@ class TestKimiProfile:
         eb, tl = p.build_api_kwargs_extras(reasoning_config=None)
         assert eb["thinking"] == {"type": "enabled"}
         assert "reasoning_effort" not in tl
+
+
+class TestWorkersAIProfile:
+    def test_reasoning_effort_is_model_agnostic_top_level(self):
+        p = get_provider_profile("workers-ai")
+        for model in [
+            "@cf/moonshotai/kimi-k2.6",
+            "@cf/google/gemma-4-26b-a4b-it",
+            "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+        ]:
+            eb, tl = p.build_api_kwargs_extras(
+                reasoning_config={"enabled": True, "effort": "high"},
+                model=model,
+            )
+            assert eb == {}
+            assert tl == {"reasoning_effort": "high"}
+
+    @pytest.mark.parametrize(
+        "reasoning_config, expected",
+        [
+            ({"enabled": False}, "none"),
+            ({"enabled": True, "effort": "none"}, "none"),
+            ({"enabled": True, "effort": "minimal"}, "low"),
+            ({"enabled": True, "effort": "low"}, "low"),
+            ({"enabled": True, "effort": "medium"}, "medium"),
+            ({"enabled": True, "effort": "high"}, "high"),
+            ({"enabled": True, "effort": "xhigh"}, "high"),
+            ({"enabled": True, "effort": "max"}, "high"),
+        ],
+    )
+    def test_reasoning_effort_normalization(self, reasoning_config, expected):
+        p = get_provider_profile("workers-ai")
+        eb, tl = p.build_api_kwargs_extras(
+            reasoning_config=reasoning_config,
+            model="@cf/google/gemma-4-26b-a4b-it",
+        )
+        assert eb == {}
+        assert tl == {"reasoning_effort": expected}
+
+    def test_no_reasoning_config_omits_reasoning_effort(self):
+        p = get_provider_profile("workers-ai")
+        eb, tl = p.build_api_kwargs_extras(
+            reasoning_config=None,
+            model="@cf/google/gemma-4-26b-a4b-it",
+        )
+        assert eb == {}
+        assert tl == {}
 
 
 class TestOpenRouterProfile:

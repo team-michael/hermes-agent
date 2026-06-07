@@ -6,7 +6,7 @@ User studies Notifly/Clix infra; debug/incident/perf/AI notes need scope/denomin
 §
 In DMs, user wants infra explanations tailored to Mobile/iOS+SDK Eng background: use analogies only when mechanisms match; flag SDK implications for contracts/retries/offline/telemetry/DX.
 §
-Slack/incidents: concise formal KR; evidence/problem only; use native Block Kit tables when possible, not fake code tables; Linear reuse thread ticket.
+Slack/incidents: concise KR; evidence/problem only; native Block Kit tables via Hermes path for tabular data, not code/mock; Linear reuse thread ticket.
 §
 MSP/Zendesk: show draft; no internal Slack refs.
 §
