@@ -1,13 +1,13 @@
 model:
-  default: '@cf/google/gemma-4-26b-a4b-it'
-  context_length: 256000
+  default: '@cf/moonshotai/kimi-k2.6'
+  context_length: 262144
   provider: workers-ai
 providers:
   workers-ai:
     name: Cloudflare Workers AI
     api: https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/v1
     key_env: CLOUDFLARE_API_TOKEN
-    default_model: '@cf/google/gemma-4-26b-a4b-it'
+    default_model: '@cf/moonshotai/kimi-k2.6'
     models:
       '@cf/google/gemma-4-26b-a4b-it':
         context_length: 256000
@@ -15,7 +15,7 @@ providers:
         context_length: 262144
 agent:
   gateway_notify_interval: 0
-  reasoning_effort: high
+  reasoning_effort: none
   service_tier: fast
 terminal:
   env_passthrough:

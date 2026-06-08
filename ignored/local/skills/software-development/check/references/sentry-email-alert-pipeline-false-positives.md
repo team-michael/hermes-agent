@@ -2,9 +2,7 @@
 
 Alarm family: `/aws/ecs/notifly-services-prod/web-console/sentry alert` (metric namespace `ConsoleErrors`).
 
-**User intent correction**: This alarm is **intentional error logging**, not a Lambda crash or generic false positive. The `ops-email-receiver` Lambda receives Sentry alert emails via SES and writes parsed payloads to CloudWatch Logs. A broad `%ERROR%` metric filter matches literal strings inside the JSON payload (e.g., `"title":"SyntaxError"`, `"level":"error"`), so the alarm fires whenever any Sentry issue arrives.
-
-When this alarm fires, the investigation goal is **not** to prove the Lambda is healthy. The goal is to parse the actual Sentry payload and report:
+**User intent correction**: This alarm is **intentional error logging**, not a Lambda crash, not a metric-filter false positive, and not a reason to investigate Lambda health. The `ops-email-receiver` Lambda receives Sentry alert emails via SES and writes parsed payloads to CloudWatch Logs. A broad `%ERROR%` metric filter matches literal strings inside the JSON payload (e.g., `"title":"SyntaxError"`, `"level":"error"`), so the alarm fires whenever any Sentry issue arrives. Do **not** treat the alarm itself as noise. The goal is to parse the actual Sentry payload and report:
 - which page / feature is failing,
 - what the concrete error message and title are,
 - which Notifly project / product is affected,
