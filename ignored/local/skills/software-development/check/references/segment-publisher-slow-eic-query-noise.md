@@ -42,7 +42,7 @@ This is emitted by `services/task/segment-publisher/sqs_publisher.ts:55` when th
 
 1. **Severity mismatch** — the log level is `[WARN]` and the invocation continues normally, yet it lands in `ConsoleErrors`.
 2. **Cause mismatch** — the alarm name says "slow eic query", but Pattern B trigger is batch-processing latency in `sqs_publisher.ts`, not DB query time.
-3. **Duplication** — the same log group already has a proper `Custom/segment-publisher` metric filter (`segment-publisher-slow-processing-filter`) with pattern `Processing took longer than expected` and metric `SegmentPublisher.ExecutionTimeOverThreshold`, plus a companion alarm `segment-publisher long running alam`.
+3. **Duplication** — the same log group had a proper `Custom/segment-publisher` metric filter (`segment-publisher-slow-processing-filter`) with pattern `Processing took longer than expected` and metric `SegmentPublisher.ExecutionTimeOverThreshold`, plus a companion alarm `segment-publisher long running alam`. The companion alarm was later removed in Terraform as redundant; the `ConsoleErrors` `slow eic query` alarm is now the sole alarm for Pattern B.
 
 ### CloudWatch Logs filter syntax detail
 
@@ -79,7 +79,7 @@ Determine which pattern triggered the current alarm before classifying.
 
 **If Pattern B (plain `[WARN] Processing took longer than expected`):**
 - Scope to the campaign(s) in the log. When multiple parallel campaigns are present (class101 batch), report `project/<multiple campaigns>` rather than forcing a single campaign.
-- **Redundancy check:** Verify `segment-publisher long running alam` (namespace `Custom/segment-publisher`, metric `SegmentPublisher.ExecutionTimeOverThreshold`) state. If it transitioned to ALARM within the same minute, the `ConsoleErrors` `slow eic query` alarm is catching the same benign log line.
+- **Companion alarm removed:** The dedicated `segment-publisher long running alam` (namespace `Custom/segment-publisher`) was removed in Terraform circa 2026-06-04 as redundant. Do not expect a companion ALARM transition. When empty trigger contexts make Pattern B unverifiable, use the daily Sum baseline and alarm timing against known batch windows (~06:30 UTC class101, ~11:47–11:55 UTC stepup/proudp) as supporting evidence.
 - Classify as `no_action` because it is a known recurring pattern with no delivery failure or data loss.
 - Note the metric-filter name mismatch in the final answer when it helps explain the noise.
 
@@ -88,7 +88,9 @@ Determine which pattern triggered the current alarm before classifying.
 
 ## Cross-reference: RDS VolumeReadIOPs correlation
 
-Pattern B batch queries (`user_journey_sessions_*`, `event_intermediate_counts_*`) run in parallel across Aurora reader instances during the scheduled batch window. This produces a synchronized ReadIOPS spike that can trigger the separate RDS alarm `High VolumeReadIOPs` (cluster-level `VolumeReadIOPs` ≥ 12.5M). When `segment-publisher long running alam` is in ALARM during the same window, the `VolumeReadIOPs` spike is the known batch workload side effect, not an unexpected read surge. See `references/aurora-volume-read-iops-batch-workload.md` § "Companion-alarm shortcut" for triage.
+Pattern B batch queries (`user_journey_sessions_*`, `event_intermediate_counts_*`) run in parallel across Aurora reader instances during the scheduled batch window. This produces a synchronized ReadIOPS spike that can trigger the separate RDS alarm `High VolumeReadIOPs` (cluster-level `VolumeReadIOPs` ≥ 12.5M). When the alarm fires at a known batch time (~06:30 UTC or ~11:47–11:55 UTC), the `VolumeReadIOPs` spike is the known batch workload side effect, not an unexpected read surge. See `references/aurora-volume-read-iops-batch-workload.md` § "Companion-alarm shortcut" for triage.
+
+Note: the former companion alarm `segment-publisher long running alam` was removed circa 2026-06-04. If it is absent, use the known batch timing as the Pattern B indicator instead.
 
 ## Session evidence
 
@@ -1058,8 +1060,45 @@ Classification: `no_action` — stable daily baseline, no companion alarm requir
 05-05=1, 05-06=1, 05-07=3, 05-08=1, 05-09=1, 05-10=1, 05-11=5, 05-12=3,
 05-13=1, 05-14=5, 05-15=1, 05-16=1, 05-17=1, 05-18=2, 05-19=1, 05-20=1,
 05-21=6, 05-22=1, 05-23=2, 05-24=1, 05-25=1, 05-26=1, 05-27=1, 05-28=1,
-05-29=2, 05-30=1, 05-31=1, 06-01=2, 06-02=확인 불가(미수집), 06-03=1, 06-04=1
+05-29=2, 05-30=1, 05-31=1, 06-01=2, 06-02=확인 불가(미수집), 06-03=1, 06-04=1,
+06-05=확인 불가(미수집), 06-06=2, 06-07=2, 06-08=3
 ```
+
+## 2026-06-08 session — `segment-publisher slow eic query` ALARM (Pattern A playio + Pattern B class101, mixed-pattern day)
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`
+Transition 1: inferred class101 Pattern B at 06:25 UTC (KST 15:25)
+Datapoint 1: `Sum=1.0` at 2026-06-08 06:25:00 UTC (metric period 60s)
+Transition 2: `OK -> ALARM` at 2026-06-08 10:04:01 UTC (KST 19:04)
+Datapoint 2: `Sum=1.0` at 2026-06-08 10:03:00 UTC (metric period 60s)
+
+Evidence — Transition 1 (Pattern B, inferred):
+- `ConsoleErrors` daily Sum for 2026-06-08 = 3.0 total. One datapoint at 06:25 UTC matches the established class101 multi-campaign batch window (~06:25–06:30 UTC every day since 2026-05-14). Not manually traced because daily count is well within baseline and the 10:03 UTC datapoint was the Slack-delivered alert.
+
+Evidence — Transition 2 (Pattern A, playio, Slack alert):
+- Trigger log (2026-06-08 10:03:28 UTC, stream `prod/segment-publisher/53286596a9bd40c7b1b8d9f5dd1ac65a`): `EventCounterCteManager.extract:ffde3a7a000b5b2198961b3fff400acd took too long: 245609ms`
+- Project mapping: `project_id: ffde3a7a000b5b2198961b3fff400acd` → DynamoDB `project` → product `playio`
+- Same-stream context: `campaignId: 1MIXVl` (push-notification, 21,879 recipients), `campaignId: 6Y3O7A` (14 recipients), `Total processing time: 394031.35 ms`
+- Zero ERROR logs in the alarm window (09:55–10:10 UTC).
+- This is the first documented playio Pattern A recurrence since 2026-05-29 (10 days prior). Query shape is `event_intermediate_counts` aggregation rather than the `device_* RIGHT OUTER JOIN users_*` seen on 2026-05-29.
+- The `segment-publisher long running alam` companion alarm no longer exists (removed circa 2026-06-04), so the companion-alarm shortcut could not be applied. Classification relied on direct log verification.
+
+Classification (Transition 2): `no_action` — query completed, batch publishing finished normally, no ECS failure or DLQ signal. Playio Pattern A is sporadic and within the 1–7/day baseline.
+
+### Transition 3 (Pattern B, stepup/proudp UL1T00), 20:56 KST
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`  
+Transition: `OK -> ALARM` at 2026-06-08 11:56:01 UTC (KST 20:56)  
+Datapoint: `Sum=1.0` at 2026-06-08 11:55:00 UTC (metric period 60s)
+
+Evidence:
+- Trigger log (2026-06-08 11:55:31 UTC, stream `prod/segment-publisher/4400908a16cc40a39d244cbb9fac3e9d`): `[WARN] Processing took longer than expected: 3373771.52 ms`
+- Same-stream context: 18 batches, final `campaignId: UL1T00, 901404 recipients published. (batch index: 18)`
+- Zero ERROR logs in the alarm window (11:40–12:00 UTC).
+- No explicit `project_id` found in the trigger stream. `UL1T00` has historically mapped to multiple projects (`stepup`, `proudp`). Safe scope: `project unknown for campaign UL1T00`.
+- This is the third transition on 2026-06-08; daily metric sum = 3.0 total.
+
+Classification (Transition 3): `no_action` — publish completed, no DLQ/ECS failure, no customer impact. Pattern B continues the known stepup/proudp batch window (~11:47–11:55 UTC).
 
 ### Quick daily count verification
 

@@ -22,6 +22,8 @@ Important boundary: when the user gives a Slack permalink/thread URL and asks to
 
 It also covers routing recovery when Slack group/channel delivery fails (for example `not_in_channel`) and you need to resolve a named person's DM target from Hermes archives. See `references/slack-dm-target-resolution.md`.
 
+For Notifly AI-agent Slack alerts involving streaming failures, `finishReason: length`, client disconnects, or `TokenLimiterProcessor`, do not judge the PR from the diff alone. Classify output-side length vs transport close/abort vs input-side context budget, then correlate the Slack root with prod `internal-api-service` tool/processor logs. See `references/ai-agent-token-budget-incidents.md`.
+
 ## Core idea
 
 When Hermes handled a Slack thread, the useful root context often landed in two places:

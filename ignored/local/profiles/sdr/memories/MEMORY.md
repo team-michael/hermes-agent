@@ -12,4 +12,4 @@ For the sdr profile, Google Workspace access uses `gws` with `GOOGLE_WORKSPACE_C
 §
 Notifly pricing context for the sdr profile, including non-public Plus-plan handling and the customer/vendor KakaoTalk/SMS/RCS/080 unit-rate Sheet `고객사 현재 카카오톡/문자 발송 단가 조사` (1gJ32S0s4P-86yDWhnVD0VZCpUs9jJFIbDb7U3boIX_Y), is restored in skill `notifly-sales-enablement` at `references/notifly-pricing-context-2026.md`.
 §
-Notifly GTM/outbound engineering v0 artifacts live under `/home/ubuntu/.hermes/profiles/sdr/workspace/gtm-copilot/`; the `notifly-sdr-lead-research` skill points there. For future Notifly revenue tasks, use DynamoDB `transactions` as the source of truth for revenue and type split; Slack revenue reports are secondary summaries.
+Notifly GTM/outbound engineering v0 artifacts live under `/home/ubuntu/.hermes/profiles/sdr/workspace/gtm-copilot/`; use Trackit as GTM source-of-truth when available. Trackit env var: `NOTIFLY_TRACKIT_API_KEY`; public key verified for object metadata, but group/record 조회 may require Trackit-provided query API or app session token.

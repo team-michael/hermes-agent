@@ -270,6 +270,63 @@ for e in resp.get('events', []):
 "
 ```
 
+### SQS consumer Lambdas: base64 `receiptHandle` embedding metric-filter keyword
+
+**Alarm**: `cafe24-worker lambda error` (and potentially any SQS consumer Lambda with a coarse `%ERROR%` or `%timeout%` metric filter)  
+**Metric filter**: `%ERROR|Status: timeout%`  
+**Trigger log** (INFO level):
+```
+2026-06-08T01:20:16.308Z	<request_id>	INFO	Received event from SQS: {
+  "messageId": "6b0fa844-b3c1-46fa-9abe-d2d75167407d",
+  "receiptHandle": "AQEBAie9s2Xnhc2KhWEfsfxtUERRORkXQYLPI1Mpx2zgN77oYwkmo8/CnTZ4cpXrSrgf4f9Fseg6A3okBdZl1NK+wP28BnVW6zaOTMLcxYxWBzP+rKDI78AdDU4a7RLj4DR..."
+}
+```
+
+**Mechanism**: SQS `receiptHandle` values are opaque base64 strings. The base64 alphabet (A-Z, a-z, 0-9, +, /, =) can coincidentally produce substrings such as `ERROR`, `timeout`, `Exception`, `Status`, or `FAIL`. When the Lambda logs the full SQS event at INFO level — common for observability — the coarse `%ERROR|Status: timeout%` metric filter matches the INFO line because substring filters are case-insensitive and do not respect log level. The Lambda itself has `AWS/Lambda Errors == 0`, `Throttles == 0`, and completes normally.
+
+**Why this is hard to spot**: `filter-log-events` with `filterPattern='ERROR'` also returns these INFO lines (CloudWatch Logs substring search is not level-aware), so a naive log check appears to show "ERROR logs exist." The giveaway is that the matched line starts with `INFO` and the `ERROR` substring appears only inside the base64 `receiptHandle`, not as a level or error message.
+
+**Triage checklist**:
+1. Verify `AWS/Lambda Errors == 0` and `Throttles == 0` for the alarm window.
+2. Run `filter-log-events` with `filterPattern='ERROR'` on the exact alarm window.
+3. Inspect every matching line:
+   - If the line starts with `INFO` and the only `ERROR` occurrence is inside `receiptHandle`, this pattern is confirmed.
+   - If there are also real `console.error` lines or `REPORT ... Status: timeout` lines, the alarm is mixed — triage the real error separately.
+4. Check `filter-log-events` with `filterPattern='Status: timeout'` on the same window. Empty results strengthen the false-positive conclusion.
+
+**Classification**: `no_action` when `Lambda Errors=0`, no actual timeout REPORT exists, and the only metric-filter match is the base64 substring. The alarm auto-recovers within 1-2 minutes.
+
+**Scope**: service-wide for the SQS consumer; no Notifly `project_id`/`campaign_id`/`user_journey_id` appears in the trigger line itself. The SQS body may carry `mall_id` (for Cafe24 webhooks) or other external identifiers, but these do not map to Notifly campaigns or user journeys.
+
+**Remediation direction**:
+- Narrow the metric filter so it does not match INFO-level logs (e.g., add a `level != INFO` clause if structured JSON logging is in use).
+- Stop logging full `receiptHandle` in INFO lines; log only `messageId` and a short prefix or hash.
+- If the Lambda uses structured JSON logging, rewrite the metric filter to target `$.level = "ERROR"` rather than a raw substring.
+
+**Bounded log check**:
+```bash
+python3 -c "
+import boto3, datetime
+session = boto3.Session(region_name='ap-northeast-2')
+logs = session.client('logs')
+start = int(datetime.datetime(YYYY, MM, DD, HH, MM, tzinfo=datetime.timezone.utc).timestamp() * 1000)
+end   = int(datetime.datetime(YYYY, MM, DD, HH, MM, tzinfo=datetime.timezone.utc).timestamp() * 1000)
+resp = logs.filter_log_events(
+    logGroupName='/aws/lambda/<function-name>',
+    startTime=start, endTime=end,
+    filterPattern='ERROR',
+    limit=50
+)
+for e in resp.get('events', []):
+    msg = e['message'].strip()
+    # If the line starts with INFO and contains receiptHandle, flag it
+    if 'INFO' in msg and 'receiptHandle' in msg:
+        print('SUSPECT_BASE64:', msg[:300])
+    else:
+        print('REAL_ERROR:', msg[:300])
+"
+```
+
 ### Other patterns (see dedicated references)
 
 - `message-event-consumer`: `delivery_policy_inspection_failed__global_frequency_limit` — handled frequency-limit rejection. See `references/message-event-consumer-delivery-policy-error.md`.

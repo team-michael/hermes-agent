@@ -448,6 +448,47 @@ Result: identical to the known daily ~02:11 KST `/authenticate` authentication r
 - 30d/7d/1d/10m OK→ALARM counts: **47 / 13 / 4 / 2**
 Result: identical to the known daily ~02:11 KST `/authenticate` authentication rejection burst. All signals are handled `warn` validation rejections; no customer impact.
 
+2026-06-08 alarm window (16:56–17:06 UTC / 2026-06-09 01:56–02:06 KST):
+- **Alarm transitions**: OK→ALARM at 17:11 UTC, metric datapoints [173.0, 894.0, 686.0]; threshold 100.0 with 3 of 4 datapoints required
+- Total `error-response` with status ≥ 400 (16:50–17:10 UTC): **~898**
+- `/authenticate` 400: **882** (98.2%)
+  - User-Agent: `python-requests/2.32.3`; prior days showed `Apache-HttpClient/5.3.1 (Java/17.0.19)` dominance
+  - Level: **100% `warn`**; explicit `level == "error"` Logs Insights query returned **0** matches
+  - `projectId`: **`"unknown"`** on all `/authenticate` lines
+- Secondary signatures (sparse, all `warn`):
+  - `DELETE /projects/80fd28969702573797f4d7f77063e47b/messages/text-message/blockservice/recipients/removes` 400: **9** (`ReactorNetty/1.2.17`, `handys`)
+  - `POST /track-event` 401: **5** (`python-requests/2.33.1`)
+  - `GET /user-state/2b9f5a6685ba5b839803f1338a539724/...` 400: **2** (Dalvik/Android)
+  - `POST /set-user-properties` 401: **1** (`node-fetch`)
+- Daily full-UTC-day `/authenticate` 400 volume (8-day trend):
+  - 2026-06-08: **1,834** | 2026-06-07: **3,494** | 2026-06-06: **4,337** | 2026-06-05: **3,027**
+  - 2026-06-04: **2,955** | 2026-06-03: **3,687** | 2026-06-02: **3,318** | 2026-06-01: **2,030**
+- 30d/7d/1d/10m OK→ALARM counts (from `HistoryData`): **49 / 12 / 1 / 1**
+
+Result: identical to the known daily ~02:11 KST `/authenticate` authentication rejection burst. All signals are handled `warn` validation rejections; no customer impact. The `python-requests/2.32.3` user-agent is an observed secondary UA within the same daily burst window; volume remains within the established 1,800–4,300 daily band.
+
+## Logs Insights daily trend query (full UTC day)
+
+When the narrow 16:50–17:10 UTC window is already well understood, use this query to verify whether overall `/authenticate` 400 volume is drifting outside the 1,800–4,500/day baseline band. The query aggregates by UTC calendar day (`datefloor`). This is useful for detecting a macro trend shift (e.g. sudden doubling across consecutive days) even when individual alarm windows look normal.
+
+```bash
+aws logs start-query --region ap-northeast-2 \
+  --log-group-name '/aws/ecs/notifly-services-prod/api-service' \
+  --start-time $(date -d '14 days ago 00:00:00 UTC' +%s) \
+  --end-time   $(date -d 'now 00:00:00 UTC' +%s) \
+  --query-string 'fields @timestamp
+| filter message == "error-response" and status >= 400 and path = "/authenticate"
+| stats count() as cnt by datefloor(@timestamp, 1d) as day
+| sort day desc
+| limit 14'
+```
+
+Then poll: `aws logs get-query-results --region ap-northeast-2 --query-id <queryId>`
+
+Interpretation:
+- Stable narrow band (~±25% day-to-day) → no trend shift; classify from the alarm-window signature only.
+- Sudden jump to > 6,000/day for ≥ 2 consecutive days → investigate for a new client integration or retry loop.
+
 ## Pitfall — `INSUFFICIENT_DATA → ALARM` undercounts in transition history
 
 This alarm uses `TreatMissingData: missing`. During low-traffic periods (midnight KST), the `ConsoleErrors` metric may have no data points, so the alarm state drops to `INSUFFICIENT_DATA`. The daily ~02:11 KST burst then transitions `INSUFFICIENT_DATA → ALARM`, not `OK → ALARM`.

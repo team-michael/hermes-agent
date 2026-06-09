@@ -2,17 +2,17 @@ Notifly GitHub: findings pre-PR; Conventional Commits; assign `clix-so-bot`; ver
 §
 Remote/container tasks: never assume local Hermes is target; verify intended system first, and never destructively mutate home dirs like /ubuntu/home, /home/ubuntu, or $HOME.
 §
-User studies Notifly/Clix infra; debug/incident/perf/AI notes need scope/denominator, observed-vs-inferred, code+DB/log grounding, SDK/API implications, non-dev KR summaries, and customer-facing app-side checks/fixes when asked.
+Notifly debug: scope/denominator, observed-vs-inferred, code/DB/log grounding, SDK/API implications. Verify internally first; ask customers only unobservable app/runtime facts.
 §
 In DMs, user wants infra explanations tailored to Mobile/iOS+SDK Eng background: use analogies only when mechanisms match; flag SDK implications for contracts/retries/offline/telemetry/DX.
 §
-Slack/incidents: concise KR; evidence/problem only; native Block Kit tables via Hermes path for tabular data, not code/mock; Linear reuse thread ticket.
+Slack: concise KR; evidence/problem only; native Block Kit/Hermes tables for 3+ col metric/comparison tables; Linear reuse thread ticket.
 §
 MSP/Zendesk: show draft; no internal Slack refs.
 §
-CS eval: source-only, normalize tool families, row examples. Notifly agent prompts: MCP-only runtime-discovery; keep prompt/API/benchmarks separate.
+CS eval Sheets: source-only, tool-use not answer-quality, preserve visual formatting/colors; MCP discovery; keep prompt/API/benchmarks separate.
 §
-Post-session: proactive memory + umbrella skills.
+Post-session: proactive memory + loaded/umbrella skill updates.
 §
 For Cognito Hosted UI visual refinements, user prefers updated CSS as an attachment for browser-console testing before Terraform.
 §

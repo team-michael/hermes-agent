@@ -48,6 +48,23 @@ table.query(
 )
 ```
 
+## Query string parameter extraction from Referer (campaign / user journey IDs)
+
+When the triggering request is a UI action (e.g. campaign creation clone, test send, preview), the `Referer` URL frequently carries the campaign or user journey ID in its query string:
+
+```
+POST /api/projects/f2e198e2448959908fe4f8e540f4057f/test_send/push_notification HTTP/1.1
+400 ... "https://console.notifly.tech/console/products/qmarket/campaign/create?environment=1&id=sXfITi&mode=clone"
+```
+
+Recover scope in this order:
+
+1. **Project ID** — from the API path parameter (`/api/projects/<id>/...`).
+2. **Campaign ID** — from the Referer query string `id=<campaignId>` (or, less commonly, `campaignId=<campaignId>`).
+3. **Mode indicator** — `mode=clone`, `mode=edit`, `tab=preset` in the Referer hints whether the request is part of a campaign create/edit flow, which increases confidence that the `id` belongs to `campaigns_*` rather than `user_journeys_*`.
+
+When the error log itself carries no `project_id` (common for LiquidJS aborts, template validation, or playground endpoints), access logs in the same alarm window are the most reliable scope source. Use a bounded `filter-log-events` on the metric-filter pattern or the access-log keyword `POST` within the alarm window, then look for the `Referer` field.
+
 ## Duplicate product_id pitfall
 
 The same `product_id` may map to **multiple** `project.id` values.

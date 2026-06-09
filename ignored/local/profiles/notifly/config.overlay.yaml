@@ -26,7 +26,7 @@ compression:
   hygiene_hard_message_limit: 400
 auxiliary:
   compression:
-    provider: openai-codex
+    provider: auto
     model: gpt-5.4-mini
     base_url: ""
     api_key: ""
