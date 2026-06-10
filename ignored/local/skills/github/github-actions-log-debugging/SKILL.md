@@ -141,6 +141,11 @@ Tests that call debounce/rate-limit helpers soon after process start can fail if
 ### CI drift pattern: live recommendation defaults
 If tests are meant to verify routing/credential selection, mock live model recommendation functions. Otherwise changing service-side defaults (e.g. provider recommended auxiliary model rotating from one model ID to another) makes unrelated tests fail. Keep separate tests for the actual recommendation path.
 
+### CI hang pattern: Jest finished but Node stays alive
+If a JS service CI step takes 30+ minutes but the log says `Test Suites: ... passed`, `Time: 20s`, then `Jest did not exit one second after the test run has completed`, compare the test runner's reported time with the enclosing task/workflow step time. A large gap means the tests finished; Node is waiting on referenced handles. Inspect new code/tests for long `setTimeout`/`setInterval`, servers, Redis/DB clients, or streams whose cleanup depends on abort events that may not fire in `app.request()`/unit-test environments. For production long-lived timers attached to sockets/SSE, prefer `timer.unref?.()` so they do not keep CI/test processes alive; verify with a minimal child-process repro that exits only after timers are unref'ed. Avoid `jest --forceExit` as the primary fix because it masks real handle leaks. For a concise SSE-specific repro/test recipe, see `references/jest-open-handle-sse-timers.md`.
+
+Verification nuance: after an `unref()` fix, success is not necessarily "no Jest warning". Re-query both the PR check and the merge-commit/main run, then compare the api-service job duration before vs after. If the job drops from ~30m to ~2m but the `Jest did not exit...` warning remains, report this split explicitly: the long-duration regression is fixed, but at least one residual open handle remains as follow-up cleanup.
+
 ## Practical pattern from Cloudflare preview debugging
 If logs show:
 - env contains masked Cloudflare token/account id

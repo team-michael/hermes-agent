@@ -3,12 +3,12 @@
 **Alarm**: `/aws/ecs/notifly-services-prod/web-console console error`
 **Metric filter**: `%ERROR|Exception%`
 
-Three Kakao external-provider validation patterns currently trigger this alarm:
+Four Kakao BizMessage validation patterns currently trigger this alarm:
 
 1. **`[FailedToUploadImageException(유효하지 않은 URL입니다. : <url>)]`** — image upload URL invalid or unreachable
 2. **`[InvalidImageFormatException(<filename>)]`** — image format unsupported
 3. **`Error: Failed to create Kakao BizMessage template: 변수명 형식이 올바르지 않습니다. 변수명은 최대 20자 이내 한/영/숫자/'-','_'로 작성 가능합니다.`** — template variable name violates Kakao naming rules
-Four Kakao BizMessage validation patterns currently trigger this alarm:
+4. **`Error: 템플릿 링크 검증 실패:`** — mobile/PC web link validation failure before Kakao API call
 
 ## What it is
 
@@ -16,7 +16,13 @@ The first three originate from Kakao SDK/wrapper validation during BizMessage te
 
 All four are handled business rejections; the web-console continues operating normally after logging the rejection.
 
-For the template-variable and link-validation patterns, the code path is `POST /api/projects/{projectId}/test_send/kakao_brand_message` → Kakao BizMessage template creation / link validation → validation failure. The API returns the error to the caller (typically a 4xx/500 response depending on whether it is a thrown exception or a normal validation response), and the web-console UI displays it to the user.
+For the template-variable and link-validation patterns, the code path is typically `POST /api/projects/{projectId}/test_send/kakao_brand_message`. The external-provider patterns (1–3 above) can also appear during user journey node editing:
+
+```
+at Array.q (/app/services/server/web-console/.next/server/pages/api/projects/[projectId]/user_journeys/[userJourneyId].js:1:6973)
+```
+
+This occurs when a user journey node includes a Kakao brand-message action and the template image or variable fails Kakao validation during save/preview.
 
 ## Scope
 

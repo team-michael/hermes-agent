@@ -1,8 +1,8 @@
-Notifly GitHub: findings pre-PR; Conventional Commits; assign `clix-so-bot`; verify checks/reviews; deploys need runtime proof. Clix AWS: CloudWatch read-only only.
+Notifly GitHub: pre-PR findings; Conventional Commits; assign `clix-so-bot`; reviewer Gunwoo=`gunoooo`; verify checks/reviews; deploy proof. Clix AWS read-only.
 §
 Remote/container tasks: never assume local Hermes is target; verify intended system first, and never destructively mutate home dirs like /ubuntu/home, /home/ubuntu, or $HOME.
 §
-Notifly debug: scope/denominator, observed-vs-inferred, code/DB/log grounding, SDK/API implications. Verify internally first; ask customers only unobservable app/runtime facts.
+Notifly debug/RCA: scope/denominator; observed-vs-inferred; root/trigger/amplifier; code/DB/log grounding. Mobile push needs cohort evidence. Once narrowed, stay on that causal path; IPA asks want core static artifacts only.
 §
 In DMs, user wants infra explanations tailored to Mobile/iOS+SDK Eng background: use analogies only when mechanisms match; flag SDK implications for contracts/retries/offline/telemetry/DX.
 §

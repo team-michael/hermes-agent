@@ -1,16 +1,28 @@
 # segment-publisher batch processing WARN triage
 
-Alarm: `segment-publisher long running alam`
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query` (historically also `segment-publisher long running alam`)
 
 ## Alarm shape
 
-- **Name**: `segment-publisher long running alam` (bare name, no `/aws/ecs/.../` prefix).
+> **Architecture change:** The dedicated `segment-publisher long running alam` alarm (namespace `Custom/segment-publisher`, metric `SegmentPublisher.ExecutionTimeOverThreshold`) was removed in Terraform circa 2026-06-04 as redundant. Pattern B now arrives exclusively through the `ConsoleErrors` namespace alarm below.
+
+**Current alarm (Pattern B superset):**
+- **Name**: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`
+- **Namespace**: `ConsoleErrors`
+- **Metric**: `segment-publisher-prod slow eic query`
+- **Filter pattern**: `took too long` (unquoted three-term AND match; catches both Pattern A and Pattern B)
+- **Statistic**: `Sum`, period 60, threshold 1.0, `EvaluationPeriods=1`
+- **TreatMissingData**: `missing`
+- **Transition pattern**: `OK → ALARM → OK`
+
+**Historical alarm (removed circa 2026-06-04):**
+- **Name**: `segment-publisher long running alam`
 - **Namespace**: `Custom/segment-publisher`
 - **Metric**: `SegmentPublisher.ExecutionTimeOverThreshold`
 - **Filter pattern**: `Processing took longer than expected`
 - **Statistic**: `Sum`, period 300, threshold 1.0, `EvaluationPeriods=1`
 - **TreatMissingData**: `missing`
-- **Transition pattern**: `INSUFFICIENT_DATA → ALARM → INSUFFICIENT_DATA` (never reaches `OK`).
+- **Transition pattern**: `INSUFFICIENT_DATA → ALARM → INSUFFICIENT_DATA` (never reached `OK`)
 
 ## Known recurrence
 
@@ -19,7 +31,9 @@ Daily `Sum=1.0` at roughly the same clock time for ~30 days (verified via `get_m
 - Since 2026-05-14 an additional window appeared at ~06:25–06:30 UTC (≈ 15:25–15:30 KST).
 - 2026-05-14 had `Sum=2.0` because both windows fired.
 
-Alarm-history transitions are `INSUFFICIENT_DATA → ALARM → INSUFFICIENT_DATA` (never `OK`). The helper now extracts `oldState.stateValue → newState.stateValue` from `HistoryData` to count these transitions, so `alarm_count_7d` / `alarm_count_30d` will reflect actual daily alarm occurrences (e.g. `30일: 33회 / 7일: 10회`). They can be used directly for the `빈도` field. Cross-check with `get_metric_statistics Period=86400 Sum` if the helper transition counts look unexpectedly high.
+Alarm-history transitions on the current `ConsoleErrors` alarm are `OK → ALARM → OK`. The helper counts these transitions directly from `describe-alarm-history` for the `빈도` field. Cross-check with `get_metric_statistics Period=86400 Sum` on `ConsoleErrors` / `segment-publisher-prod slow eic query` if the helper transition counts look unexpectedly high.
+
+(The old `Custom/segment-publisher` alarm used `INSUFFICIENT_DATA → ALARM → INSUFFICIENT_DATA` before its removal circa 2026-06-04; prior session notes may reference that transition style.)
 
 ## Root cause
 
@@ -66,6 +80,7 @@ Observed projects/campaigns in recent triggers (scope varies by day because `UL1
 - `stepup` / `UL1T00` (2026-05-16 11:47 UTC, ~52.3 min, 885k recipients, **user journey** `[만보기] 매일 적립 리마인드`)
 - `proudp` / `UL1T00` (2026-05-19 11:51 UTC, ~52.3 min, 887,991 recipients)
 - `stepup` / `UL1T00` (2026-05-25 11:55 UTC, ~56.5 min, 891,998 recipients, **user journey** `[만보기] 매일 적립 리마인드`)
+- `stepup` / `UL1T00` (2026-06-09 11:56 UTC, ~56.7 min, 902,580 recipients, **user journey** `[만보기] 매일 적립 리마인드`)
 
 **Scope-attribution caveat**: The same campaign/user journey ID (`UL1T00`) has appeared under different projects on different days. Always extract the current alarm-window `project_id` from the ECS log stream (e.g., from `Used user property names in message:` JSON or inline `project_id`/`campaignId` structured lines), then map it via DynamoDB `project`, and finally determine whether `resource_type` is `campaign` or `user_journey`. Never scope by campaign/user journey ID alone.
 
@@ -77,15 +92,17 @@ Observed projects/campaigns in recent triggers (scope varies by day because `UL1
   - ERROR logs or OOM-kills appear alongside the WARN.
   - The second daily window (~06:30 UTC) continues to grow in frequency beyond the known two-a-day pattern.
 
+> Note: The old dedicated `segment-publisher long running alam` companion alarm was removed circa 2026-06-04. Classification now relies on the `ConsoleErrors` `slow eic query` alarm directly. `no_action` remains the default unless new failure signals appear.
+
 ## Investigation commands
 
 ```bash
-# Verify daily recurrence (use Sum because alarm history lacks OK→ALARM)
+# Verify daily recurrence on the current ConsoleErrors alarm
 aws cloudwatch get-metric-statistics \
-  --namespace Custom/segment-publisher \
-  --metric-name SegmentPublisher.ExecutionTimeOverThreshold \
+  --namespace ConsoleErrors \
+  --metric-name segment-publisher-prod slow eic query \
   --start-time 2026-05-08T00:00:00Z \
-  --end-time 2026-05-15T07:00:00Z \
+  --end-time 2026-06-10T07:00:00Z \
   --period 86400 --statistics Sum --region ap-northeast-2
 
 # Find recent streams

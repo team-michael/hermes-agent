@@ -467,6 +467,27 @@ Result: identical to the known daily ~02:11 KST `/authenticate` authentication r
 
 Result: identical to the known daily ~02:11 KST `/authenticate` authentication rejection burst. All signals are handled `warn` validation rejections; no customer impact. The `python-requests/2.32.3` user-agent is an observed secondary UA within the same daily burst window; volume remains within the established 1,800–4,300 daily band.
 
+2026-06-09 alarm window (16:56–17:06 UTC / 2026-06-10 01:56–02:06 KST):
+- **Alarm transitions**: OK→ALARM at 17:11 UTC, ALARM→OK at 17:15 UTC, OK→ALARM at 17:16 UTC, ALARM→OK at 17:20 UTC (2 back-to-back within 10 minutes, sliding-window artifact)
+- Metric datapoints confirming breach: 157.0 (16:56), 894.0 (17:01), 708.0 (17:06); threshold 100.0 with 3 of 4 datapoints required; post-peak 9.0 at 17:11 and 9.0 at 17:16
+- Total `error-response` with status ≥ 400 (16:50–17:20 UTC): **1,781**
+- `/authenticate` 400: **1,744** (97.9%)
+  - User-Agent: `Apache-HttpClient/5.3.1 (Java/17.0.19)` via Cloudflare IPs (`43.202.115.59`, `141.101.84.216-217`)
+  - Level: **100% `warn`**; explicit `level == "error"` Logs Insights query returned **0** matches
+  - `projectId`: **`"unknown"`** on all `/authenticate` lines
+- Secondary signatures (sparse, all `warn`):
+  - `DELETE /projects/80fd28969702573797f4d7f77063e47b/messages/text-message/blockservice/recipients/removes` 400: **16**
+  - `POST /track-event` 401: **10**
+  - `POST /projects/b2b4a8f879a75673b755bff42fc1deb6/campaigns/icKePI/send` 400: **3** (`class101`)
+  - `POST /projects/b2b4a8f879a75673b755bff42fc1deb6/user-journeys/6si2yh/enter` 400: **3** (`class101`)
+  - `GET /user-state/2b9f5a6685ba5b839803f1338a539724/...` 400: **3**
+  - `POST /projects/0c61d690f3425c13875c2c4902616b40/campaigns/CJDzWt/send` 400: **1** (`sconn`)
+  - `POST /set-user-properties` 401: **1**
+- 7d daily `/authenticate` 400 aggregate (full UTC day): **6,607 / 6,970 / 6,196 / 6,340 / 7,524 / 6,835 / 6,248 / 5,377** (2026-06-02 through 2026-06-09)
+- 30d/7d/1d/10m OK→ALARM counts (from `HistoryData`): **52 / 13 / 2 / 2**
+
+Result: identical to the known daily ~02:11 KST `/authenticate` authentication rejection burst. All signals are handled `warn` validation rejections; no customer impact. The 7-day full-day aggregate has crept up to the 5,400–7,500 band (vs. the earlier 1,800–4,300 band), but this is because the query window broadened to full UTC days; the narrow 16:50–17:10 burst window remains within the same ~1,600–1,800 peak as before.
+
 ## Logs Insights daily trend query (full UTC day)
 
 When the narrow 16:50–17:10 UTC window is already well understood, use this query to verify whether overall `/authenticate` 400 volume is drifting outside the 1,800–4,500/day baseline band. The query aggregates by UTC calendar day (`datefloor`). This is useful for detecting a macro trend shift (e.g. sudden doubling across consecutive days) even when individual alarm windows look normal.

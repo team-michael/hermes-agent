@@ -37,6 +37,8 @@ Full test log from 2026-05-07 when this Hermes host (`43.200.138.23`) got IP-fla
 - DDG's site: operator either doesn't index TikTok video pages or silently ignores the directive
 - Tried `site:tiktok.com "Fizz app" college` (without `/@`) — same "No results found"
 
+> **2026-06-09 CORRECTION — DDG HTML DOES work for single-account `site:tiktok.com/@HANDLE` searches.** Verified on `@maheshowbout`: a single `curl` to `https://html.duckduckgo.com/html/?q=site%3Atiktok.com%2F%40maheshowbout` returned rich `result__snippet` blocks containing per-post **likes, full captions, inline #hashtags, original-sound names, and uddg-encoded URLs** (both `/video/` and `/photo/`). The earlier "DOES NOT WORK" verdict was for *topic* queries (`site:tiktok.com "keyword"`) and may also reflect the 2026-05-07 IP-reputation state. For ACCOUNT drill-down, DDG is now the preferred caption/hashtag source (see SKILL.md "Single-Account Drill-Down" / `references/single-account-drilldown.md`). Two failure modes to respect: (1) DDG throws an `anomaly` page (no `result__snippet` substring) when hit too rapidly — make ONE call, do NOT loop; (2) a fresh DDG call after a clean one will start returning `anomaly` if you fire 5-8 in a tight loop with short sleeps. Per the user's no-hammer rule, stop on the first anomaly and ship partial data.
+
 ### Brave Search (`search.brave.com/search`)
 - **Status: BLOCKED**
 - Body: *"Confirm you're a human being. This will only take a few seconds. I'm not a robot. Switch to traditional captcha. Learn more about Proof of Work Captcha."*

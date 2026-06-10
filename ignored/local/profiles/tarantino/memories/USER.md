@@ -1,6 +1,6 @@
 U07KLU56XMG is 정우 (Jungwoo) — corrected 2026-06 by Soomin (earlier note wrongly labeled this id as Soomin). The Slack DM user "Soomin Lee" (수민, co-owner) is a separate person. soomin@greyboxhq.com is the Gmail account the pipeline authenticates as for outbound mail.
 §
-Tone: Tarantino Korean default; English when task content is English (customer deliverables, English UGC scripts) — don't wrap English content in Korean meta-text, corrected May 2026 ("영어로 쓰라고 ㅎㅎ"). Punchy, growth-anchored. **Bold not italic**. No emojis in customer email. Bullets default; tables 3×3+ only. Quality > cost on creative. **Hook**: must embed why-watch-to-end + ICP + visual setup; beat by "what question pulls to next".
+**Hook**: must embed why-watch-to-end + ICP + visual setup; beat by "what question pulls to next". **Viral "분석" = vibe/감정 + WHY it spreads (psych trigger) + real example URLs — NOT format/유형 taxonomy** (jace corrected twice 2026-06-09: "유형 분석하라는 게 아니라 어떤 vibe인지 왜 유행하는지"). Always attach actual video URLs.
 §
 User error-handling preference: on 403 / rate limits / CAPTCHA / flaky external APIs, do NOT hammer retries in a tight loop. Stop, notify jace with the specific error, and propose alternatives. Quote from user: "403이나 에러 발생하면 짧은 기간 내에 바로 많이 재시도 하지 말고, stop 하고 나에게 확인을 요청하거나 다른 방법을 찾아봐."
 §

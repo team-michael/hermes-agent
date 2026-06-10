@@ -1125,3 +1125,34 @@ If the dedicated `segment-publisher long running alam` (`Custom/segment-publishe
    - ERROR logs / DLQ / ECS failure signals coexist.
 5. Only escalate to `needs_fix` when Pattern A (`EventCounterCteManager.extract...`) dominates in a spiked window or real failure signals appear.
 
+## 2026-06-09 session — `segment-publisher slow eic query` ALARM (Pattern B, stepup)
+
+Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`
+Transition: `OK -> ALARM` at 2026-06-09 11:57:01 UTC (KST 20:57)
+Datapoint: `Sum=1.0` at 2026-06-09 11:56:00 UTC (metric period 60s)
+
+Evidence:
+- Trigger log (2026-06-09 11:59:26 UTC, stream `prod/segment-publisher/fe605d9ee81745908db6a65d91e0f35f`): `[WARN] Processing took longer than expected: 3404567.39 ms` (~56.7 min)
+- Same-stream context: 18 batches, final `campaignId: UL1T00, 902580 recipients published. (batch index: 18)`
+- Received event payload (stream head, 2026-06-09 10:59:11 UTC) shows `schedule_type: "user_journey"`, id `UL1T00`, name `[만보기] 매일 적립 리마인드`
+- Project explicit in stream via `Received event`: `project_id: 32d8d9d6294d52e7a5427c036b471f91` → DynamoDB `project` → product `stepup`
+- Zero ERROR logs in the alarm window (11:40–12:00 UTC); only the single WARN line.
+- `describe_log_streams` stale-metadata pitfall reproduced: the trigger stream had `lastEventTimestamp=11:33:18` in the API response, but `get_log_events` revealed events up to 11:59:26 UTC — a ~26-minute metadata lag.
+- The `segment-publisher long running alam` companion alarm no longer exists (removed circa 2026-06-04). Classification relied on direct log verification via stream-first tail check.
+- Daily recurrence: stepup UL1T00 continues at ~11:56 UTC. 30d=6, 7d=6, 1d=1, 10m=1.
+- Recipient volume reached **902,580**, a new high for this user journey (up from 901,404 on 2026-06-08).
+
+Classification: `no_action` — publish completed, no DLQ/ECS failure, no customer impact. Pattern B continues the known stepup batch window with the ConsoleErrors alarm as the sole signal path.
+
+**Updated daily counts** (2026-06-09 added):
+```
+2026-04-13=7, 04-14=3, 04-15=2, 04-16=0, 04-17=4, 04-18=1,
+04-19=1, 04-20=5, 04-21=3, 04-22=2, 04-23=3, 04-24=6, 04-25=2, 04-26=2,
+04-27=4, 04-28=3, 04-29=5, 04-30=2, 05-01=1, 05-02=3, 05-03=1, 05-04=2,
+05-05=1, 05-06=1, 05-07=3, 05-08=1, 05-09=1, 05-10=1, 05-11=5, 05-12=3,
+05-13=1, 05-14=5, 05-15=1, 05-16=1, 05-17=1, 05-18=2, 05-19=1, 05-20=1,
+05-21=6, 05-22=1, 05-23=2, 05-24=1, 05-25=1, 05-26=1, 05-27=1, 05-28=1,
+05-29=2, 05-30=1, 05-31=1, 06-01=2, 06-02=확인 불가(미수집), 06-03=1, 06-04=1,
+06-05=확인 불가(미수집), 06-06=2, 06-07=2, 06-08=3, 06-09=1
+```
+
