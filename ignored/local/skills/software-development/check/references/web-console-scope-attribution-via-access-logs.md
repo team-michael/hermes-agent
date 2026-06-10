@@ -74,5 +74,6 @@ Do not assume 1:1 mapping. Report all matches when duplicates exist.
 
 ## Endpoints known to not log project_id
 
+- `GET /api/get_url` — URL fetch preview/validation endpoint; fetches arbitrary user-provided URLs for campaign assets (Kakao image, mobile-web link, etc.). The ERROR log (HTTP 4xx/5xx rejection) carries no `project_id`, but the access log `Referer` typically contains `/console/products/<productId>/campaign/create?id=<campaignId>&mode=edit`. Scope recovery follows the same Referer + query string extraction pattern above.
 - `POST /api/liquid/template` — Liquid Playground preview endpoint; renders user-supplied Liquid template with context JSON. Does not include `projectId` in request body.
 - Any UI playground or preview endpoint that delegates rendering to a generic API.

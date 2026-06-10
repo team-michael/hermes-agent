@@ -22,7 +22,15 @@ For the template-variable and link-validation patterns, the code path is typical
 at Array.q (/app/services/server/web-console/.next/server/pages/api/projects/[projectId]/user_journeys/[userJourneyId].js:1:6973)
 ```
 
-This occurs when a user journey node includes a Kakao brand-message action and the template image or variable fails Kakao validation during save/preview.
+Stack-trace signatures for the user-journey variant include:
+
+```
+at async Promise.all (index 10)
+at async b.upsert (.../chunks/17968.js:19:1946)
+at async Array.q (.../pages/api/projects/[projectId]/user_journeys/[userJourneyId].js:1:6973)
+```
+
+The `Promise.all (index N)` frame indicates a bulk save of multiple user-journey nodes, one of which contains a Kakao brand-message template reference that fails validation.
 
 ## Scope
 

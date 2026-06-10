@@ -1,5 +1,5 @@
 model:
-  default: us.anthropic.claude-opus-4-8
+  default: us.anthropic.claude-fable-5
   provider: bedrock
   base_url: https://bedrock-runtime.us-east-1.amazonaws.com
   context_length: 1000000
@@ -17,7 +17,7 @@ compression:
 auxiliary:
   compression:
     provider: bedrock
-    model: us.anthropic.claude-sonnet-4-6
+    model: us.anthropic.claude-fable-5
     context_length: 1000000
     timeout: 240
 agent:
