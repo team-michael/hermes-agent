@@ -83,6 +83,14 @@ def metric_filter_terms(pattern: str) -> List[str]:
         word = ''.join(cls[0] for cls in classes)
         if len(word) >= 3 and word not in terms:
             terms.append(word)
+    # Handle simple literal phrases (space-separated words, no CloudWatch filter syntax).
+    # These often fail the error-token heuristic below (e.g. "took too long", "processing took longer than expected").
+    if not terms:
+        if re.fullmatch(r'[A-Za-z ]+', pattern):
+            words = [w for w in pattern.split() if len(w) >= 3 and w.lower() not in BROAD_FILTER_WORDS]
+            if words:
+                return words
+
     for word in re.findall(r'\b[A-Za-z][A-Za-z0-9_.:-]{3,80}\b', pattern):
         if word.lower() in BROAD_FILTER_WORDS:
             continue

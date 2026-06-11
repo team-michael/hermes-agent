@@ -145,10 +145,15 @@ Without the script, the workflow is usually:
 
 This skill compresses that into **one command**.
 
+## Missing transcript recovery
+
+If `sessions/sessions.json` maps a Slack thread to a `session_id` but `sessions/session_<session_id>.json` is absent, do **not** stop at `Session file not found`. First inspect Slack cache files (`slack_api_cache/thread_<channel>_<thread_ts>.json` and `_summary.json`), then search session archives by durable alert identifiers such as Sentry issue id, error class, CloudWatch alarm name, or Slack permalink timestamp. The useful discussion may live in a later PR-review / CloudWatch-investigation session rather than the registry session. See `references/missing-session-file-recovery.md`.
+
 ## Caveats
 
 - This is **not** canonical Slack history; it is Hermes' archived view.
 - It only works if Hermes already saw the thread or the user pasted the alert/context into the session.
+- A registry mapping can exist even when the transcript file is missing; recover via Slack cache + keyword `session_search` before saying there is no conversation history.
 - If the root message never entered Hermes, use the live Slack/AWS debugging skills instead.
 - A single session may contain multiple subtopics; use `--query` to isolate the alert-related parts.
 - If `session_search` or the script finds nothing, check whether another Hermes profile handled the thread. For cross-profile archive inspection, see `references/cross-profile-session-archive-inspection.md`.

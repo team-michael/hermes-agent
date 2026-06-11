@@ -81,8 +81,11 @@ Observed projects/campaigns in recent triggers (scope varies by day because `UL1
 - `proudp` / `UL1T00` (2026-05-19 11:51 UTC, ~52.3 min, 887,991 recipients)
 - `stepup` / `UL1T00` (2026-05-25 11:55 UTC, ~56.5 min, 891,998 recipients, **user journey** `[만보기] 매일 적립 리마인드`)
 - `stepup` / `UL1T00` (2026-06-09 11:56 UTC, ~56.7 min, 902,580 recipients, **user journey** `[만보기] 매일 적립 리마인드`)
+- `stepup` / `UL1T00` (2026-06-10 11:54 UTC, ~55.4 min, 903,200 recipients, **user journey** `[만보기] 매일 적립 리마인드`)
 
 **Scope-attribution caveat**: The same campaign/user journey ID (`UL1T00`) has appeared under different projects on different days. Always extract the current alarm-window `project_id` from the ECS log stream (e.g., from `Used user property names in message:` JSON or inline `project_id`/`campaignId` structured lines), then map it via DynamoDB `project`, and finally determine whether `resource_type` is `campaign` or `user_journey`. Never scope by campaign/user journey ID alone.
+
+**Helper gap — `metric_filter_terms` on literal phrases**: The helper's `metric_filter_terms("took too long")` historically returned `[]` because none of the words passed the error-token heuristic, causing the fallback to search for the alarm-name-derived term `"slow eic query"` instead. This was patched in `text.py` (simple literal phrase extraction). If the helper still returns empty `current_trigger_contexts` for this alarm, the manual fallback is `filter-log-events` with `"took" "too" "long"` (three separate quoted terms) on the alarm window, then `get-log-events` on the matching stream.
 
 ## Classification
 
