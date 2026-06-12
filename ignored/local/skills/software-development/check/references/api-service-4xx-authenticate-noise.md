@@ -30,7 +30,7 @@ The filter increments on every structured log where `message` is exactly `error-
 
 A daily burst of requests hits `POST /authenticate` around **02:11 KST (17:11 UTC)**:
 
-- **User-Agent**: primarily `Apache-HttpClient/5.3.1 (Java/17.0.19)`; also `python-requests/2.32.3`, `axios/1.13.6`
+- **User-Agent**: primarily `Apache-HttpClient/5.3.1 (Java/17.0.19)`; also `python-requests/2.32.3`, `ReactorNetty/1.1.13`, `axios/1.13.6`
 - **Status**: `400`
 - **Response body**: `{"error":"Missing required fields"}` (or `{"data":null}` for access-key-bearing requests that still fail validation)
 - **IP origin**: various Korean IPs behind Cloudflare

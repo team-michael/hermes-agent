@@ -221,7 +221,26 @@ If the same request later returns `200`, treat this as **transient readiness del
 
 For the Notifly `web-console` container, startup is not instantaneous because `entrypoint.sh` first launches multiple `cloudflared access tcp` processes, waits briefly, and only then starts `node server.js`.
 
-## 9. High-confidence diagnosis rules
+## 9. Chained Notifly Cloudflare previews
+
+Some Notifly previews deploy multiple services that must point at each other, not just one Worker/Container. For these, validate the chain explicitly:
+
+1. `api-service` preview is deployed and healthy.
+2. `internal-api-service` preview is deployed with its upstream pointing at the preview api-service endpoint.
+3. `web-console` preview is deployed with `INTERNAL_API_SERVICE_URL` pointing at the preview internal-api endpoint.
+4. Each service `/health` returns the expected service identity/SHA.
+5. If the API exposes MCP, smoke the preview `/mcp` endpoint directly: unauthenticated 401 + `WWW-Authenticate` protected-resource metadata, metadata discovery, authenticated `initialize`, and authenticated `tools/list`.
+6. For web-console AI Agent signoff, do not stop at API/MCP smoke: log into the preview console, open the target product, and send a small AI Agent message to verify cookie auth + product→project resolution + streaming UI.
+7. If web-console calls an Access-protected preview internal-api, verify upstream auth values that are JSON objects are forwarded as multiple headers, not collapsed into one `Authorization` header.
+8. If AI Agent session list GET succeeds but create-session POST returns 500, split proxy/auth from service runtime by comparing web-console proxy POST with direct internal-api POST; if both fail, inspect internal-api create-session rate-limit/Redis before continuing UI debugging.
+9. If the failing internal-api path touches Redis and the app runs behind `cloudflared access tcp`, explicitly test Redis Cluster redirect behavior. A single local TCP tunnel to a cluster config endpoint can surface `MOVED`/`ASK` or unstable shard hits; this can look like quota exhaustion or generic POST 500 even when the Redis key is absent.
+10. If app code should remain unchanged, consider a container-wrapper RESP proxy that listens where the app expects Redis and follows one-hop cluster redirects behind Cloudflare Access tunnels.
+
+See `references/notifly-chained-preview-and-mcp-smoke.md` for the compact Notifly-specific checklist, upstream Access header pitfall, and AI Agent session-creation triage pattern.
+See `references/redis-cluster-through-cloudflared.md` for the Redis Cluster + Cloudflare Access TCP tunnel failure mode and wrapper/proxy remediation pattern.
+See `references/cloudflare-container-redis-cluster-options.md` for the production-shaped options matrix: AWS-side Envoy Redis proxy, node-specific tunnels with NAT mapping, preview-only single Redis, and why Workers VPC is not a simple drop-in for Container `ioredis` Cluster mode.
+
+## 10. High-confidence diagnosis rules
 
 Use these rules:
 

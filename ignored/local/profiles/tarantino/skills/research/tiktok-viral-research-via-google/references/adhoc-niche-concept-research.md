@@ -3,7 +3,19 @@
 When the user asks "what concepts go viral / are trending in the <X> niche on TikTok"
 as a one-off (NOT the NA-college daily cron), use this leaner playbook. Verified
 2026-06-09 on the **bestie / best-friend** niche: 16/16 queries clean, 202 unique
-videos, 111 with hard view counts, zero `/sorry/`.
+videos, 111 with hard view counts, zero `/sorry/`. Re-verified 2026-06-11 on the
+**date** niche: blocked at Q13/18, but 12 queries → 157 unique videos / 96 with views
+was MORE than enough to ship the report.
+
+## 0. Partial harvest is a shippable harvest
+
+If Google blocks mid-run, do NOT retry or wait for the parked driver. Check
+`google_results.json` first: ~10+ clean queries / ~100+ unique videos / ~60+ with view
+counts ⇒ kill the parked driver (it parks in `time.sleep` for VNC handoff), sweep
+singletons, and write the report from the partial data. Name the un-collected queries
+and their clusters as "under-sampled" in the report instead of padding. Order QUERIES
+so the highest-value clusters run FIRST — the tail is what you lose on a block.
+
 
 ## 1. Free the profile if the daily cron parked a zombie driver
 
@@ -45,13 +57,24 @@ This is the key query-design fork the cron path obscures (cron always uses `qdr:
 
 ## 3. Standalone ad-hoc scraper
 
-Copy `scripts/scrape_google_loop.py`, set `OUT_DIR=.../cron_tiktok_<niche>`, replace
-`QUERIES` with niche-specific phrases, and **change `URL_TMPL` to drop `tbs=qdr:w`**
-for all-time concept research:
+**Use the ready templates** (added 2026-06-11; don't hunt for old copies in `work/`):
+
+- `templates/scrape_adhoc_niche.py` — copy to `work/<niche>/scrape_<niche>.py`,
+  edit `OUT_DIR` + `QUERIES` + (optionally) `URL_TMPL`.
+- `templates/parse_rank_concepts.py` — copy alongside, edit `IN`/`OUT` + `CONCEPTS`.
+  Handles Korean SERP view parsing, `likes*12` view-proxy, age from
+  `video_id >> 32`, per-concept rollup, and the `<=120d` recent band.
+
+All-time concept research drops `tbs=qdr:w`:
 
 ```python
 URL_TMPL = "https://www.google.com/search?q={q}&num=30&hl=ko"   # all-time
 ```
+
+**Order QUERIES priority-first** — highest-value clusters at the top. Google can
+`/sorry/`-block mid-run (date-niche run 2026-06-11: blocked at Q13/18; bestie run:
+16/16 clean) and you keep only what ran before the block. Design so the first
+~10-12 queries alone make a shippable report.
 
 Launch with `background=true, notify_on_complete=true`:
 
@@ -79,3 +102,52 @@ phrases (`"best friend test"`) to lock the format, and mix generic format names 
 identity-signal phrases ("things only best friends do", "platonic soulmate").
 Watch for dead clusters — e.g. `"long distance best friend"` returned near-zero
 views in the bestie run; drop it from the report rather than pad.
+
+## 5. Report shape that landed (date-niche run, 2026-06-11)
+
+What got the report accepted with zero corrections: lead with "which cluster is the
+LIVE machine now" (recency share, not raw views), then per-cluster **vibe + WHY it
+spreads (psych trigger) + real URLs** — never a dry format taxonomy (per jace's
+standing 분석 preference). Explicitly split **legacy megahits** (8mo+ old, reference
+archetypes, often non-replicable celebrity/pet outliers) from the **≤120d replicable
+band** ("지금 돌아가는 머신") and say which one is the copy target. Close with default
+bet / risk bet / next step. A `slack-table` rollup (cluster × count × sum views ×
+recent count × top URL) carried the evidence cleanly.
+
+## 5. Mid-run `/sorry/` block — partial-ship decision (ad-hoc policy)
+
+The scraper's "park on block" behavior exists for the cron VNC-handoff flow. For
+**ad-hoc** runs, do NOT solve the captcha and do NOT retry (user policy: no retry
+hammering on 403/captcha). Instead:
+
+1. Check yield: `jq '[.[].items[].url] | unique | length' google_results.json` and
+   per-query counts. **>=10 queries collected and >=100 unique videos → kill the
+   parked process and ship the partial report.** (Date run: 12/18 queries, 157
+   unique, 96 with views — fully shippable.)
+2. Kill cleanly: `kill -9 <python_pid>`, then enumerate-kill Tarantino-profile
+   chrome + chromedriver pids (never broad `pkill -f chrome`), then
+   `rm -f .../Tarantino/Singleton{Lock,Cookie,Socket}`.
+3. In the report, NAME the uncollected queries and which concept clusters are
+   under-sampled because of them, and offer a follow-up scrape after cooldown.
+   Don't silently present partial coverage as complete.
+
+Note: `process(action='kill')` may fail with `No module named 'psutil'` — fall back
+to plain `kill -9` of the recorded pids (scrape.out / google_status.json carry
+`driver_pid`; the bash wrapper pid is the background session's).
+
+## 6. Report shape that landed well (date-niche run, 2026-06-11)
+
+Per user's standing "분석" preference: vibe/감정 + WHY it spreads (psych trigger)
++ real URLs — not a format taxonomy. The structure that worked:
+
+- Lead: which cluster is the **live machine** (highest recent<=120d share), not
+  just highest absolute views.
+- Native Slack table for the cluster rollup (concept / n / sum views / recent
+  count / top video).
+- Per-cluster: one-line psych trigger ("배심원 심리", "wholesome envy",
+  "파트너 태그 머신" — save/tag mechanics differ from watch mechanics) + 2-4
+  actual video links with views + age.
+- Explicit legacy-vs-replicable split: old megahits (often celebrity/pet
+  outliers, e.g. a 37M cat video topping "date with me") are archetypes, NOT
+  copy targets; the <=120d band is the copy target.
+- Close: default bet / save-machine bet / offer to map onto a specific app ICP.

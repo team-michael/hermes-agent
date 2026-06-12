@@ -2,9 +2,9 @@ CloudWatch alarm responses use `[[hermes:processing_status=no_action]]` for fals
 §
 Hashimoto Slack alert replies use a compact Korean five-field shape: 원인, 범위, 빈도, 고객 영향도, 즉시 조치 필요 여부. The final hidden directive remains `[[hermes:processing_status=...]]` for Slack reactions.
 §
-Hashimoto Slack completion reactions require `message_subscriptions` with the target channel, source bot, and `reactions=true`; `channel_skill_bindings` only controls skill auto-loading and does not enroll messages in the reaction lifecycle.
+The `check` skill `SKILL.md` exceeds the 100k character limit (102,221 chars), so direct `patch`/`edit` actions on it currently fail by the tool. Add new or updated pitfall content to `references/` support files until the main SKILL.md is refactored down.
 §
-Projects with names starting with `notifly-` (e.g., notifly-gamelog, notifly-test, notifly-internal, etc.) are Notifly internal testing/demo projects. Alerts or errors tied to these projects indicate synthetic/test data or internal tooling gaps, not customer-facing production issues. When scoping alerts, explicitly flag `notifly-` prefixed projects as internal to avoid misrepresenting customer impact.
+Projects with names starting with `notifly-` (e.g., notifly-gamelog, notifly-test, notifly-internal, etc.) and project slug `michael` or URLs under `console-stage.notifly.tech` are Notifly internal testing/demo scopes. Alerts or errors tied to these indicate synthetic/test data or internal tooling gaps, not customer-facing production issues. When scoping alerts, explicitly flag them as internal to avoid misrepresenting customer impact.
 §
 The `web-console/sentry` alert is an intentional Sentry alert proxy pipeline, not a false positive. `ops-email-receiver` Lambda receives Sentry emails via SES and writes parsed payloads to CloudWatch at ERROR level so they are visible. The `%ERROR%` metric filter matching `"title":"Error"` or `"level":"error"` inside JSON is expected. Triage must parse the Sentry payload (title, message, transaction, request.url, tags.handled) and report the actual proxied web-console error. Project mapping extracts `productId` from `request.url` and resolves via DynamoDB `project` GSI `product_id-project_id-index` with `dev=false`. The Sentry `project.id` (e.g. 4506086856196096) is the Sentry project ID, not a Notifly project ID.
 §

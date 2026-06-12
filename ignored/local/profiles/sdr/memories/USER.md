@@ -1,4 +1,4 @@
-User wants the current sdr profile's default Notifly SDR/account research behavior to follow the Slack thread setup: result-focused and concise; prioritize contact quality > account fit > stack evidence > outreach angle; organize outputs around conclusion, key evidence, contact status, sales angle, next action, and limitations; distinguish confirmed/likely/possible/unknown stack evidence; avoid guessed personal emails as primary outreach.
+User wants sdr Notifly SDR/account research to be concise and result-focused: prioritize contact quality, account fit, stack evidence, outreach angle; output conclusion/evidence/contact status/sales angle/next action/limitations; label stack confidence; avoid guessed personal emails. User clarified “GTM engineering” recall should not default to Trackit/GTM Copilot without evidence.
 §
 User prefers future Google Drive deliverables for Notifly competitor/consulting/GTM analysis in the sdr profile to be stored under Drive folder `business` ID `1BUaJE9Tp3yAF_BvSx2lrYnyhGJd30FAo` or its subfolders.
 §

@@ -2,7 +2,7 @@ Andrej env: terminal HOME can be profile home; set `HOME=/home/ubuntu` for gh/GW
 §
 Notifly project: project_id→DDB `project` product_id/name; product created_at lives in DDB `products` keyed by product_id; per-project PG `table_${project_id}`; AI admin fallback after lookup.
 §
-Notifly API/fact data default: PG/read-model first; Athena raw only explicit debug/audit. Campaign-user facts route as `/campaigns/{campaignId}/users/{notiflyUserId}/eligibility` and `/deliveries`.
+Notifly facts: PG/read-model first; Athena raw only explicit audit/debug. Campaign-user `/eligibility`+`/deliveries`. Cosmo FCM404 repeated stale-token uploads imply getToken/cache/race/server invalidation.
 §
 Notifly docs/web: `docs.notifly.tech` source `team-michael/notifly-event/docs` (Mintlify; old docs repos legacy); `notifly.tech` source `team-michael/notifly-web`; Product KB `team-michael/notifly-product-knowledge`.
 §
@@ -12,7 +12,7 @@ CloudCheckr AU 2000841/a4dcbb7d uses `cloudcheckr-service-cost-api-fetch`; MaxSe
 §
 Git commit identity used in prior Notifly agent work: `Andrej Karpathy <team@greyboxhq.com>`.
 §
-Cloudflare: Access endpoints use service-token headers; Notifly front-door/debug use CLOUDFLARE_READONLY_API_TOKEN before Terraform; never print tokens. 전송자격인증은 글로벌 서비스라 해외 IP 전면차단 대신 WAF 위험기반 선별차단으로 설명.
+Cloudflare: use service-token headers for Access; front-door/debug prefer CLOUDFLARE_READONLY_API_TOKEN; never print tokens.
 §
 Remote/workflow ops: local Hermes isn't target; verify host; env/VPN/secrets tests use workflow_dispatch.
 §

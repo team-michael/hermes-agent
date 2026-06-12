@@ -82,6 +82,7 @@ Observed projects/campaigns in recent triggers (scope varies by day because `UL1
 - `stepup` / `UL1T00` (2026-05-25 11:55 UTC, ~56.5 min, 891,998 recipients, **user journey** `[만보기] 매일 적립 리마인드`)
 - `stepup` / `UL1T00` (2026-06-09 11:56 UTC, ~56.7 min, 902,580 recipients, **user journey** `[만보기] 매일 적립 리마인드`)
 - `stepup` / `UL1T00` (2026-06-10 11:54 UTC, ~55.4 min, 903,200 recipients, **user journey** `[만보기] 매일 적립 리마인드`)
+- `stepup` / `UL1T00` (2026-06-11 11:54 UTC, ~55.2 min, 904,054 recipients, **user journey** `[만보기] 매일 적립 리마인드`)
 
 **Scope-attribution caveat**: The same campaign/user journey ID (`UL1T00`) has appeared under different projects on different days. Always extract the current alarm-window `project_id` from the ECS log stream (e.g., from `Used user property names in message:` JSON or inline `project_id`/`campaignId` structured lines), then map it via DynamoDB `project`, and finally determine whether `resource_type` is `campaign` or `user_journey`. Never scope by campaign/user journey ID alone.
 

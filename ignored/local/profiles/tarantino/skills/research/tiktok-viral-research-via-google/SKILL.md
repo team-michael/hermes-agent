@@ -9,6 +9,7 @@ tags: [tiktok, research, growth, viral, google, scraping, selenium]
 ## When to Use
 - User asks for viral TikTok videos on a topic (e.g. "couple app", "meditation app", "skincare")
 - User asks "what concepts go viral / are trending in the <X> niche" (e.g. bestie/best-friend) as a one-off — see `references/adhoc-niche-concept-research.md` for the leaner non-cron playbook (free a parked cron driver, all-time vs `qdr:w` choice, concept-clustering the report)
+- User asks how to turn a researched TikTok concept into app creative — keep the original viral mechanic as the content promise; see `references/app-concept-translation-pitfalls.md` (e.g. date ideas must remain a save/tag date-ideas list, with app ritual as proof/signature, not the whole topic)
 - User wants TikTok video URLs + approximate view counts without logging into TikTok
 - App growth / content marketing reconnaissance (competitor analysis, hook mining, ICP discovery)
 

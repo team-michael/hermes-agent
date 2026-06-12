@@ -2,7 +2,7 @@ Notifly GitHub: pre-PR findings; Conventional Commits; assign `clix-so-bot`; rev
 §
 Remote/container tasks: never assume local Hermes is target; verify intended system first, and never destructively mutate home dirs like /ubuntu/home, /home/ubuntu, or $HOME.
 §
-Notifly debug/RCA: concise KR, evidence-first; core yes/no first; scope/denominator; observed-vs-inferred; no overclaiming cache/race; downgrade ruled-out hypotheses; root/trigger/amplifier; code/DB/log grounding; mobile push needs cohort evidence.
+Notifly debug/RCA: concise KR, evidence-first, core yes/no, denominator/scope; verify user/env IDs; token timelines include app/RN SDK; observed-vs-inferred; code/DB/log grounding; if raw sensitive values can’t be pasted, give self-serve query path.
 §
 In DMs, user wants infra explanations tailored to Mobile/iOS+SDK Eng background: use analogies only when mechanisms match; flag SDK implications for contracts/retries/offline/telemetry/DX.
 §
