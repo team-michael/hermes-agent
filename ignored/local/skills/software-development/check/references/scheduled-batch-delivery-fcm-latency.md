@@ -13,7 +13,7 @@ Alarm: `ScheduledBatchDelivery-P2-FCMLatencyP99` (namespace `Notifly/ScheduledBa
 ## Key API pitfalls observed
 
 ### 1. `get-metric-statistics` does not support percentile statistics
-AWS `get-metric-statistics` only accepts `SampleCount | Average | Sum | Minimum | Maximum`. `p99` is not valid. Use `Maximum` as a conservative proxy, or switch to `get-metric-data` with `ExtendedStatistics=['p99']` if exact percentiles are needed.
+AWS `get-metric-statistics` only accepts `SampleCount | Average | Sum | Minimum | Maximum`. `p99` is not valid there. Use `Maximum` as a conservative proxy, or switch to `get-metric-data` with `Stat: 'p99'` inside `MetricStat` (not `ExtendedStatistics`) if exact percentiles are needed.
 
 ### 2. `describe-alarm-history` may return null `StateValue`/`StateReason`
 The History API can return entries where both `StateValue` and `StateReason` are `null`. This prevents the helper from counting ALARM transitions directly from history fields. When this happens, fall back to:
@@ -23,6 +23,9 @@ The History API can return entries where both `StateValue` and `StateReason` are
 
 ### 3. Alarm name parsing with embedded priority tiers
 The alarm name contains `-P2-` (priority tier), but the actual Lambda function is `scheduled-batch-delivery` without the tier suffix. The metric namespace `Notifly/ScheduledBatchDelivery` is shared across all priority tiers. Text-based alarm name extraction must handle embedded hyphens and tier labels.
+
+### 4. EMF log sampling may miss sparse tail-latency events
+`FCMSendLatency` EMF lines are INFO-level and emitted once per batch. When total batch volume is high (500+ batches in a 5-minute window), `filter-log-events` pagination (even across multiple calls) may not capture the small subset of lines with latency >3000ms because the high-latency tail is sparse and distributed across many log streams. In session 2026-06-12, 1000 paginated EMF lines showed zero >3000ms events even though `get-metric-data` reported p99=9785ms and Maximum=15151ms. **For classification, prefer metric-based verification (`get-metric-data` p99/Maximum + Lambda/SQS/DB health checks) over relying on log sampling to confirm the tail-latency signature.**
 
 ## Triage checklist (read-only)
 

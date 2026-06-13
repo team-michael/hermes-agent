@@ -6,6 +6,6 @@ Tarantino ops: (1) write_file→/home/ubuntu/.hermes/profiles/tarantino/home/...
 §
 RunForm slideshow: 10 topics. ONLY cron = batch4 `11552f25d69c` (Tue/Thu KST09, 4 eps×2/wk). Drive parent `1hAqXipvHle6b5rwhuS4ozxtw02zx9a9r` + drive.file scope. **SLACK_BOT_TOKEN** at `~/.hermes/profiles/tarantino/.env` (not auto-passthrough).
 §
-Clix prompt-builder: repo github.com/clix-so/clix-prompt-builder, live https://clix-prompt-builder.pages.dev (Cloudflare Pages auto-deploys on main push, branch protection bypass allowed). Vite+React SPA + Pages Functions + Google Sheets DB. Key composers: src/lib/image.ts, src/lib/video.ts, src/lib/naturalness.ts (6 realism groups), src/lib/axes.ts. For image-prompt craft load creative/image-prompt-engineering skill.
+Clix prompt-builder: github.com/clix-so/clix-prompt-builder → https://clix-prompt-builder.pages.dev (CF Pages auto-deploy on main). Vite+React SPA + Pages Functions + Google Sheets DB. Composers: src/lib/{image,video,naturalness,axes}.ts. Image-prompt craft → image-prompt-engineering skill.
 §
-**`send_message(slack_table=…)`** (tarantino, hermes-multi-profile-feature-rollout). Slack mp4 ≥40MB → 500 cbfail; re-encode crf 23 → ~26MB. r2v `@Image2` photoreal persona 인종/나이/헤어 explicit lock. ZaiSpace bestie carousel → zaispace-bestie-carousel skill.
+**`send_message(slack_table=…)`** (tarantino). Slack mp4 ≥40MB → 500; re-encode crf 23. r2v `@Image2` persona 인종/나이/헤어 explicit lock. ZaiSpace → zaispace-bestie-carousel skill. Duolog → duolog-date-ideas-carousel skill ("불투명도 낮춰줘"=MORE transparent). HBB daily tone: GOLD_EXAMPLE few-shot in daily_episode.py = jace favorite; new favorite → swap it.

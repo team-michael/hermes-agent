@@ -12,7 +12,19 @@ Recurring false-positive pattern for the `[api-service] 4xx error response is gr
 - **Threshold**: 100
 - **EvaluationPeriods**: 4 (DatapointsToAlarm: 3)
 - **Note on name drift**: The alarm name says "greater than 300" but the actual CloudWatch threshold is **100**. Do not rely on the numeric value embedded in the alarm name when estimating severity margin.
-- **State transition history**: ~47 OK→ALARM transitions in 30 days (2026-04-26 through 2026-05-25), typically 2 transitions per day resolving within 3–5 minutes. Some days produce back-to-back transitions within 5 minutes when a high-volume 5-minute bucket continues contributing to the rolling evaluation after a brief OK recovery. Always derive from actual `describe-alarm-history` output using `HistoryData | fromjson | .oldState.stateValue` / `.newState.stateValue` rather than the `StateValue` field, which can be `null` for older entries.
+- **State transition history**: ~54 OK→ALARM transitions in 30 days (2026-05-13 through 2026-06-12), typically 2 transitions per day resolving within 1–5 minutes. Some days produce back-to-back transitions within 5 minutes when a high-volume 5-minute bucket continues contributing to the rolling evaluation after a brief OK recovery. Always derive from actual `describe-alarm-history` output using `HistoryData | fromjson | .oldState.stateValue` / `.newState.stateValue` rather than the `StateValue` field, which can be `null` for older entries.
+
+## Pitfall — metric filter discovery via namespace/name may return empty
+
+The `api-service` log group has metric filters that do not necessarily surface when querying by `metricNamespace` + `metricName` alone. When `aws logs describe-metric-filters --region ap-northeast-2 --query 'metricFilters[?metricNamespace==\`ConsoleErrors\`]'` returns empty, fall back to the log-group-scoped query:
+
+```bash
+aws logs describe-metric-filters --region ap-northeast-2 \
+  --log-group-name /aws/ecs/notifly-services-prod/api-service \
+  --output json | jq -c '.metricFilters[] | {metricTransformations:.metricTransformations, filterPattern}'
+```
+
+Note: the AWS CLI nests `metricName` and `metricNamespace` under `.metricTransformations[0]`, not at the top level. Querying `.metricName` directly returns `null` even when the filter exists.
 
 ## Metric filter
 
@@ -326,9 +338,32 @@ aws cloudwatch get-metric-statistics --region ap-northeast-2 \
   --statistics Sum \
   --output json | jq -r '.Datapoints | sort_by(.Timestamp) | .[] | [.Timestamp, .Sum] | @tsv'
 ```
-Result: identical to the known daily ~02:11 KST `/authenticate` authentication rejection burst. All signals are handled `warn` validation rejections; no customer impact. The 30-day OK→ALARM count of 25 is consistent with the `TreatMissingData: missing` undercount pattern documented above.
 
-2026-06-02 alarm window (16:56–17:06 UTC / 2026-06-03 01:56–02:06 KST):
+2026-06-12 alarm window (16:56–17:06 UTC / 02:11 KST):
+- **Alarm state**: ALARM at 17:11 UTC, OK at 17:12 UTC (1-minute duration); breached datapoint 892.0 at 17:01 UTC with recentDatapoints [8.0, 355.0, 892.0, 22.0]
+- Total `error-response` with status ≥ 400 (16:45–17:20 UTC): **~1,332**
+- `/authenticate` 400: **1,254** (94.1%)
+  - User-Agent: `Apache-HttpClient/5.3.1 (Java/17.0.19)` 1,242, `python-requests/2.32.3` 12
+  - Level: **100% `warn`**; explicit `level == "error"` Logs Insights query returned **0** matches
+  - `projectId`: **explicitly `"unknown"`** on all `/authenticate` lines
+- Secondary signatures (sparse, all `warn`):
+  - `DELETE /projects/80fd28969702573797f4d7f77063e47b/messages/text-message/blockservice/recipients/removes` 400: **27**
+  - `POST /track-event` 401: **22**
+  - `POST /projects/b2b4a8f879a75673b755bff42fc1deb6/campaigns/icKePI/send` 400: **6** (`class101`)
+  - `POST /projects/b2b4a8f879a75673b755bff42fc1deb6/user-journeys/ab711m/enter` 400: **3** (`class101`)
+  - `POST /projects/0c61d690f3425c13875c2c4902616b40/campaigns/CJDzWt/send` 400: **3** (`sconn`)
+  - `POST /projects/b2b4a8f879a75673b755bff42fc1deb6/campaigns/b9Ty4s/send` 400: **3** (`class101`)
+  - `POST /projects/b2b4a8f879a75673b755bff42fc1deb6/campaigns/2D1ujT/send` 400: **3** (`class101`)
+  - `POST /set-user-properties` 401: **3**
+  - `GET /user-state` 405: **2**
+- 30d/7d/1d/10m OK→ALARM counts (from `HistoryData`): **53 / 12 / 1 / 1**
+- Alarm transitions: single OK→ALARM at 17:11 UTC per `HistoryData` (demonstrates this alarm has returned to baseline frequency)
+
+Result: identical to the known daily ~02:11 KST `/authenticate` authentication rejection burst. All signals are handled `warn` validation rejections; no customer impact. The alarm recovered within one minute of crossing threshold, consistent with prior sessions' ~1–5 minute ALARM duration.
+
+**7-day daily OK→ALARM baseline** (2026-06-05 through 2026-06-12): 12 transitions over 7 days, averaging ~1.7/day, within the long-term ~1.5–1.7/day band. No trend shift.
+
+## Classification guidance
 - **Alarm transitions**: OK→ALARM at 17:11 UTC, ALARM→OK at 17:19 UTC; second OK→ALARM at 17:16 UTC (2 transitions within 10 minutes, sliding-window artifact)
 - Metric datapoints: 175.0 (16:56), 893.0 (17:01), 487.0 (17:06); threshold 100.0, 3 of 4 datapoints
 - Total `error-response` status ≥ 400: **~1,574**; `/authenticate` 400: **1,536** (97.6%), all `level: warn`, `projectId: "unknown"`
@@ -417,6 +452,28 @@ Result: identical to the known daily ~02:11 KST `/authenticate` authentication r
 
 Result: identical to the known daily ~02:11 KST `/authenticate` authentication rejection burst. All signals are handled `warn` validation rejections; no customer impact. The metric datapoint 888.0 at 17:01 UTC confirms the burst peaked in the same 5-minute bucket as prior days.
 
+2026-06-12 alarm window (16:56–17:06 UTC / 02:11 KST):
+- **Alarm state**: ALARM at 17:11 UTC, OK at 17:12 UTC (1-minute duration); breached datapoint 892.0 at 17:01 UTC with recentDatapoints [8.0, 355.0, 892.0, 22.0]
+- Total `error-response` with status ≥ 400 (16:30–17:35 UTC): **~1,334**
+- `/authenticate` 400: **1,255** (94.1%)
+  - User-Agent: `python-requests/2.32.3` 1,242, `axios/1.13.6` 12, `Apache-HttpClient` 1
+  - Level: **100% `warn`**; explicit `level == "error"` Logs Insights query returned **0** matches
+  - `projectId`: **explicitly `"unknown"`** on all `/authenticate` lines
+- Secondary signatures (sparse, all `warn`):
+  - `DELETE /projects/80fd28969702573797f4d7f77063e47b/messages/text-message/blockservice/recipients/removes` 400: **27**
+  - `POST /track-event` 401: **22**
+  - `POST /projects/b2b4a8f879a75673b755bff42fc1deb6/campaigns/icKePI/send` 400: **6** (`class101`)
+  - `POST /projects/b2b4a8f879a75673b755bff42fc1deb6/user-journeys/ab711m/enter` 400: **3** (`class101`)
+  - `POST /projects/0c61d690f3425c13875c2c4902616b40/campaigns/CJDzWt/send` 400: **3** (`sconn`)
+  - `POST /projects/b2b4a8f879a75673b755bff42fc1deb6/campaigns/b9Ty4s/send` 400: **3** (`class101`)
+  - `POST /set-user-properties` 401: **3**
+  - `GET /user-state` 405: **2**
+- 30d/7d/1d/10m OK→ALARM counts (from `HistoryData`): **54 / 13 / 2 / 2**
+
+Result: identical to the known daily ~02:11 KST `/authenticate` authentication rejection burst. All signals are handled `warn` validation rejections; no customer impact. The alarm recovered within one minute of crossing threshold, consistent with prior sessions' ~1–5 minute ALARM duration.
+
+**7-day daily OK→ALARM baseline** (2026-06-05 through 2026-06-12): 13 transitions over 7 days, averaging ~1.9/day, within the long-term ~1.5–2.0/day band. No trend shift.
+
 2026-05-30 alarm window (16:56–17:20 UTC / 2026-05-31 01:56–02:20 KST):
 - **Alarm transitions**: OK→ALARM at 17:11 UTC, ALARM→OK at 17:14 UTC, OK→ALARM at 17:16 UTC, ALARM→OK at 17:19 UTC (2 back-to-back transitions within 10 minutes)
 - Metric datapoints confirming breach (from `StateReasonData`): **850.0** (17:04), **706.0** (17:09), 9.0 (17:14), 6.0 (17:19); threshold 100.0 with 3 of 4 datapoints required
@@ -487,6 +544,24 @@ Result: identical to the known daily ~02:11 KST `/authenticate` authentication r
 - 30d/7d/1d/10m OK→ALARM counts (from `HistoryData`): **52 / 13 / 2 / 2**
 
 Result: identical to the known daily ~02:11 KST `/authenticate` authentication rejection burst. All signals are handled `warn` validation rejections; no customer impact. The 7-day full-day aggregate has crept up to the 5,400–7,500 band (vs. the earlier 1,800–4,300 band), but this is because the query window broadened to full UTC days; the narrow 16:50–17:10 burst window remains within the same ~1,600–1,800 peak as before.
+
+2026-06-12 alarm window (16:56–17:06 UTC / 2026-06-13 01:56–02:06 KST):
+- **Alarm transitions**: OK→ALARM at 17:11 UTC, ALARM→OK at 17:12 UTC (1 min); OK→ALARM at 17:16 UTC, ALARM→OK at 17:17 UTC (second back-to-back within 5 min, sliding-window artifact from the 17:01 peak still contributing)
+- Metric datapoints confirming breach: 176.0 (16:56), 893.0 (17:01), 199.0 (17:06); threshold 100.0 with 3 of 4 datapoints required
+- Total `error-response` with status ≥ 400 (16:50–17:20 UTC): **~1,332**
+- `/authenticate` 400: **1,248** (93.7%, Logs Insights aggregate)
+  - User-Agent: `Apache-HttpClient/5.3.1 (Java/17.0.19)` and `python-requests/2.32.3`
+  - Level: **100% `warn`**; explicit `level == "error"` Logs Insights query returned **0** matches
+  - `projectId`: **explicitly `"unknown"`** on all `/authenticate` lines
+- Secondary signatures (sparse, all `warn`):
+  - `DELETE /projects/80fd28969702573797f4d7f77063e47b/messages/text-message/blockservice/recipients/removes` 400: **15**
+  - `POST /track-event` 401: **12**
+  - `POST /projects/0c61d690f3425c13875c2c4902616b40/campaigns/CJDzWt/send` 400: **3** (`sconn`)
+  - `GET /user-state` 405: **2**
+- 30d/7d/1d/10m OK→ALARM counts (from `HistoryData`): **54 / 11 / 2 / 2**
+- Alarm state: currently **OK** at investigation time; last ALARM→OK at 17:17 UTC (fully recovered)
+
+Result: identical to the known daily ~02:11 KST `/authenticate` authentication rejection burst. All signals are handled `warn` validation rejections; no customer impact. The 30-day OK→ALARM count of 54 is slightly higher than prior periods but consistent with the ~1.6–1.8 transitions/day baseline.
 
 ## Logs Insights daily trend query (full UTC day)
 

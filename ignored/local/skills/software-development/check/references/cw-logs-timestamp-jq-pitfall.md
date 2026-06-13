@@ -62,3 +62,54 @@ aws logs start-query --region ap-northeast-2 \
 | sort bin(1d) desc
 | limit 10
 ```
+
+## `filter-log-events` `filterPattern` special-character rejection
+
+`aws logs filter-log-events` rejects patterns containing `:` or `,` with `InvalidParameterException: Invalid character(s) in term ':'` or `InvalidParameterException: Invalid character(s) in term ','`.
+
+**Failing examples**:
+```bash
+# Colon inside a term
+aws logs filter-log-events ... --filter-pattern '?Status: timeout'
+
+# Comma inside a JSON-like brace pattern
+aws logs filter-log-events ... --filter-pattern '{ $.message = "error-response", $.path = "/authenticate" }'
+```
+
+**Safe alternatives**:
+1. Use simple space-separated quoted literal terms for phrase matching:
+   ```bash
+   aws logs filter-log-events ... --filter-pattern '"error-response" "/authenticate"'
+   ```
+   This matches log lines containing both substrings without structural syntax.
+
+2. Use `aws logs start-query` with Logs Insights `filter` syntax, which does not have the same character restrictions:
+   ```bash
+   aws logs start-query ... --query-string 'fields @message
+| filter message = "error-response" and path = "/authenticate"'
+   ```
+
+3. Read the full stream with `get-log-events` and filter client-side when the exact phrase filter is not required.
+
+## Logs Insights `stats` field ordering
+
+`get-query-results` returns `stats ... by ...` result fields in an order that does **not** match the query declaration. Do not rely on array index position (`results[0]` = first declared field) when parsing with `jq`.
+
+**Query**:
+```
+stats count() as cnt by status, path, method, level, projectId
+```
+
+**Result field order in API response** (example):
+`status` (0), `path` (1), `method` (2), `level` (3), `projectId` (4), `cnt` (5)
+
+**Safe parsing** — use the `field` name from the nested objects:
+```bash
+aws logs get-query-results --region ap-northeast-2 --query-id <id> --output json \
+  | jq '.results[] | {cnt: (.[] | select(.field=="cnt").value), status: (.[] | select(.field=="status").value)}'
+```
+
+**Fast inspection** — read one raw result row to reveal field order before writing the full parser:
+```bash
+aws logs get-query-results ... | jq '.results[0][] | {field, value}'
+```

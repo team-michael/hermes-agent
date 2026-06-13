@@ -221,7 +221,24 @@ If the same request later returns `200`, treat this as **transient readiness del
 
 For the Notifly `web-console` container, startup is not instantaneous because `entrypoint.sh` first launches multiple `cloudflared access tcp` processes, waits briefly, and only then starts `node server.js`.
 
-## 9. Chained Notifly Cloudflare previews
+## 9. Notifly web-console Cloudflare domain derivation
+
+When answering “after web-console build + cloudflare-deploy, which CF domain is deployed?”, derive it from workflow code before guessing from environment names.
+
+In `team-michael/notifly-event`:
+- `.github/workflows/ecs_build.yml` sets `branch_name` from `github.head_ref || github.ref_name`, sanitized with `sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]'`.
+- `cloudflare-deploy` then calls `.github/workflows/cf_deploy.yml` with that `branch_name` and `revision: github.sha`.
+- `cf_deploy.yml` sets:
+  - deployment URL: `https://<sanitized-branch>-console.notifly.tech/auth/login`
+  - health URL: `https://<sanitized-branch>-console.notifly.tech/health`
+  - worker name: `notifly-web-console-<sanitized-branch>`
+  - route/custom domain: `<sanitized-branch>-console.notifly.tech`
+
+Important pitfall: for this workflow, `environment` (`stage`/`prod`) affects build/runtime env and image tag prefix, but **does not appear in the Cloudflare custom domain**. For example, branch `feat/ai-agent-ui-migration` deploys to `https://feat-ai-agent-ui-migration-console.notifly.tech/auth/login`; branch `main` deploys to `https://main-console.notifly.tech/auth/login`.
+
+If the user asks about a currently running deployment, optionally query the GitHub run/job to confirm the actual `head_branch` and whether the `cloudflare-deploy` job has started; but the domain formula is still branch-derived.
+
+## 10. Chained Notifly Cloudflare previews
 
 Some Notifly previews deploy multiple services that must point at each other, not just one Worker/Container. For these, validate the chain explicitly:
 

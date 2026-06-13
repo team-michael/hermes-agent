@@ -106,3 +106,21 @@ This gives:
 - **Long-running ECS services with multiple concurrent streams:** Services such as `web-console` run a constant desired count (e.g., 3 Fargate tasks), each emitting to its own log stream. When `filter-log-events` returns zero for a recent alarm, the ERROR may simply be in a sibling stream rather than the one with the latest `lastEventTimestamp`. Always scan at least the 5–7 most recent streams with `get_log_events` bounded to the exact alarm-minute window before concluding the trigger is absent. For these services the stream ranking is not about metadata staleness; it is about multiple active writers.
 - **`filter-log-events` term case-sensitivity mismatch with metric filter patterns:**
   A metric filter may use case-insensitive syntax such as `%[Ee][Rr][Rr][Oo][Rr]|Exception%`, but `filter-log-events --filterPattern='ERROR'` performs a case-sensitive term match. If the actual log line contains `Exception` (e.g., `[FailedToUploadImageException(...)]`) without an uppercase `ERROR` substring, `filterPattern='ERROR'` returns **zero** matches while `filterPattern='Exception'` returns the trigger. Always try the alternate terms (`Exception`, `error`, `Error`) when the first `filter-log-events` query is empty, or run a brief `filterPattern`-less raw tail to confirm what is actually in the stream.
+- **Structured `$.message` filter syntax does not match plain-text ERROR logs, and `=` is exact not substring:**
+  CloudWatch Logs `filter-log-events` has two distinct syntax families:
+  1. **Structured JSON field syntax**: `{ ($.message = "literal") || ($.provider = "other") }` — this requires the log event to be a valid JSON object with a top-level field named `message`. The `=` operator does **exact** string matching; it does **not** support `*` globs or `%` wildcards.
+  2. **Bare text syntax**: `"literal" "literal2"` — matches substrings anywhere in the raw log line, regardless of format.
+
+  ECS services that emit ERROR lines via Node.js `console.error` (e.g., `web-console` LiquidJS aborts, Kakao validation rejections) write **plain text strings**, not JSON objects with a `message` field. A query such as:
+  ```bash
+  aws logs filter-log-events --filter-pattern '{ ($.message = "*abort*") || ($.message = "*RenderError*") }'
+  ```
+  will return **zero** results even when the triggering lines exist, because:
+  - The log lines are not JSON, so the `$.message` field extractor finds nothing.
+  - Even if they were JSON, `=` performs exact match; `*abort*` would be treated as a literal string containing asterisks, not a wildcard.
+
+  **Correct patterns**:
+  - Use bare substring syntax: `--filter-pattern 'abort'` or `--filter-pattern 'RenderError'` (single terms).
+  - Or skip `filterPattern` entirely and use `get-log-events` on the known stream, selecting lines client-side.
+  - For Logs Insights, use `| filter @message like /abort/` which works on any text format.
+  - For regex multi-term matching in `filter-log-events`, use the `like /pattern/` operator inside the structured block, but only when you know the log format is JSON.

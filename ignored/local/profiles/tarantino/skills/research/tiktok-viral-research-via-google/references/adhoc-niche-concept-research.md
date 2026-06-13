@@ -3,7 +3,15 @@
 When the user asks "what concepts go viral / are trending in the <X> niche on TikTok"
 as a one-off (NOT the NA-college daily cron), use this leaner playbook. Verified
 2026-06-09 on the **bestie / best-friend** niche: 16/16 queries clean, 202 unique
-videos, 111 with hard view counts, zero `/sorry/`. Re-verified 2026-06-11 on the
+videos, 111 with hard view counts, zero `/sorry/`. Also verified 2026-06-11 on the
+**date** niche: blocked at Q13/18 mid-run, but the 12 collected queries (157 unique,
+96 with views) were enough to ship the full concept-cluster report — a mid-run block
+is a partial-ship situation, not a failure. Kill the parked driver, parse what you
+have, and report which clusters are under-sampled by the dropped queries. Re-verified 2026-06-11 on the
+**date** niche: blocked at Q13/18, but 12 queries had already yielded 157 unique /
+96 with views — comfortably enough to ship the concept report. Order queries
+priority-first so a mid-run block only costs the tail, and treat ~12 clean queries
+as a normal good outcome, not a failure. Re-verified 2026-06-11 on the
 **date** niche: blocked at Q13/18, but 12 queries → 157 unique videos / 96 with views
 was MORE than enough to ship the report.
 
@@ -41,6 +49,12 @@ ps -eo pid,args | grep -E 'chrome|chromedriver' | grep -v grep | wc -l
 ```
 
 ## 2. all-time (no `qdr`) vs `qdr:w` — pick by question shape
+
+Query-budget calibration (2026-06-11, date niche, all-time `hl=ko`): blocked at Q13 of 18
+after 12 clean queries — order queries highest-value-first and treat ~12 as the realistic
+ceiling per run. A partial harvest of 150+ unique videos with ~60% view coverage is fully
+shippable; report which clusters went un-scraped instead of retrying into the block.
+
 
 This is the key query-design fork the cron path obscures (cron always uses `qdr:w`):
 

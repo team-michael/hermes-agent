@@ -1,8 +1,8 @@
-Notifly GitHub: pre-PR findings; Conventional Commits; assign `clix-so-bot`; reviewer Gunwoo=`gunoooo`; verify checks/reviews; deploy proof. Clix AWS read-only.
+Notifly GitHub: ConvCommits; assign clix-so-bot; reviewer gunoooo; verify checks/deploy. Tiny web PRs: minimal diff, skip weak tests; upload errors: HTTP status, no status branching.
 §
 Remote/container tasks: never assume local Hermes is target; verify intended system first, and never destructively mutate home dirs like /ubuntu/home, /home/ubuntu, or $HOME.
 §
-Notifly debug/RCA: concise KR, evidence-first, core yes/no, denominator/scope; verify user/env IDs; token timelines include app/RN SDK; observed-vs-inferred; code/DB/log grounding; if raw sensitive values can’t be pasted, give self-serve query path.
+Notifly RCA: concise KR; cause first; yes/no+scope; verify IDs; token timelines include app/RN SDK/version/latest repro; separate observed/inferred and FCM404 lifecycle vs 401 auth; code/DB/log grounded; sensitive raw→self-serve query.
 §
 In DMs, user wants infra explanations tailored to Mobile/iOS+SDK Eng background: use analogies only when mechanisms match; flag SDK implications for contracts/retries/offline/telemetry/DX.
 §

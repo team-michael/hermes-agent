@@ -2,7 +2,7 @@ Andrej env: terminal HOME can be profile home; set `HOME=/home/ubuntu` for gh/GW
 §
 Notifly project: project_id→DDB `project` product_id/name; product created_at lives in DDB `products` keyed by product_id; per-project PG `table_${project_id}`; AI admin fallback after lookup.
 §
-Notifly facts: PG/read-model first; Athena raw only explicit audit/debug. Campaign-user `/eligibility`+`/deliveries`. Cosmo FCM404 repeated stale-token uploads imply getToken/cache/race/server invalidation.
+Notifly facts: PG/read-model first; Athena raw only explicit audit/debug. Campaign-user `/eligibility`+`/deliveries`. Cosmo FCM404: APNs/FCM hashes don’t reveal `aps-environment`; distinguish 401 APNs auth/config from 404 UNREGISTERED token lifecycle/project mismatch.
 §
 Notifly docs/web: `docs.notifly.tech` source `team-michael/notifly-event/docs` (Mintlify; old docs repos legacy); `notifly.tech` source `team-michael/notifly-web`; Product KB `team-michael/notifly-product-knowledge`.
 §
