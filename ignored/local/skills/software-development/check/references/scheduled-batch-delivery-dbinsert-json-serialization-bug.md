@@ -133,6 +133,33 @@ When triaging, do not stop at "invalid input syntax for type json." Inspect the 
 
 For (2), the fix may need to be upstream in message personalization or payload sanitization, not only in the DB insert layer.
 
+### Campaign-level recurrence pattern
+
+When `ScheduledBatchDelivery-P2-DbError` fires and the 30-day alarm history shows a prior occurrence, cross-check whether the `campaign_id` is identical.
+
+Bounded command to extract the campaign ID from a prior alarm window:
+```bash
+aws logs filter-log-events \
+  --region ap-northeast-2 \
+  --log-group-name /aws/lambda/scheduled-batch-delivery \
+  --start-time <prior_epoch_ms> --end-time <prior_epoch_ms + 3600000> \
+  --filter-pattern 'invalid input syntax for type json' \
+  --limit 1 --output text --query 'events[0].message' \
+  | grep -oP '"campaign_id":\s*"\K[^"]+' | head -1
+```
+
+If the same `campaign_id` appears in both the current and prior alarm, the failure is likely a **persistently broken message template** for that campaign (e.g., a LiquidJS personalization expression that truncates a multi-byte emoji, producing a lone UTF-16 surrogate). In this case the fix should include inspecting the campaign message template in the Notifly console, not only the Lambda JSON-stringify layer.
+
+Concrete example (2026-06-13, cosmo/58YS4P):
+```
+notification.body: "나는 간다아ㅏ 오늘도 수고했구 요즘에 조금 바빴어서ㅓ 연락을 많이 못했는데~ 또 올게ㅔ!!!! 사랑해 잘자\ud83e..."
+```
+The `\ud83e` is a lone high surrogate (the first half of a surrogate pair for an emoji such as 🫶 or 🫠). PostgreSQL rejects the JSON because the string is not valid UTF-8.
+
+> **Pitfall — enormous `filter-log-events` output**: The Lambda ERROR log line for this alarm includes the full multi-row `VALUES` list for the parameterized INSERT query. A single event can be 100+ KB. Use `--limit 1` and pipe through `head`/`grep` to avoid flooding the terminal.
+
+When this pattern is observed, also check `AWS/Lambda Errors == 0` to confirm the Lambda invocation itself is healthy and the failure is purely a DB serialization issue.
+
 The Lambda log EMF metrics include `project_id` and `campaign_id` fields in the same log line as the ERROR, e.g.:
 ```json
 {"project_id":"02a3660e1b675689a0757409e5c1efaa","campaign_id":"58YS4P", ...}

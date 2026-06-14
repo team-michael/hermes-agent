@@ -156,7 +156,11 @@ If logs show:
 Then root cause is **not missing Cloudflare credentials**. It's a **post-deploy readiness/health-check failure** (route propagation, app not ready, endpoint not responding, or poor observability in the curl command).
 
 ## PR closeout after long-running checks
-When a background `gh pr checks --watch` or polling process completes, do not rely only on its final notification text. It may be truncated or contain partial/malformed output. Re-query live GitHub state before reporting completion:
+When a background `gh pr checks --watch` or polling process completes, do not rely only on its final notification text. It may be truncated or contain partial/malformed output. Re-query live GitHub state before reporting completion.
+
+For the full repair loop after a PR check fails, see `references/pr-check-repair-loop.md`. Key pitfall: `gh pr checks` exits non-zero while checks are pending/failing, so polling scripts must capture output with `|| true` and inspect states explicitly; otherwise the script exits before it can observe the next check transition.
+
+Re-query live GitHub state before reporting completion:
 
 ```bash
 gh pr checks "$PR" --repo "$OWNER/$REPO" \

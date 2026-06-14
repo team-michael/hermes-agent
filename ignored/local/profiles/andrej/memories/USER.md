@@ -6,7 +6,7 @@ Notifly RCA: concise KR; cause first; yes/no+scope; verify IDs; token timelines 
 §
 In DMs, user wants infra explanations tailored to Mobile/iOS+SDK Eng background: use analogies only when mechanisms match; flag SDK implications for contracts/retries/offline/telemetry/DX.
 §
-Slack/Notifly debug: very concise KR; core first; evidence/problem only; stay narrowed; live incidents core-only unless asked.
+Slack/Notifly: concise KR; implement silently to PR, resume after limits unless blocked; incidents core-only.
 §
 MSP/SmileShark: draft; no internal Slack refs.
 §
