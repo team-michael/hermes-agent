@@ -26,6 +26,10 @@ aws logs describe-metric-filters --region ap-northeast-2 \
 
 Note: the AWS CLI nests `metricName` and `metricNamespace` under `.metricTransformations[0]`, not at the top level. Querying `.metricName` directly returns `null` even when the filter exists.
 
+**Pitfall — `describe-metric-filters` rejects combined parameters**: passing both `--log-group-name` and `--metric-name`/`--metric-namespace` to `aws logs describe-metric-filters` (or both kwargs to boto3) raises `InvalidParameterException: Describe Metric Filters request must contain either logGroupName or metricName and metricNamespace`. Use exactly one of:
+- `--log-group-name <name>` (then filter client-side), or
+- `--metric-name <name> --metric-namespace <namespace>` (then filter by log group client-side).
+
 ## Metric filter
 
 ```json
@@ -563,6 +567,25 @@ Result: identical to the known daily ~02:11 KST `/authenticate` authentication r
 
 Result: identical to the known daily ~02:11 KST `/authenticate` authentication rejection burst. All signals are handled `warn` validation rejections; no customer impact. The 30-day OK→ALARM count of 54 is slightly higher than prior periods but consistent with the ~1.6–1.8 transitions/day baseline.
 
+2026-06-14 alarm window (16:56–17:06 UTC / 2026-06-15 01:56–02:06 KST):
+- **Alarm transitions**: OK→ALARM at 17:11 UTC, ALARM→OK at 17:14 UTC; OK→ALARM at 17:16 UTC, ALARM→OK at 17:19 UTC (2 back-to-back within 10 minutes, sliding-window artifact from the 17:01 bucket still contributing)
+- Metric datapoints confirming breach: 174.0 (16:56), 893.0 (17:01), 539.0 (17:06); threshold 100.0 with 3 of 4 datapoints required
+- Total `error-response` with status ≥ 400 (16:50–17:10 UTC): **~1,614**
+- `/authenticate` 400: **1,593** (98.7%)
+  - User-Agent: exclusively `Apache-HttpClient/5.3.1 (Java/17.0.19)` via Cloudflare IPs
+  - Level: **100% `warn`**; explicit `level == "error"` Logs Insights query returned **0** matches
+  - `projectId`: **explicitly `"unknown"`** on all `/authenticate` lines
+  - `error.message`: **null** on sampled `/authenticate` lines (validation rejects before message population)
+  - `userAgent`: **null** on sampled `/authenticate` lines (client omits header)
+- Secondary signatures (sparse, all `warn`):
+  - `DELETE /projects/80fd28969702573797f4d7f77063e47b/messages/text-message/blockservice/recipients/removes` 400: **12**
+  - `POST /track-event` 401: **6**
+  - `GET /user-state/2b9f5a6685ba5b839803f1338a539724/...` 400: **1**
+  - `POST /messages/kakao-alimtalk` 401: **1**
+- 30d/7d/1d/10m OK→ALARM counts (from `HistoryData`): **56 / 12 / 2 / 2**
+
+Result: identical to the known daily ~02:11 KST `/authenticate` authentication rejection burst. All signals are handled `warn` validation rejections; no customer impact.
+
 ## Logs Insights daily trend query (full UTC day)
 
 When the narrow 16:50–17:10 UTC window is already well understood, use this query to verify whether overall `/authenticate` 400 volume is drifting outside the 1,800–4,500/day baseline band. The query aggregates by UTC calendar day (`datefloor`). This is useful for detecting a macro trend shift (e.g. sudden doubling across consecutive days) even when individual alarm windows look normal.
@@ -600,6 +623,38 @@ new = data.get('newState', {}).get('stateValue')
 if old in ('OK', 'INSUFFICIENT_DATA') and new == 'ALARM':
     count += 1
 ```
+
+## Pitfall — null `error.message` and `userAgent` on `/authenticate` 400 samples
+
+When sampling individual `/authenticate` 400 log lines with `limit N` in Logs Insights, both `error.message` and `userAgent` may be `null`:
+
+```json
+{"timestamp":"2026-06-14T17:04:59.233Z","method":"POST","path":"/authenticate","status":400,"level":"warn","userAgent":null,"message":null}
+```
+
+This occurs because:
+- The validation middleware rejects the request before `error.message` is populated.
+- The client does not send a `User-Agent` header.
+
+**Implication**: do not rely on `error.message` content or `userAgent` presence to classify the rejection reason for `/authenticate` 400s. The classification should be based on the aggregate pattern (`POST /authenticate`, `400`, `level: warn`, `projectId: "unknown"`) and daily recurrence, not on per-sample message text.
+
+## Pitfall — Logs Insights `stats by` with hyphenated nested JSON field names
+
+When writing Logs Insights aggregate queries for `api-service` structured logs, nested JSON keys containing hyphens (e.g., `request.headers["user-agent"]`) cause `MalformedQueryException` when used in a `stats by` clause with quoted field access:
+
+```
+| stats count() as cnt by request.headers."user-agent"
+# MalformedQueryException: unexpected symbol found "user-agent"
+```
+
+**Root cause**: Logs Insights parses the hyphen inside quotes as a subtraction operator in the `stats` aggregation context.
+
+**Workarounds**:
+1. Use the auto-extracted flattened field name (hyphen stripped): `request.headers.useragent`
+2. Use `fields` + `as` to rename first, then aggregate: `fields request.headers."user-agent" as ua | stats count() by ua`
+3. For `filter` and `fields` clauses, the quoted syntax `request.headers."user-agent"` works fine; the restriction applies only to `stats by`.
+
+Also note that `/authenticate` 400 responses may genuinely lack a `user-agent` header. When querying with `ispresent(request.headers."user-agent")`, an empty result set does not prove the field access is wrong; it may mean the client omitted the header.
 
 ## Long-term remediation options
 
