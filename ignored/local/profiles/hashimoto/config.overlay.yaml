@@ -1,7 +1,8 @@
 model:
-  default: '@cf/moonshotai/kimi-k2.6'
-  context_length: 262144
-  provider: workers-ai
+  default: us.anthropic.claude-haiku-4-5-20251001-v1:0
+  provider: bedrock
+  base_url: https://bedrock-runtime.us-east-1.amazonaws.com
+  context_length: 200000
 providers:
   workers-ai:
     name: Cloudflare Workers AI
@@ -12,6 +13,8 @@ providers:
       '@cf/google/gemma-4-26b-a4b-it':
         context_length: 256000
       '@cf/moonshotai/kimi-k2.6':
+        context_length: 262144
+      '@cf/moonshotai/kimi-k2.7-code':
         context_length: 262144
 agent:
   gateway_notify_interval: 0
@@ -101,3 +104,5 @@ slack:
   - id: C07LCLRS79T
     skills:
     - check
+bedrock:
+  region: us-east-1

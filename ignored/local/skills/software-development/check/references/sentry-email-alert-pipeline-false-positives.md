@@ -164,6 +164,7 @@ Note: `parse` is redundant for top-level JSON keys that Logs Insights auto-extra
 ## Scoping technique
 
 - Extract `productId` from `request.url` or `tags.url`.
+- **API-endpoint shortcut**: For `POST /api/projects/{projectId}/...` or similar API route URLs in `request.url`, the path segment is the literal Notifly `project_id` (e.g., `api/projects/b2b4a8f879a75673b755bff42fc1deb6/test_send/kakao_brand_message`). Query DynamoDB `project` table directly by `id` when this pattern is detected, instead of searching for a `productId` slug. Mapping via `id` is more reliable and avoids GSI query misses when the URL does not contain a product slug.
 - **Critical pitfall**: `sentryAlert.project.id` (e.g., `4506086856196096`) is the **Sentry** project ID, not the Notifly project ID. Do not map it via DynamoDB.
 - Map via DynamoDB GSI:
 

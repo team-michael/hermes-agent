@@ -2,10 +2,10 @@ CloudWatch alarm responses use `[[hermes:processing_status=no_action]]` for fals
 §
 Hashimoto Slack alert replies use a compact Korean five-field shape: 원인, 범위, 빈도, 고객 영향도, 즉시 조치 필요 여부. The final hidden directive remains `[[hermes:processing_status=...]]` for Slack reactions.
 §
-The `check` skill `SKILL.md` exceeds the 100k character limit (102,221 chars), so direct `patch`/`edit` actions on it currently fail by the tool. Add new or updated pitfall content to `references/` support files until the main SKILL.md is refactored down.
-§
 Projects with names starting with `notifly-` (e.g., notifly-gamelog, notifly-test, notifly-internal, etc.) and project slug `michael` or URLs under `console-stage.notifly.tech` are Notifly internal testing/demo scopes. Alerts or errors tied to these indicate synthetic/test data or internal tooling gaps, not customer-facing production issues. When scoping alerts, explicitly flag them as internal to avoid misrepresenting customer impact.
 §
-The `web-console/sentry` alert is an intentional Sentry alert proxy pipeline, not a false positive. `ops-email-receiver` Lambda receives Sentry emails via SES and writes parsed payloads to CloudWatch at ERROR level so they are visible. The `%ERROR%` metric filter matching `"title":"Error"` or `"level":"error"` inside JSON is expected. Triage must parse the Sentry payload (title, message, transaction, request.url, tags.handled) and report the actual proxied web-console error. Project mapping extracts `productId` from `request.url` and resolves via DynamoDB `project` GSI `product_id-project_id-index` with `dev=false`. The Sentry `project.id` (e.g. 4506086856196096) is the Sentry project ID, not a Notifly project ID.
+`web-console/sentry` is an intentional Sentry proxy (`ops-email-receiver` Lambda → SES → CloudWatch ERROR logs). Triage the actual Sentry payload (title, message, transaction, request.url). Map `productId` via DynamoDB `project` GSI. The Sentry `project.id` is not a Notifly project_id.
 §
-web-console `08P01` audit-log batch: `@AuditLog` decorator single knex `.insert()` loses audit logs on ~985+ rows due to `pg-protocol` bind formatting bug. Classify `needs_fix`. Fix details in `check/references/web-console-08p01-audit-log-batch-error.md`.
+Cloudflare Workers AI: `@cf/moonshotai/kimi-k2.7-code` ignores `reasoning_effort` except `"none"`. Hermes `_is_kimi` checks `moonshot.ai` / `api.kimi.com` hostnames only.
+§
+CloudWatch false positives: `[api-service] 4xx error response` → daily KST 02:10 burst, handled validation, always `no_action`. Lambda ConsoleErrors `%ERROR|Status: timeout%` → metric increments without ERROR logs due to log-indexing lag; triage with AWS/Lambda Errors=0, Duration<Timeout, actual logs INFO-only, 7d sparse. See: `notifly-api-service-alert-noise`, `check/lambda-consoleerrors-metric-filter-false-positive.md`.

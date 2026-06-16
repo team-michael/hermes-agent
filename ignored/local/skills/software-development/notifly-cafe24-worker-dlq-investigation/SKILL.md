@@ -58,11 +58,17 @@ ERROR  Failed to delete <mallId> from notifly, error: error: relation "user_<pro
 - The error is caught in `lib/jobs/delete.js` `deleteMall()` inside a `try...catch` and logged with `console.error`.
 - The metric filter catches the literal string `ERROR`, not a runtime failure.
 
+Another known false-positive class is raw provider payload logged before processing. See `references/cafe24-worker-consoleerrors-raw-payload-false-positive.md`.
+
+Example: Cafe24 `shippingstatuschanged` payloads can contain `trackingno: "ERROR:N/A"`. `cafe24-worker/index.js` logs the whole SQS record at INFO before parsing/processing, so `%ERROR|Status: timeout%` can match the provider payload string even when there is no real `console.error`, no Lambda runtime error, no retry, and the job later skips normally because `member_id` is empty for a guest/phone order.
+
 ### Root cause
 `lib/db.js` `deleteCafe24Users` sends two DELETE queries. The first uses `@notifly/userdb` `executeWriteQueryToUserTable`, which rewrites the legacy `user_${projectId}` table name to `users_${projectId}`. The second query (device deletion with a subquery) calls `db.executeQuery` directly, bypassing the dual-write layer and sending the raw `user_${projectId}` name to Postgres. Projects created after the encryption migration only have `users_${projectId}`, so the subquery fails with `relation does not exist`.
 
 ### Scope extraction
 Same as DLQ: extract `project_id` from the table suffix in the log line, map via DynamoDB `project`.
+
+For raw SQS payload false positives, map `mall_id` through DynamoDB `cafe24_integration` → `project`/`products`, but do **not** equate "business-active product" with "webhook-active integration". Cafe24 can keep sending webhooks while the app/webhook remains installed, and worker processing is gated by `cafe24_integration.status`, especially `completed`.
 
 ### Classification
 - `no_action` when sporadic (handled rejection, Errors=0).

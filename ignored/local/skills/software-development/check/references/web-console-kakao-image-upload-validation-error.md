@@ -10,6 +10,7 @@ Five Kakao BizMessage validation patterns currently trigger this alarm:
 3. **`Error: Failed to create Kakao BizMessage template: 변수명 형식이 올바르지 않습니다. 변수명은 최대 20자 이내 한/영/숫자/'-','_'로 작성 가능합니다.`** — template variable name violates Kakao naming rules
 4. **`Error: 템플릿 링크 검증 실패:`** — mobile/PC web link validation failure before Kakao API call
 5. **`Error: Unacceptable characters in title and body.`** — Kakao BizMessage template title or body contains characters the provider rejects (e.g., certain symbols, unescaped markup, or unsupported Unicode blocks)
+6. **`Failed to create Kakao BizMessage template: 파라미터 <name>은(는) NBSP(U+00A0) 문자가 포함되었습니다. 해당 문자는 허용되지 않습니다.`** — the `content` parameter of a Kakao BizMessage template contains a non-breaking space (U+00A0). This occurs on `POST /api/projects/{projectId}/test_send/kakao_brand_message`; the Kakao API rejects the request because NBSP is not in the allowed character set for template body content. Sentry payloads for this pattern include `tags.handled: "yes"`, confirming the error is caught and handled.
 
 ## What it is
 
@@ -37,7 +38,7 @@ The `Promise.all (index N)` frame indicates a bulk save of multiple user-journey
 
 ## Scope
 
-Bare exception/error log lines do not contain structured `project_id` or `campaign_id`. For the template-variable, link-validation, and "unacceptable characters" patterns, the stack frame shows `/api/projects/[projectId]/test_send/kakao_brand_message.js` but the actual value is only in the access log, not the error log. Inspect access logs in the same time range for `POST /api/projects/<project_id>/test_send/kakao_brand_message` or other project-scoped paths. Extract the `project_id` and map via DynamoDB `project`. Because the web-console runs multiple Fargate tasks, the access log and error log for the same request may end up on different log streams — search across all active streams in the alarm window when the first stream yields no access match.
+Bare exception/error log lines do not contain structured `project_id` or `campaign_id`. For the template-variable, link-validation, NBSP-content, and "unacceptable characters" patterns, the stack frame shows `/api/projects/[projectId]/test_send/kakao_brand_message.js` but the actual value is only in the access log or Sentry payload `request.url`, not the error log. In Sentry pipeline logs, `request.url` often contains the literal project ID directly in the path (e.g., `https://console.notifly.tech/api/projects/b2b4a8f879a75673b755bff42fc1deb6/test_send/kakao_brand_message`), so scope can be resolved by extracting that segment and mapping via DynamoDB `project.id` directly. For non-Sentry alarms, inspect access logs in the same time range for `POST /api/projects/<project_id>/test_send/kakao_brand_message` or other project-scoped paths. Because the web-console runs multiple Fargate tasks, the access log and error log for the same request may end up on different log streams — search across all active streams in the alarm window when the first stream yields no access match.
 
 ## Volume
 
