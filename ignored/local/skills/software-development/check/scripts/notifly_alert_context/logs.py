@@ -557,14 +557,11 @@ fields @timestamp, @message
                     })
             centered = centered_log_context_lines(events, trigger_ms, trigger_message)
             error_blocks = compact_error_blocks(events, trigger_ms, trigger_message)
-            raw_scope_source = '\n'.join([
-                trigger_message,
-                *[
-                    str(event.get('message') or '')
-                    for event in events
-                    if not looks_like_low_signal_log(str(event.get('message') or ''))
-                ],
-            ])
+            # SCOPE FIX: Only analyze the trigger message for project_ids, not entire log stream.
+            # Log streams mix multiple invocations; other invocations' project_ids should not
+            # be attributed to the current trigger unless they explicitly appear in the trigger
+            # line itself or in explicit project_campaign_pairs.
+            raw_scope_source = trigger_message
             contexts.append({
                 'timestamp': ts.isoformat(),
                 'log_group': group,

@@ -256,6 +256,9 @@ Some Notifly previews deploy multiple services that must point at each other, no
 See `references/notifly-chained-preview-and-mcp-smoke.md` for the compact Notifly-specific checklist, upstream Access header pitfall, and AI Agent session-creation triage pattern.
 See `references/redis-cluster-through-cloudflared.md` for the Redis Cluster + Cloudflare Access TCP tunnel failure mode and wrapper/proxy remediation pattern.
 See `references/cloudflare-container-redis-cluster-options.md` for the production-shaped options matrix: AWS-side Envoy Redis proxy, node-specific tunnels with NAT mapping, preview-only single Redis, and why Workers VPC is not a simple drop-in for Container `ioredis` Cluster mode.
+See `references/notifly-envoy-redis-proxy-stack.md` for the Notifly Terraform/PR pattern for an AWS-side Envoy Redis proxy, including stacked remote-state sequencing, Cloudflare tunnel adoption, naming constraints, and Envoy bootstrap pitfalls.
+See `references/aws-envoy-redis-proxy-cloudflare-tunnel.md` for the implementation pattern when adding an AWS-side Envoy Redis proxy in ECS/Fargate plus Cloudflare Tunnel DNS/ingress, including stacked Terraform PR sequencing and Envoy config pitfalls.
+See `references/envoy-redis-proxy-cloudflare-tunnel.md` when planning the AWS-side Envoy Redis proxy itself: internal NLB + ECS/Fargate proxy + separate Cloudflare Access hostname + no app cutover in the initial infra PR.
 
 ## 10. High-confidence diagnosis rules
 

@@ -8,4 +8,6 @@ Projects with names starting with `notifly-` (e.g., notifly-gamelog, notifly-tes
 §
 Cloudflare Workers AI: `@cf/moonshotai/kimi-k2.7-code` ignores `reasoning_effort` except `"none"`. Hermes `_is_kimi` checks `moonshot.ai` / `api.kimi.com` hostnames only.
 §
-CloudWatch false positives: `[api-service] 4xx error response` → daily KST 02:10 burst, handled validation, always `no_action`. Lambda ConsoleErrors `%ERROR|Status: timeout%` → metric increments without ERROR logs due to log-indexing lag; triage with AWS/Lambda Errors=0, Duration<Timeout, actual logs INFO-only, 7d sparse. See: `notifly-api-service-alert-noise`, `check/lambda-consoleerrors-metric-filter-false-positive.md`.
+Lambda timeouts: `user-csv-mailer` S3 multipart bottleneck (needs_fix); `api-service` 4xx KST 02:10 daily (no_action). integration-service Mixpanel "Invalid credentials" = client Authorization header mismatch with DynamoDB `cognitoApiAuth`. API auth reverse-trace workflow: /authenticate failures with unknown projectId use 4-step triage (client IP→request body char→Cognito map→project correlation). See `notifly-api-authentication-failure-triage` skill (devops) and integration-service example.
+§
+Check helper scope attribution bug (fixed 2026-06-16): `collect_surrounding_log_contexts()` was analyzing full log stream for project_ids, mixing invocations. Now triggers only — prevents cross-stream false scope. Test: kds-consumer 12 ERRORs all from storepick, helper wrongly reported moyo/regather.

@@ -2,11 +2,11 @@ Notifly GitHub: ConvCommits; assign clix-so-bot; reviewer=requester GH; ask if u
 §
 Remote/container tasks: never assume local Hermes is target; verify intended system first, and never destructively mutate home dirs like /ubuntu/home, /home/ubuntu, or $HOME.
 §
-Notifly RCA/debug: KR; state cause/mechanism first, not symptom recap; verify IDs; app/RN/latest repro token timelines; observed vs inferred; FCM404 lifecycle≠401 auth; code/DB/log grounded; raw sensitive→self-serve; failed fix→fresh hypothesis.
+Notifly RCA/debug: KR terse; conclusion+timestamp bullets; use existing logs/code first, infer before asking more debug; verify IDs/app/RN/tokens; observed vs inferred; FCM404≠401; DB/log grounded; raw sensitive→self-serve.
 §
 In DMs, user wants infra explanations tailored to Mobile/iOS+SDK Eng background: use analogies only when mechanisms match; flag SDK implications for contracts/retries/offline/telemetry/DX.
 §
-Slack/Notifly: concise KR; incidents core-only; paste-ready snippets; PR only if asked.
+Slack/Notifly: concise KR; incidents core-only; snippets=min core; PR only if asked.
 §
 MSP/SmileShark: draft; no internal Slack refs.
 §

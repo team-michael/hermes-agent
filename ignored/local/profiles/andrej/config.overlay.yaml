@@ -1,5 +1,5 @@
 model:
-  provider: openai-codex
+  provider: openai
   base_url: ''
   default: gpt-5.5
 providers:

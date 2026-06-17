@@ -4,7 +4,7 @@ For sdr Notifly Slack links, evidence-first means resolve channel/ts and call Sl
 §
 Recovered Notifly sales context for the sdr profile is stored in /home/ubuntu/.hermes/profiles/sdr/reference/recovered-slack-sales-context.md and profile skills sales/notifly-sales-enablement and sales/notifly-sdr-lead-research.
 §
-Notifly sales onboarding thread source pointers are in C06B39NC2AW/thread 1777624171.275289: sales reference Doc 1-BMHxjKYI0aNOOqF-ou3KWIAQHb8HOEiXtxgc-0eb2s, docs.notifly.tech/ko, notifly.tech/ko pricing, CRM Top5 competitor blog, prospect Sheet 1Kz6d6VdSDMrrNfeuVdqKhsx0CH19zriRkFUSUrSOpBU, Drive folder 1E0v7jZnTK-tkcqw2PexYEO1OwZtgi-b, Slack C06B39NC2AW and C06DEQQ2LGP.
+Notifly onboarding sources: C06B39NC2AW/1777624171.275289 plus sales Doc, docs/pricing/blog, prospect Sheet and Drive folder. Positioning correction: Notifly is a CRM SaaS/platform with AI agent capabilities; do not call Notifly itself an AI agent.
 §
 For the sdr profile, when accessing Google Workspace documents, load the google-workspace skill and use the gws CLI as the primary access method; first check authentication with the skill setup check and/or `gws auth status`.
 §

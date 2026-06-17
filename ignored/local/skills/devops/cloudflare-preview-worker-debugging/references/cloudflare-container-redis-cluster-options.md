@@ -38,6 +38,8 @@ Operational shape:
 - Allow Cloudflare tunnel connector/origin path -> proxy port.
 - Optionally put an internal NLB or service discovery name in front of multiple proxy tasks.
 - Cloudflare Container runs `cloudflared access tcp` to the proxy hostname, not to the ElastiCache cluster config endpoint.
+- For Notifly-style `*-internal.notifly.tech` hostnames, first inspect the existing Cloudflare Tunnel config and DNS records. Existing DNS may be Terraform-managed while Tunnel ingress is dashboard/remote-config managed. If adopting the tunnel into Terraform, preserve the full ingress list and fallback because `cloudflare_zero_trust_tunnel_cloudflared_config` manages the whole config, not a single route append.
+- Check the existing Access app wildcard before creating new policy. A hostname like `notifly-cache-prod-proxy-internal.notifly.tech` is covered if the app domain is already `*-internal.notifly.tech`.
 
 ## App/env contract
 
@@ -86,6 +88,47 @@ Cloudflare Workers VPC is a public path for Workers to reach private TCP/HTTP se
 
 So Workers VPC may be useful for HTTP/private service access or future architecture, but it is not currently a simple drop-in fix for Container + `ioredis` + Redis Cluster.
 
+## Notifly pattern: existing Cloudflare Tunnel + AWS-side Envoy proxy
+
+When adding an AWS-side Redis Cluster proxy for Notifly Cloudflare Containers, first inspect the existing Cloudflare Tunnel state before deciding that Dashboard/manual setup is required.
+
+Durable current shape observed for Notifly:
+
+- Existing tunnel: `notifly-vpn`, remotely configured (`remote_config=true`).
+- Existing internal TCP hostnames are proxied CNAMEs to `<tunnel-id>.cfargotunnel.com`.
+- The Access app `Notifly Internal` covers `*-internal.notifly.tech`, so a new hostname that preserves this suffix pattern does not require a new Access application/policy.
+- Existing direct Redis hostname `notifly-cache-prod-internal.notifly.tech` targets the ElastiCache cluster config endpoint directly; this is useful for backward compatibility but is not a proxy validation path.
+
+Recommended proxy hostname pattern:
+
+```text
+notifly-cache-prod-proxy-internal.notifly.tech
+```
+
+Target shape:
+
+```text
+Cloudflare Container
+  -> 127.0.0.1:6379
+  -> cloudflared access tcp
+  -> notifly-cache-prod-proxy-internal.notifly.tech
+  -> existing Cloudflare Tunnel / Access
+  -> AWS internal NLB :6379
+  -> ECS Fargate Envoy Redis proxy
+  -> notifly-cache-prod Redis/Valkey Cluster
+```
+
+Terraform can manage this if the existing tunnel config is adopted, not merely by adding a DNS record:
+
+1. In the Cloudflare Terraform root, add a proxied CNAME for the new hostname to the existing tunnel target.
+2. Manage `cloudflare_zero_trust_tunnel_cloudflared_config` for the existing tunnel and include the **entire** ingress list: all existing RDS/Redis routes, the new proxy route, and the fallback `http_status:404`.
+3. Import/adopt the existing tunnel config into Terraform state first. For provider v5.x the import shape is `<account_id>/<tunnel_id>`.
+4. Point the new tunnel ingress service at the internal NLB DNS, e.g. `tcp://<envoy-redis-proxy-internal-nlb-dns>:6379`.
+
+Pitfall: `cloudflare_zero_trust_tunnel_cloudflared_config` is whole-config ownership. Do not create a partial resource containing only the new hostname; that can overwrite/drop existing ingress rules. If the NLB DNS is produced by a separate Terraform root, split PRs so the network root applies first, then have the Cloudflare/ECS root consume the output.
+
+Manual Dashboard setup is only the fallback when the team intentionally does not want to adopt the tunnel config into Terraform.
+
 ## Verification checklist
 
 Before calling the fix done:
@@ -94,7 +137,8 @@ Before calling the fix done:
 2. Confirm no `MOVED`/`ASK` reaches the app for keys whose slots belong to other shards.
 3. Run the actual failing repository/service method in production-mode error handling.
 4. Smoke the direct internal API POST before the web-console proxy/UI.
-5. Only sign off UI AI assistant after create-session and one small chat message both succeed.
+5. Validate the Cloudflare path through the **proxy hostname**, not the legacy direct cluster hostname.
+6. Only sign off UI AI assistant after create-session and one small chat message both succeed.
 
 ## References
 

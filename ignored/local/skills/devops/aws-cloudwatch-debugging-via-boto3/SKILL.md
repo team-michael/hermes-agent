@@ -385,6 +385,20 @@ Practical example pattern observed in Notifly `cafe24-worker`:
 - sampled DLQ messages had `ApproximateReceiveCount = 7` while queue `maxReceiveCount = 6`
 - conclusion: retry path was active, but some rate-limited messages exhausted retry budget and landed in DLQ; the DLQ was not necessarily increasing at that moment
 
+## Step Functions + Glue ETL triage pattern
+
+Use this when a user asks whether an AWS ETL/workflow failure caused missing statistics or stale derived data.
+
+1. Check Step Functions executions for the scheduled and selected/backfill state machines over the incident window; summarize status counts, not just the latest run.
+2. Check Glue job runs for the exact job and filter by `Arguments['--PROJECT_ID']` or equivalent tenant/job arguments; capture `JobRunState`, `--START`, `--END`, `--SCHEDULES_S3_PATH`, and `ErrorMessage`.
+3. If SFn and Glue all succeeded, inspect the scheduler payload/S3 schedule file before concluding success. A common failure mode is **selection omission**: the ETL succeeded for the scheduled entities, but the target entity was absent from the schedule payload.
+4. Interpret distinctly:
+   - SFn/Glue failed -> true ETL failure.
+   - SFn/Glue succeeded but target project has no job run -> scheduler did not select project/window.
+   - target project has job run but target entity absent from schedule JSON -> scheduler candidate-resolution gap.
+   - target entity present and Glue succeeded but output absent -> transform/load/output-store issue.
+5. In the final answer, lead with the mechanism: “ETL 자체 실패” vs “성공했지만 스케줄 대상에서 빠짐” are different operational causes and require different remediations.
+
 ## Interpretation pattern
 
 A strong alarm investigation answer should include:

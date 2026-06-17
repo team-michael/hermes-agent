@@ -10,6 +10,7 @@ Typical symptoms:
 - Auth/routing works for read-only endpoints.
 - A write path that starts with Redis rate-limit/session accounting returns `500`.
 - A UI may show quota exhausted, e.g. `dailySessionsRemaining = 0`, while the expected Redis key is absent when inspected directly.
+- A Notifly web-console realtime monitor that is Redis-backed may render a graceful fallback such as `일시 조회 불가` / `status: unavailable`, while the slower DB/stat fallback still renders ordinary counts.
 - Direct service POST and web-console proxy POST both fail, while GET succeeds. That usually moves the suspicion from web-console proxy/auth to service runtime dependencies.
 
 ## Mechanism
@@ -29,19 +30,26 @@ This can manifest as unstable Redis reads/writes even though the tunnel itself i
 1. Split UI/proxy from service runtime:
    - compare web-console proxy POST with direct internal-api POST.
    - if both fail, stop debugging React/UI and inspect service write-path dependencies.
-2. Confirm the relevant Redis key directly without printing secrets:
-   - check `GET` and `TTL` for the exact rate-limit/session key.
-   - if app says quota is exhausted but key is absent, suspect Redis client/tunnel behavior before assuming user limit state.
-3. Reproduce locally at the same abstraction level as the failing code, not just with raw Redis probes:
+2. For Notifly web-console preview endpoints behind Cloudflare Access, first prove the deployed Worker/container SHA and auth boundary:
+   - `curl /health` with `CF-Access-Client-Id` / `CF-Access-Client-Secret` and check `.sha`.
+   - Remember preview health may report a GitHub PR merge ref SHA (`refs/pull/<n>/merge`) whose parents include `origin/main` + the PR head, not the raw PR head SHA.
+   - For API smoke without browser cookies, the legacy internal bypass can be used only as a diagnostic: send the CF Access service-token headers plus `Authorization: Basic notifly-internal-request` and `X-Forwarded-For: 127.0.0.1`. Do not use this as a customer-path/auth signoff.
+3. Confirm the relevant Redis key directly without printing secrets:
+   - check `GET`/`HGETALL` and `TTL` for the exact rate-limit/session/monitor key.
+   - if app says quota is exhausted or realtime monitor is unavailable but the key exists and has sane fields, suspect preview runtime Redis connectivity before assuming application data state.
+4. Inspect the Worker bindings and container wrapper, not only app code:
+   - Cloudflare Worker `vars` can contain `REDIS_HOST=127.0.0.1` while the container only reaches Redis if `entrypoint.sh` actually starts `cloudflared access tcp`.
+   - If the wrapper gates tunnel startup on an env var such as `CLOUDFLARE_APPLICATION_ID`, verify that variable is present in Worker/container bindings or injected by the runtime before blaming Redis data.
+5. Reproduce locally at the same abstraction level as the failing code, not just with raw Redis probes:
    - start a local TCP forwarder that listens where the app expects Redis and forwards to the Redis Cluster config endpoint/tunnel.
-   - run the actual repository/service method that fails (for Notifly AI Agent this was `RateLimitRepository.getRemainingLimit()` and `incrementUsage()`), with `NODE_ENV=production` so development fallback does not mask errors.
-   - expected failure shape for this class: `getRemainingLimit()` conservatively returns `0`, while `incrementUsage()` throws a Redis `MOVED <slot> <node>` error; this maps directly to UI quota=0 plus create-session 500.
-4. Test cluster behavior against the tunnel/config endpoint:
-   - run repeated `GET`/`INCR` for multiple scratch keys, not only one key. Redis Cluster slot distribution can make one key look healthy by luck.
+   - run the actual repository/service method that fails (for Notifly AI Agent this was `RateLimitRepository.getRemainingLimit()` and `incrementUsage()`; for campaign delivery monitor this is `readCampaignDeliveryMonitor()` / the `/api/projects/<projectId>/campaigns/<campaignId>/delivery` route), with production-mode error handling so development fallback does not mask errors.
+   - expected failure shape for this class: `getRemainingLimit()` conservatively returns `0`, `readCampaignDeliveryMonitor()` returns `kind: 'unavailable'`, or `incrementUsage()` throws a Redis `MOVED <slot> <node>` error. These map directly to UI quota=0, realtime monitor unavailable, or create-session 500.
+6. Test cluster behavior against the tunnel/config endpoint:
+   - run repeated `GET`/`HGETALL`/`INCR` for multiple scratch keys, not only one key. Redis Cluster slot distribution can make one key look healthy by luck.
    - look specifically for `MOVED`/`ASK` responses.
    - inspect `CLUSTER SLOTS` to see slot owners.
    - if a standalone client succeeds for a few keys but fails for others, or a cluster client with all nodes NAT-mapped to one local port has partial success, treat that as proof the topology is unstable, not as intermittent Redis health.
-5. Tail the Worker while triggering the failing POST so HTTP 500 timing lines up with Redis-touching code.
+7. Tail the Worker while triggering the failing POST so HTTP 500 or graceful-unavailable timing lines up with Redis-touching code.
 
 ## Wrapper/proxy remediation pattern
 

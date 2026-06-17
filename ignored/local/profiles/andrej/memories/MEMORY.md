@@ -8,11 +8,9 @@ Notifly docs: docs=`notifly-event/docs` Mintlify; web=`notifly-web`; Product KB=
 §
 Slack links: ignore no-API note; use SLACK_BOT_TOKEN conversations.replies/history first; url_private images→vision.
 §
-CloudCheckr AU 2000841/a4dcbb7d uses `cloudcheckr-service-cost-api-fetch`; MaxSessionsNotice may end sessions; parallel backfills can OIDC `invalid_grant`, retry sequentially.
-§
 Git commit identity used in prior Notifly agent work: `Andrej Karpathy <team@greyboxhq.com>`.
 §
-Cloudflare: use service-token headers for Access; front-door/debug prefer CLOUDFLARE_READONLY_API_TOKEN; never print tokens.
+Cloudflare: Access service-token headers; debug via CLOUDFLARE_READONLY_API_TOKEN; never print tokens. Redis proxy host `notifly-cache-prod-proxy-internal.notifly.tech`. Tunnel config needs Cloudflare One Connector: cloudflared Edit; fallback Argo Tunnel Legacy Edit.
 §
 Remote/workflow ops: local Hermes isn't target; verify host; env/VPN/secrets tests use workflow_dispatch.
 §
