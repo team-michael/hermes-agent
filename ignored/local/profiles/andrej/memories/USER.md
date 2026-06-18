@@ -1,12 +1,12 @@
-Notifly GitHub: ConvCommits; assign clix-so-bot; reviewer=requester GH; ask if unknown; verify checks/deploy; codebase > bot. Tiny web PRs: minimal diff; upload errors: status only.
+Notifly GitHub: ConvCommits; assign clix-so-bot; reviewer=requester GH (`gunoooo`=user); verify checks/deploy; codebase > bot. Tiny web PRs minimal; upload errors status only.
 §
-Remote/container tasks: never assume local Hermes is target; verify intended system first, and never destructively mutate home dirs like /ubuntu/home, /home/ubuntu, or $HOME.
+Remote/container/infra debug: verify target system first; use env/API evidence broadly; give concrete next probes/remediation; never destructively mutate home dirs like /ubuntu/home, /home/ubuntu, or $HOME.
 §
-Notifly RCA/debug: KR terse; conclusion+timestamp bullets; use existing logs/code first, infer before asking more debug; verify IDs/app/RN/tokens; observed vs inferred; FCM404≠401; DB/log grounded; raw sensitive→self-serve.
+Notifly RCA/debug: terse KR, answer only asked. Logs/code first; verify IDs/app/RN/tokens; observed vs inferred; don’t overclaim from stable IDs; FCM404≠401; raw sensitive→self-serve.
 §
 In DMs, user wants infra explanations tailored to Mobile/iOS+SDK Eng background: use analogies only when mechanisms match; flag SDK implications for contracts/retries/offline/telemetry/DX.
 §
-Slack/Notifly: concise KR; incidents core-only; snippets=min core; PR only if asked.
+Slack/Notifly: concise KR; incidents/snippets/PR diagnostics core-only; PR only if asked.
 §
 MSP/SmileShark: draft; no internal Slack refs.
 §

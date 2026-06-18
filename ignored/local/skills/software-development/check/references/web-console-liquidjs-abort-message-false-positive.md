@@ -91,3 +91,47 @@ at Tag.render (/app/services/server/web-console/.next/server/chunks/8693.js:1:96
 In this variant the Liquid source line shows `connected_content`, not `abort_message()` directly. The compiled `Tag.render` at `chunks/8693.js` is still the definitive anchor because that is the compiled `abort_message` tag handler.
 
 Classification is the same: `no_action` if this is isolated test/playground traffic or a single-template misconfiguration. `needs_fix` only if the same project shows a sustained spike caused by a broken `connected_content` dependency.
+
+## Concrete `connected_content` → Supabase/API 401/400 auth failure variant
+
+When a Liquid template uses `connected_content` to call a Supabase PostgREST endpoint or other external API with an Authorization header, and the request is rejected with 401 (Unauthorized) or 400 (Bad Request), the `connected_content` tag handler aborts rendering. This is a **customer-side template configuration issue**, not a Notifly bug.
+
+**401 (Unauthorized)** — expired or invalid Supabase API key in the template header:
+
+```
+<supabase_url> responded with 401:
+{
+  "error": "Unauthorized"
+}
+message is aborted, line:1, col:413
+
+>> 1| {% connected_content <url> user["$user_id"] }} :headers { "Authorization": "Bearer sb_secret_..." } :save u %}...
+^
+RenderError: message is aborted, line:1, col:413
+  at Render.renderTemplates (liquidjs/dist/liquid.node.js:1232:53)
+  ...
+From AbortError: message is aborted
+  at Tag.render (/app/services/server/web-console/.next/server/chunks/8693.js:1:9227)
+```
+
+**400 (Bad Request)** — template passes an invalid parameter value:
+
+```
+<url> responded with 400:
+{
+  "error": "user_id is required and must be a number"
+}
+message is aborted, line:1, col:402
+```
+
+**Root cause**: The `connected_content` tag catches the HTTP error, logs it with `console.error`, and then calls `abort_message()` to stop rendering. The metric filter `%[Ee][Rr][Rr][Oo][Rr]|Exception%` matches the error strings, triggering the alarm.
+
+**Message delivery continues normally** — either with fallback content or skipped if the abort is intentional (e.g., no data for the condition).
+
+**Classification**:
+- `no_action`: Single isolated instance (one campaign/project, ≤ 5 per day). Customer can fix by updating Supabase credentials or template parameter handling.
+- `needs_fix`: Error repeats daily, affects multiple projects, or reaches hundreds per hour, suggesting a systematic issue (shared key revoked, token expiration cron, platform-wide parameter binding change).
+
+**Scope attribution**: Map `productId` from access logs' Referer header (`/console/products/<productId>/`) via DynamoDB `project` GSI `product_id-project_id-index`.
+
+For detailed remediation options and verification commands, see `references/web-console-liquidjs-connected-content-auth-failure.md`.

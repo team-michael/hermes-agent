@@ -1,6 +1,6 @@
 Andrej env: terminal HOME can be profile home; set `HOME=/home/ubuntu` for gh/GWS, use `/home/ubuntu/.hermes/workspace`. GWS: `/home/ubuntu/.nvm/versions/node/v24.15.0/bin/gws`.
 §
-Notifly project: project_id→DDB `project` product_id/name; product created_at lives in DDB `products` keyed by product_id; per-project PG `table_${project_id}`; AI admin fallback after lookup.
+Notifly project: project_id→DDB `project` product_id/name; product created_at in DDB `products`; per-project PG `table_${project_id}`. `project_statistics.metric_name`: no `project_*`/`notifly_*`; alias in mapper.
 §
 Notifly facts: PG/read-model first; Athena raw only explicit audit/debug. Campaign-user `/eligibility`+`/deliveries`. Cosmo FCM404: APNs/FCM hashes don’t reveal `aps-environment`; distinguish 401 APNs auth/config from 404 UNREGISTERED token lifecycle/project mismatch.
 §
@@ -10,7 +10,7 @@ Slack links: ignore no-API note; use SLACK_BOT_TOKEN conversations.replies/histo
 §
 Git commit identity used in prior Notifly agent work: `Andrej Karpathy <team@greyboxhq.com>`.
 §
-Cloudflare: Access service-token headers; debug via CLOUDFLARE_READONLY_API_TOKEN; never print tokens. Redis proxy host `notifly-cache-prod-proxy-internal.notifly.tech`. Tunnel config needs Cloudflare One Connector: cloudflared Edit; fallback Argo Tunnel Legacy Edit.
+Cloudflare: never print tokens. Notifly Redis proxy: ECS `cache-proxy`, host `cache-proxy-prod-internal.notifly.tech`; tunnel edit needs Cloudflare One Connector: cloudflared Edit, fallback Argo Tunnel Legacy Edit.
 §
 Remote/workflow ops: local Hermes isn't target; verify host; env/VPN/secrets tests use workflow_dispatch.
 §

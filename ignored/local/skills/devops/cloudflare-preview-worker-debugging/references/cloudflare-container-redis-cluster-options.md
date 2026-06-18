@@ -102,8 +102,10 @@ Durable current shape observed for Notifly:
 Recommended proxy hostname pattern:
 
 ```text
-notifly-cache-prod-proxy-internal.notifly.tech
+cache-proxy-prod-internal.notifly.tech
 ```
+
+Older notes may mention `notifly-cache-prod-proxy-internal.notifly.tech`; verify the live workflow/entrypoint before assuming the hostname. Current web-console preview wiring observed in repo uses `cache-proxy-prod-internal.notifly.tech` for the Redis proxy tunnel, while the legacy direct cluster-config hostname remains `notifly-cache-prod-internal.notifly.tech`.
 
 Target shape:
 

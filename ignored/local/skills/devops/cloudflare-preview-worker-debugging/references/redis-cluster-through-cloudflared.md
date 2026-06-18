@@ -10,7 +10,7 @@ Typical symptoms:
 - Auth/routing works for read-only endpoints.
 - A write path that starts with Redis rate-limit/session accounting returns `500`.
 - A UI may show quota exhausted, e.g. `dailySessionsRemaining = 0`, while the expected Redis key is absent when inspected directly.
-- A Notifly web-console realtime monitor that is Redis-backed may render a graceful fallback such as `일시 조회 불가` / `status: unavailable`, while the slower DB/stat fallback still renders ordinary counts.
+- A Notifly web-console realtime monitor that is Redis-backed may render a graceful fallback such as `일시 조회 불가` / `status: unavailable`, while the slower DB/stat fallback still renders ordinary counts. If the exact Redis monitor hash exists when probed through a trusted Redis path, treat this as preview runtime Redis connectivity/topology first, not as missing campaign data or React rendering.
 - Direct service POST and web-console proxy POST both fail, while GET succeeds. That usually moves the suspicion from web-console proxy/auth to service runtime dependencies.
 
 ## Mechanism
@@ -39,6 +39,11 @@ This can manifest as unstable Redis reads/writes even though the tunnel itself i
    - if app says quota is exhausted or realtime monitor is unavailable but the key exists and has sane fields, suspect preview runtime Redis connectivity before assuming application data state.
 4. Inspect the Worker bindings and container wrapper, not only app code:
    - Cloudflare Worker `vars` can contain `REDIS_HOST=127.0.0.1` while the container only reaches Redis if `entrypoint.sh` actually starts `cloudflared access tcp`.
+   - For proxy-mode previews, verify all three layers separately:
+     1. Worker binding includes `REDIS_PROXY_HOST=127.0.0.1`.
+     2. `worker/index.ts` passes `REDIS_PROXY_HOST` through `envVars` to the container.
+     3. `entrypoint.sh` opens `cloudflared access tcp` to the proxy hostname (for Notifly, currently `cache-proxy-prod-internal.notifly.tech`) on the same local port the app uses.
+   - If Worker bindings show `REDIS_PROXY_HOST=127.0.0.1` and a local EC2 probe through the proxy hostname succeeds, but the preview app still returns `status: unavailable`, do **not** conclude “the proxy host did not get configured.” The remaining suspects are container runtime: the Redis tunnel process is not running/healthy inside the container, or the Node process did not receive/apply `REDIS_PROXY_HOST` and is still using the cluster client against `127.0.0.1`.
    - If the wrapper gates tunnel startup on an env var such as `CLOUDFLARE_APPLICATION_ID`, verify that variable is present in Worker/container bindings or injected by the runtime before blaming Redis data.
 5. Reproduce locally at the same abstraction level as the failing code, not just with raw Redis probes:
    - start a local TCP forwarder that listens where the app expects Redis and forwards to the Redis Cluster config endpoint/tunnel.
@@ -79,6 +84,9 @@ Before deploying:
 - verify repeated commands for many scratch keys, not just one, because cluster slot ownership is key-dependent.
 - verify the actual application method that failed, e.g. AI Agent `RateLimitRepository.getRemainingLimit()` and `incrementUsage()`, under production-mode error handling.
 - verify repeated commands for a key whose slot maps away from the initial config endpoint do not surface `MOVED` to the app.
+- for Notifly web-console preview, also smoke the deployed preview API directly with Cloudflare Access headers plus the diagnostic internal-auth bypass. Expected fixed shape for a Redis-backed campaign monitor is `source: 'redis'`; `source: 'stats', status: 'unavailable'` means the container still cannot read Redis even if the DB/stat fallback is healthy.
+- do not tail or quote generic container startup logs if they print full `envVars`; redact first or add a targeted diagnostic. Some web-console `onStart` logs include secret-bearing env values.
+- do not over-trust an EC2/local Hermes probe: the same `cloudflared access tcp` + Redis proxy/single-client probe can succeed from EC2 while the Cloudflare Container still fails because the process/env/tunnel inside the container is different. Treat app endpoint behavior from the preview container as the deciding signal.
 
 After deploying:
 

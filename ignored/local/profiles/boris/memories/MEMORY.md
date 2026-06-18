@@ -1,6 +1,8 @@
 sharp/librsvg SVG→PNG 폰트 이슈 3종(§ NN mono 안 먹음, TTF 0xEFBFBD 손상, multi-word family 쿼팅, CJK + Latin-only serif italic → faux-italic skew) → `svg-to-png-font-rendering`
 §
-- `team-michael/notifly-catalogs`: 고객사례 플레이북 PPTX(`notifly-playbook-pptx/build_deck.js`, React→PptxGenJS). 감사 루프: `dev_server.js`(SSE) + `dev_dump_png.js`/`dev_contact_sheet.js`(sharp)로 SVG→PNG 4x4 → vision_analyze. 토큰 `GRID{margin:.62,bandY:5.03}`+`bottomBand()`+한글 lineSpacing 1.5. "Instrument Grid" 미학: role-based `F.{serif,latin,mono,body}` + SVG @font-face base64 임베드 + `§ NN` mono 마커. 스킬 포인터 `powerpoint` (references/korean-deck-design-tokens.md + canvas-design-aesthetic-overlay.md).
+- `team-michael/notifly-catalogs`: 고객사례 플레이북 PPTX(`notifly-playbook-pptx/build_deck.js`, React→PptxGenJS). 감사: `dev_server.js`(SSE)+`dev_dump_png.js`/`dev_contact_sheet.js`(sharp) SVG→PNG→vision_analyze. "Instrument Grid" 미학 디테일은 스킬 `powerpoint`(references/korean-deck-design-tokens.md + canvas-design-aesthetic-overlay.md) 참조.
+§
+Slack: 본문 답변은 origin(현재 DM)으로 자동 전달되나 `send_message(target="slack")`는 home 채널(C0B1Z99756K)로 라우팅됨 — Minkyu DM(D0AUW5SS0M8) 아님. slack_table 등을 현재 DM에 보내려면 target="slack:D0AUW5SS0M8" 명시.
 §
 Hermes 환경 경로 트랩: terminal/process는 $HOME=/home/ubuntu/.hermes/profiles/boris/home (즉 `~/.hermes/...` → `/home/ubuntu/.hermes/profiles/boris/home/.hermes/...`)인데 write_file/patch는 `/home/ubuntu/.hermes/...` (profile 위 실경로)에 쓴다. 클론·dev server·테스트는 절대경로 `/home/ubuntu/.hermes/profiles/boris/home/.hermes/workspace/<repo>`로 통일하면 분기 안 생김.
 §

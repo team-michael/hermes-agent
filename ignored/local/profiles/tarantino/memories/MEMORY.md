@@ -1,8 +1,10 @@
 Primary Slack workspace for tarantino profile: notifly-greybox.slack.com (team Notifly, team_id T03N2U9PATE). Bot handle: @Hermes / tarantino (user_id U0AUVN6K7KL). Primary channels: #clix-app-growth-project (strategy/discussions), #clix-app-growth-report (pipeline operations + weekly pre-email previews).
 §
-Clix weekly ops → clix-weekly-report skill. Slack: `@Hermes report {id}`/`new app`/`send`/`republish`. **"리포트 생성/만들어줘"+URL = THIS skill, NOT startup-app-recon** (jace 2026-06-02); flip only on "조사"/"스카우팅". P1 HARD STOP after `✓ Appended row` → check_app_row_exists.py. Lanes: real/regen/variant/synthetic-app (web-only/DTC/hardware/pre-launch). N≥2 → multi-app-batch-runbook. SKILL.md 100k cap → references/. P2 403 (exit=1, report.json good, `_review_queue` tb) = skip. CAPTCHA Q01/Q12-13/Q14: ≥80 URLs+≥10 q+≥4 trends = SHIP partial. **publish_one.sh: `set -a; . ~/.hermes/profiles/tarantino/.env; set +a`**.
+**publish_one.sh / any gh flow: source .env by ABSOLUTE path** — terminal `$HOME`=`/home/ubuntu/.hermes/profiles/tarantino/home`, so `~/.hermes/.../.env` doubles into a nonexistent path & gh fails "gh auth login". Use `set -a; . /home/ubuntu/.hermes/profiles/tarantino/.env; set +a`. .env has GITHUB_TOKEN (read_file blocked by cred guard; hermes-github-api NOT on PATH → use gh).
 §
-Tarantino ops: (1) write_file→/home/ubuntu/.hermes/profiles/tarantino/home/... but cron needs REAL /home/ubuntu/.hermes/profiles/tarantino/{scripts,work}/... — in cron hardcode absolutes, source /home/ubuntu/.nvm/nvm.sh. (2) Cron 120s SIGKILL → launcher+main split (setsid nohup disown). (3) CAPTCHA → headful noVNC 6080 DISPLAY=:1.
+Google OAuth recover (tarantino): token expires → `setup.py --check`=`REFRESH_FAILED invalid_grant`. Fix: `setup.py --auth-url` BARE (skill-doc flags `--services all --format json` DON'T exist in argparse → error), send URL→jace, `--auth-code "<URL>"`. Private Sheet blocked = re-auth, don't fabricate.
+§
+Tarantino ops: (1) write_file→
 §
 RunForm slideshow: 10 topics. ONLY cron = batch4 `11552f25d69c` (Tue/Thu KST09, 4 eps×2/wk). Drive parent `1hAqXipvHle6b5rwhuS4ozxtw02zx9a9r` + drive.file scope. **SLACK_BOT_TOKEN** at `~/.hermes/profiles/tarantino/.env` (not auto-passthrough).
 §

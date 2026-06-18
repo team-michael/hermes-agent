@@ -81,6 +81,33 @@ Interpretation:
 - Container app `state=ready`, healthy instances > 0, failed instances = 0 -> container is not the primary failure.
 - `containers instances` may still say no running instances if nothing is currently active; do not over-interpret that alone.
 
+### Verify Cloudflare Containers are actually on the new image
+
+When the question is “did the preview really deploy the newly built image?”, collect all four pieces of evidence and reconcile the SHAs:
+
+1. **GitHub Actions build log / ECR**
+   - Build job should push both branch tag and revision tag, e.g. `web-console-stage-<sanitized-branch>` and `web-console-stage-<revision>`.
+   - Confirm ECR tag exists and note digest/pushed time:
+     ```bash
+     aws ecr describe-images \
+       --repository-name <repo> \
+       --image-ids imageTag=<tag> \
+       --query 'imageDetails[0].{Tags:imageTags,Digest:imageDigest,PushedAt:imagePushedAt,Size:imageSizeInBytes}' \
+       --output json
+     ```
+2. **Cloudflare Worker deployment/version**
+   - `GET /accounts/$ACCOUNT_ID/workers/scripts/<script>/deployments`
+   - latest deployment should route `100%` to the expected version id.
+   - `GET /accounts/$ACCOUNT_ID/workers/scripts/<script>/versions/<version-id>` should show expected bindings like `DEPLOY_SHA`, but redact all secrets: Worker version APIs can return secret-like plain-text bindings.
+3. **Cloudflare Container app + rollout**
+   - `GET /accounts/$ACCOUNT_ID/containers/applications/<app-id>` should show `configuration.image` with the new tag.
+   - `GET /accounts/$ACCOUNT_ID/containers/applications/<app-id>/rollouts` should show latest rollout `completed`, target image/version, target instances at 100%, and no health errors.
+   - Container rollout is asynchronous after `wrangler deploy`; a GitHub job can succeed before the rollout has fully converged. Re-check rollouts after a short delay before diagnosing stale image.
+4. **Runtime health**
+   - Authenticated `/health` should return the expected `sha`.
+
+Important SHA nuance for GitHub PR previews: the image/deploy revision may be the GitHub `pull_request` merge ref SHA, not the raw PR head SHA. If `/health` reports the merge SHA while the PR head is different, verify it via the Actions deploy input/log before calling it stale.
+
 ## 4. Check custom-domain binding via Cloudflare API
 
 The worker may be deployed even if the custom domain is not yet usable from the runner.
@@ -259,6 +286,9 @@ See `references/cloudflare-container-redis-cluster-options.md` for the productio
 See `references/notifly-envoy-redis-proxy-stack.md` for the Notifly Terraform/PR pattern for an AWS-side Envoy Redis proxy, including stacked remote-state sequencing, Cloudflare tunnel adoption, naming constraints, and Envoy bootstrap pitfalls.
 See `references/aws-envoy-redis-proxy-cloudflare-tunnel.md` for the implementation pattern when adding an AWS-side Envoy Redis proxy in ECS/Fargate plus Cloudflare Tunnel DNS/ingress, including stacked Terraform PR sequencing and Envoy config pitfalls.
 See `references/envoy-redis-proxy-cloudflare-tunnel.md` when planning the AWS-side Envoy Redis proxy itself: internal NLB + ECS/Fargate proxy + separate Cloudflare Access hostname + no app cutover in the initial infra PR.
+See `references/notifly-preview-redis-proxy-runtime-triage.md` when a web-console Cloudflare preview has Redis-backed UI/API reads returning `unavailable` even though local Cloudflare Access TCP proxy smoke tests pass; it covers the Worker binding → container passthrough → entrypoint tunnel → Node runtime split and delayed `cloudflared` watch-notification pitfall.
+See `references/notifly-preview-redis-singleton-vs-fresh-client.md` when Worker bindings and the Redis tunnel are healthy but the app still returns Redis `unavailable`; it captures the stale RedisManager singleton vs fresh standalone `ioredis` split, bounded tunnel readiness fix, and cleanup requirement for temporary diagnostic endpoints/logs.
+See `references/notifly-preview-redis-diagnostics-cleanup.md` after such an investigation: remove temporary Worker/Next diagnostic endpoints, redacted env summaries, tunnel PID/health logs, and Redis diagnostics exports while preserving the functional Redis/tunnel readiness fix; verify removed routes return 404 with Access service-token headers.
 
 ## 10. High-confidence diagnosis rules
 

@@ -147,7 +147,17 @@ This skill compresses that into **one command**.
 
 ## Missing transcript recovery
 
-If `sessions/sessions.json` maps a Slack thread to a `session_id` but `sessions/session_<session_id>.json` is absent, do **not** stop at `Session file not found`. First inspect Slack cache files (`slack_api_cache/thread_<channel>_<thread_ts>.json` and `_summary.json`), then search session archives by durable alert identifiers such as Sentry issue id, error class, CloudWatch alarm name, or Slack permalink timestamp. The useful discussion may live in a later PR-review / CloudWatch-investigation session rather than the registry session. See `references/missing-session-file-recovery.md`.
+If `sessions/sessions.json` maps a Slack thread to a `session_id` but `sessions/session_<session_id>.json` is absent, do **not** stop at `Session file not found`.
+
+Fastest fallback: try the indexed session DB directly first:
+
+```python
+session_search(session_id="20260616_071223_b58951", role_filter="user,assistant,tool")
+```
+
+In current Hermes profiles, the JSON archive can be missing while `state.db` / `session_search` still has the transcript. If the session has a `parent_session_id`, inspect that too; Slack thread roots often live in the parent while the active continuation holds the compacted context.
+
+If the DB lookup is absent or incomplete, inspect Slack cache files (`slack_api_cache/thread_<channel>_<thread_ts>.json` and `_summary.json`), then search session archives by durable alert identifiers such as Sentry issue id, error class, CloudWatch alarm name, or Slack permalink timestamp. The useful discussion may live in a later PR-review / CloudWatch-investigation session rather than the registry session. See `references/missing-session-file-recovery.md`.
 
 ## Caveats
 

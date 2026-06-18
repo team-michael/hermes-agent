@@ -228,3 +228,17 @@ client.get_metric_statistics(
 ```
 
 Use the resulting daily `Sum` values for the `빈도` field.
+
+### Logs Insights `%pattern%` syntax vs `filter-log-events` syntax mismatch
+
+CloudWatch Logs API uses two **incompatible** pattern syntaxes:
+
+- **Logs Insights**: uses `%pattern%` for substring matching (case-insensitive). Example: `%[Ee][Rr][Rr][Oo][Rr]%` matches any case variation of "error". This syntax is used in the Logs Insights query language and in metric filter definitions.
+- **`filter-log-events` API**: does NOT accept `%pattern%` syntax. It uses either a bare term (e.g., `filterPattern='ERROR'`) or term-list syntax (e.g., `filterPattern='[ERROR or WARN]'`). Passing `%[Ee][Rr][Rr][Oo][Rr]%` to `filter-log-events` raises `InvalidParameterException: Invalid filter pattern`.
+
+**Pitfall**: The metric filter on this log group is `%[Ee][Rr][Rr][Oo][Rr]%` (Logs Insights substring syntax). When investigating the alarm, do NOT copy this pattern directly to `filter-log-events`. Instead:
+1. Use **Logs Insights queries** directly (recommended for aggregate counts and structured JSON parsing).
+2. Or use an **unfiltered** `filter-log-events` call (omit `filterPattern`) and parse all messages in the window manually.
+3. Or use a simplified `filterPattern` like `'ERROR'` (bare term), but understand it may match fewer events than the metric filter because term matching is stricter than substring matching.
+
+**Remediation**: for Sentry payload analysis, always prefer Logs Insights over `filter-log-events`. Logs Insights supports the same substring syntax and integrates seamlessly with JSON parsing (`parse`, `fields`, and `stats`).
