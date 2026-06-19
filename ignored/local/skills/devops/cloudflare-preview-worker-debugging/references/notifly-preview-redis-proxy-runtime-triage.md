@@ -111,10 +111,21 @@ Fix shape that verified in preview:
 
 1. For proxy-mode monitor reads, use a fresh short-lived standalone Redis client in `delivery-policy` (`REDIS_PROXY_HOST`, lazy connect, bounded timeout) for the read path, rather than the stale singleton.
 2. Keep RedisManager diagnostics/recovery improvements (`lazyConnect`, readiness assertion, reconnect-on-stale client) for broader resilience, but verify the actual container endpoint because package/runtime bundling can make package-level fixes appear later than app-level changes.
-3. Verify after deploy with the diagnostic route:
+3. Check write paths separately. `setCampaignDeliveryStatus()` / `setCampaignDeliveryPublished()` can still silently fail if they use the long-lived `RedisManager` singleton and catch/warn best-effort. Symptom: console/API returns 200 and Postgres/SQS state advances, but the backing Redis hash (`projects:{...}:delivery`) is missing or lacks `status=running` after polling. If this happens on a CF preview, route the write through the same bounded standalone proxy client or make RedisManager reconnect-on-stale robust enough for proxy mode. In web-console CF Containers, trigger the fresh-client path on either `REDIS_PROXY_HOST` **or loopback `REDIS_HOST`** (`127.0.0.1`/`localhost`), because the container may see only the loopback tunnel host; use bounded but tunnel-tolerant timeouts around 1500ms rather than a very tight 500ms command timeout.
+4. Verify after deploy with the diagnostic route or direct evidence:
    - direct standalone ok,
-   - manager ready or at least not blocking the read path,
-   - `monitorRead.kind=snapshot`,
+   - manager ready or at least not blocking the read/write path,
+   - `monitorRead.kind=snapshot` or the written hash exists with expected fields,
    - user-facing delivery endpoint no longer returns `status: unavailable`.
 
 If final `campaign_statistics` already covers the published target, the user-facing delivery endpoint may correctly return `source: stats, status: completed`; use the diagnostic `monitorRead.kind=snapshot` as the Redis connectivity proof.
+
+## Cleanup after diagnosis
+
+Temporary diagnostics are useful, but do not leave them in the PR once the runtime boundary is understood. Before signoff:
+
+1. Remove auth-protected diagnostic routes such as `/__diagnostics/*` and `/api/diagnostics/*`.
+2. Remove diagnostic env summaries, RedisManager `getDiagnostics()` helpers, client configuration logs, retry-status logs, and tunnel PID/health logs.
+3. Keep only the production-shaped fix: tunnel readiness needed for startup, bounded Redis timeouts/retry behavior, and the actual feature read path.
+4. Re-verify that removed diagnostic URLs return `404` on the preview and that authenticated `/health` reports the new deploy SHA.
+5. For UI features backed by Redis, fail closed visually when Redis is unavailable or missing unless the product explicitly wants an outage banner. In the campaign delivery monitor case, `source !== 'redis'` means the real-time card/list-only real-time label should be hidden and the persistent stats/status UI remains source of truth.

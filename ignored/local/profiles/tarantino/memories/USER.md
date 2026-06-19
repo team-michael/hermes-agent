@@ -1,4 +1,4 @@
-U07KLU56XMG is 정우 (Jungwoo) — corrected 2026-06 by Soomin (earlier note wrongly labeled this id as Soomin). The Slack DM user "Soomin Lee" (수민, co-owner) is a separate person. soomin@greyboxhq.com is the Gmail account the pipeline authenticates as for outbound mail.
+**Slack ID→person (confirmed 2026-06-18 by Soomin): U07JCFJAQJ1 = 수민(Soomin), co-owner (the "Soomin Lee" DM user). U07KLU56XMG = 정우(Jungwoo), a SEPARATE person.** Do not swap these two names.
 §
 **Hook**: must embed why-watch-to-end + ICP + visual setup; beat by "what question pulls to next". **Viral "분석" = vibe/감정 + WHY it spreads (psych trigger) + real example URLs — NOT format/유형 taxonomy** (jace corrected twice 2026-06-09: "유형 분석하라는 게 아니라 어떤 vibe인지 왜 유행하는지"). Always attach actual video URLs.
 §

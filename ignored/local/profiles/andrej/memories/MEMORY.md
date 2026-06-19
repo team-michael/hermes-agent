@@ -2,7 +2,7 @@ Andrej env: terminal HOME can be profile home; set `HOME=/home/ubuntu` for gh/GW
 §
 Notifly project: project_id→DDB `project` product_id/name; product created_at in DDB `products`; per-project PG `table_${project_id}`. `project_statistics.metric_name`: no `project_*`/`notifly_*`; alias in mapper.
 §
-Notifly facts: PG/read-model first; Athena raw only explicit audit/debug. Campaign-user `/eligibility`+`/deliveries`. Cosmo FCM404: APNs/FCM hashes don’t reveal `aps-environment`; distinguish 401 APNs auth/config from 404 UNREGISTERED token lifecycle/project mismatch.
+Notifly facts: PG/read-model first; Athena raw only explicit. FCM404≠APNs401. Delivery UI publishing/enqueue+delivery show ‘발송 중’; Redis `running`. API key: `update_api_secret_key.yml` only changes Cognito; integration-service Mixpanel Basic Auth checks DDB/Redis `project.cognito_api_auth`, so update + cache invalidate too.
 §
 Notifly docs: docs=`notifly-event/docs` Mintlify; web=`notifly-web`; Product KB=`notifly-product-knowledge`. Push-law docs: `mkt_push_agreed` example only; flow user-prop→default true; SDK note under unsubscribe/checklist.
 §

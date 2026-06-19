@@ -1,15 +1,21 @@
-# anomaly-delivery-monitoring Lambda ConsoleErrors False Positives
+# anomaly-delivery-monitoring Lambda ConsoleErrors — Pattern Guide
+
+**Quick classifier** (always read `reason:` in actual log lines):
+- `reason: not aggregated nhn pending messages exist` → Pattern 1 → `no_action`
+- `reason: There exist messages that were scheduled but not delivered` → Pattern 2 → `no_action`
+- `reason: high failure rate detected` → **Pattern 3 → `needs_fix`** (real delivery failures)
 
 The `anomaly-delivery-monitoring` Lambda fires `ConsoleErrors` alarms via the
 broad metric filter `%ERROR|Status: timeout%` on
 `/aws/lambda/anomaly-delivery-monitoring`.  The Lambda itself is healthy;
 runtime `AWS/Lambda` `Errors` and `Throttles` are usually zero.
 
-## Two ERROR patterns emitted by the routine
+**Do NOT assume all anomaly-delivery-monitoring alarms are false positives.**
+Pattern 3 (`high failure rate detected`) is a real signal requiring investigation.
 
-Both are **expected business/inspection outcomes** logged at `ERROR` level:
+## Three ERROR patterns emitted by the routine
 
-### 1. NHN pending delivery-result messages
+### 1. NHN pending delivery-result messages (false positive / `no_action`)
 
 ```
 ERROR Anomaly delivery detected for project_id: <id>, reason: not aggregated nhn pending messages exist.
@@ -19,7 +25,7 @@ This indicates the `notifly-nhn-delivery-result-collector` has outstanding
 `delivery_result_${projectId}` rows pending aggregation.  It is a backlog
 indicator, not a Lambda crash.
 
-### 2. Scheduled-but-not-delivered messages
+### 2. Scheduled-but-not-delivered messages (false positive / `no_action`)
 
 ```
 ERROR Anomaly delivery detected for campaign_id: <id>, project_id: <id>, reason: There exist messages that were scheduled but not delivered, scheduledMessageCounts: <n>, messageCountsDeliveryTried: <m> <console_url>
@@ -28,6 +34,58 @@ ERROR Anomaly delivery detected for campaign_id: <id>, project_id: <id>, reason:
 This means a scheduled campaign/user-journey has messages queued but fewer
 delivery attempts than expected.  The counts show the gap size.  The Lambda
 invocation completes normally after logging.
+
+### 3. High failure rate detected (`needs_fix` — real delivery failures)
+
+```
+ERROR Anomaly delivery detected for campaign_id: <id>, project_id: <id>, reason: high failure rate detected.
+https://console.notifly.tech/ko/console/products/<product>/campaign/<id>/stats?environment=1
+```
+
+This is emitted by `isHighFailureRate()` in `index.js:49-54` when
+`send_failure / messageCountsDeliveryTried > CHANNEL_HIGH_FAILURE_RATE_MAP[channel]`
+(or `DEFAULT_HIGH_FAILURE_RATE = 0.05` for channels not in the map) AND
+`messageCountsDeliveryTried >= TOTAL_MESSAGE_COUNTS_THRESHOLD_FOR_CHECKING_HIGH_FAILURE (50)`.
+
+**This is NOT a false positive.** It means real messages are failing at a rate
+exceeding the channel threshold for the named campaign/project.
+
+Channel thresholds (`lib/constants.js`):
+- push-notification: 60%
+- line: 60%
+- kakao-friendtalk: 60%
+- kakao-brand-message: 60%
+- kakao-alimtalk: 30%
+- web-push-notification: 20%
+- text-message: 30%
+- default / email / others: 5%
+
+Note: two inline suppression guards in `index.js:97-108` silence this alert
+for a hardcoded `project_id` and `CAMPAIGN_IDS_MAY_OCCUR_404_TOKEN_ISSUE`
+(FCM 404 token issue). Bladderly and other projects without these guards will
+always fire.
+
+**Triage for this pattern:**
+- `Errors=0`, `Throttles=0`, `Duration` healthy → Lambda itself is fine;
+  the real issue is in the delivery pipeline for the named campaigns.
+- Check actual `send_failure` causes: FCM token expiry, invalid tokens,
+  provider quota exhaustion, APNS auth errors.
+- Query `delivery_result_<project_id>` (Athena or Postgres) around the alarm
+  window for `event_name='send_failure'` grouped by reason/error code.
+- Classify as `needs_fix` when: (a) same campaign fires repeatedly across
+  multiple alarm windows, or (b) the failure is new and project-owner
+  notification is warranted.
+- Classify as `no_action` only when: isolated single-window spike for a known
+  campaign that was already suppressed in code and recovered.
+
+**Sudden volume increase pattern:**
+If this pattern appeared sporadically before (e.g. 1 event/day for 30 days)
+and then spikes sharply (e.g. 24 events on one day), check `LastModified` on
+the Lambda function. A deployment the previous day that changes anomaly
+detection logic or thresholds is a strong contributing factor. Correlate:
+1. `describe-function-configuration` → `LastModified`
+2. Logs Insights daily count for `high failure rate` over 30d (`bin(1d)`)
+3. Whether the campaigns involved are newly created or running continuously
 
 ## Code-level mechanics of scheduled-but-not-delivered
 
@@ -192,11 +250,24 @@ and user journey are unknown; state this explicitly.
 
 ## Triage decision tree
 
-- `Errors == 0`, `Throttles == 0`, `Duration` well below 300 s, and only the
-  two patterns above → `no_action`; track log-level downgrade.
-- `Errors > 0` or `Duration` near timeout with actual stack traces → real bug
-  or timeout; investigate as `needs_fix` or `urgent`.
+First, identify which of the three patterns dominates the alarm window:
+
+- **Pattern 1 (NHN pending)** or **Pattern 2 (scheduled but not delivered)**,
+  `Errors == 0`, `Throttles == 0`, `Duration` well below 300s →
+  `no_action`; track log-level downgrade as long-term fix.
+- **Pattern 3 (high failure rate)**, `Errors == 0`, `Throttles == 0` →
+  `needs_fix`; Lambda is healthy but real messages are failing for the named
+  campaign/project. Investigate delivery failure causes.
+- **Pattern 3 + sudden volume spike** (e.g. was 1/day, now 20+/day) →
+  `needs_fix`; correlate with recent Lambda `LastModified` deployment.
+- `Errors > 0` or `Duration` near 300s timeout with actual stack traces →
+  real bug or timeout; investigate as `needs_fix` or `urgent`.
 - `Throttles > 0` → investigate concurrency and event-source mapping.
+
+**Mixed-pattern day**: a single alarm window may contain both Pattern 2 and
+Pattern 3 (both can be present in the same invocation). Always check all
+`reason:` values in the log stream — do not dismiss as `no_action` if any
+`high failure rate detected` line is present.
 
 ## Remediation direction
 

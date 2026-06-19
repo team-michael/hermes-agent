@@ -181,8 +181,77 @@ aws dynamodb query \
 
 - **Duplicate-item pitfall**: the same `product_id` can appear twice (`dev: true` and `dev: false`). Use `dev = false` for production scope.
 
+## Scope recovery: campaign ID from `request.query` redirect parameter
+
+When the Sentry issue originates at `/auth/login` (user was mid-flow and redirected to login), the `sentryAlert.request.query` field contains a URL-encoded `redirect=...` path that often embeds a campaign or user-journey ID:
+
+- Example: `redirect=%2Fconsole%2Fproducts%2Fclass101%2Fcampaign%2Fcreate%3Fenvironment%3D1%26id%3DiViRLM%26mod…`
+  → URL-decode → `/console/products/class101/campaign/create?environment=1&id=iViRLM`
+  → productId=`class101`, campaignId=`iViRLM`
+
+Parse logic:
+
+```python
+import re, urllib.parse
+query_str = sa.get('request', {}).get('query', '') or ''
+decoded = urllib.parse.unquote(query_str)
+m = re.search(r'/products/([^/]+)/(?:campaign|user-journey)/[^/]+\?.*?id=([A-Za-z0-9]+)', decoded)
+if m:
+    product_id_from_redirect = m.group(1)
+    campaign_or_uj_id = m.group(2)
+```
+
+Use this when `request.url` is `/auth/login` and does not contain a productId directly. The redirect path is the true scope evidence.
+
+## Scope recovery: project_id from API route in `request.url`
+
+When `sentryAlert.request.url` contains an API path like `https://console.notifly.tech/api/projects/<project_id>/test_send/...`, the path segment is the literal Notifly `project_id`. Query DynamoDB `project` table directly by `id` (more reliable than GSI lookup for these routes):
+
+```python
+resp = ddb.get_item(
+    TableName='project',
+    Key={'id': {'S': project_id}},
+    ProjectionExpression='id, #n, product_id',
+    ExpressionAttributeNames={'#n': 'name'}
+)
+```
+
+## Preview/staging subdomain pattern
+
+Sentry alerts from preview deploy URLs like `https://<branch-name>-console.notifly.tech/...` indicate staging/PR preview environment access, not production. Identify by the domain being anything **other than** bare `console.notifly.tech`. Treat as `no_action` by default unless the same error also appears on production.
+
+## Scope recovery: user-journey from `req_url` field
+
+When the triggering Sentry issue URL is `/console/products/<productId>/user-journey/<userJourneyId>`:
+
+1. Extract `productId` from `req_url` (the `request.url` field in the Sentry payload, not the issue URL).
+2. Map `productId` via DynamoDB GSI `product_id-project_id-index` → get `project_id` and `name`. Use `dev=false` item when both dev/prod exist.
+3. Look up the `userJourneyId` in `user_journeys_<project_id>` (Postgres): `SELECT id, name, status, created_at FROM user_journeys_<project_id> WHERE id = '<id>' LIMIT 1`. `status=1` means active/enabled.
+4. Include both the project name and the user-journey name + status in `범위:`.
+
+**Example (2026-06-18):**
+- `req_url = https://console.notifly.tech/console/products/tourlive/user-journey/Zq3Jac`
+- productId=`tourlive` → project_id=`c73ff97bb627533785f06fa56345690d` (dev=false)
+- `user_journeys_c73ff97bb627533785f06fa56345690d` → id=`Zq3Jac`, name=`테스트 여정`, status=1
+
+## `get_log_events` on stream as fallback for empty `filter-log-events`
+
+When `filter-log-events` returns empty results for the alarm window (even without a filter pattern), retrieve the stream name from `describe_log_streams` ordered by `lastIngestionTime` desc, then use `get_log_events` on that stream directly:
+
+```python
+logs.get_log_events(
+    logGroupName='/aws/ecs/notifly-services-prod/web-console/sentry',
+    logStreamName='sentry/YYYY/MM/DD/<stream-id>',
+    limit=10,
+    startFromHead=True
+)
+```
+
+This bypasses CloudWatch's term-matching index. Each stream contains exactly one Sentry alert. The helper's `trigger_contexts` may also expose this data via `get_log_events` internally when the stream name is known.
+
 ## Common Sentry payload patterns seen through this pipeline
 
+- `TypeError` (`Cannot read properties of undefined (reading 'replaceAll')`) — web-console user-journey 상세 페이지 (`/console/products/[productId]/user-journey/[userJourneyId]`) 렌더링 중 undefined 값에 `.replaceAll()` 호출. **New issue → `needs_fix`** 분류. Scope: tourlive / Zq3Jac "테스트 여정" (2026-06-18). 수정 위치: `apps/web-console` user-journey 상세 페이지 컴포넌트에서 `.replaceAll()` 호출 전 undefined guard 추가.
 - `SyntaxError` (`Unexpected token '<', "<!DOCTYPE "... is not valid JSON`) — Client-side JSON parse failure when an API returns HTML (502/504 gateway error page) instead of JSON. Often hits `/user-journey/[userJourneyId]/stats`. See multiple projects (munice, safedoc, class101).
 - `Error` (`Failed to get user journey`) — Invalid `userJourneyId=undefined` in URL (class101).
 - `Error` (`Failed to get user journey node statistics`) — Backend failure on user-journey stats (fint).
@@ -191,6 +260,10 @@ aws dynamodb query \
 - `TypeError` (`Failed to fetch (api-sr.amplitude.com)`) — Amplitude analytics API network error (break).
 - `Error` (`Failed to parse stream string. No separator found.`) — Usually from `campaign/list`, occurs on localhost or stage (`michael`).
 - `Error` (`AI agent stream client response closed before completion`) — Web-console AI Agent proxy/stream disconnect. Tag `handled: yes` indicates it is a caught Sentry event, not an unhandled crash. Tag `feature: ai-agent`. Customer impact depends on whether the disconnect is transient (single user session) or recurring across many sessions. Daily volume is typically low (0–3).
+- `Error` (`Unacceptable characters in title and body.`) at `POST /api/projects/[projectId]/test_send/kakao_brand_message` — Kakao BizMessage API rejects the test-send payload because the title or body contains invalid characters (e.g., unsupported Unicode or special symbols). Tag `handled: yes`. This is a client-side content validation error from the external Kakao SDK/API, not a service bug. Scope recovery: extract `project_id` from the API route path in `request.url` (e.g., `/api/projects/b2b4a8f879a75673b755bff42fc1deb6/test_send/kakao_brand_message`). Classify as `no_action` when isolated.
+- `SyntaxError` (`"[object Object]" is not valid JSON`) at `PUT /api/projects/[projectId]/campaigns` — The campaign save API receives a raw JavaScript object instead of a JSON string. Tag `handled: yes`. Most commonly seen from `michael` (internal test/demo project, product_id=`michael`, project_id=`b80c3f0e2fbd5eb986df4f1d32ea2871`). Classify as `no_action` when confined to `michael`. If it appears for production projects, it may indicate a real serialization bug in campaign creation — look at `services/api-service/` campaign update path (note: this is a different code path from the `[object Object]` in `scheduled-batch-delivery` Lambda; see `references/scheduled-batch-delivery-dbinsert-json-serialization-bug.md`).
+- `Slow DB Query` (Sentry `level: info`) — Sentry's performance monitoring sends slow DB query alerts as `info`-level events. The raw JSON payload still embeds `"error"` substrings in other field values (e.g., field names, interface type, or log message fragments), so the `%[Ee][Rr][Rr][Oo][Rr]%` metric filter matches and increments `ConsoleErrors`. This is a **false positive for error classification** — the payload signals a slow query, not an error. The transaction is typically a slow `SELECT ... user_journey_id ...` on a `user_journeys_<project_id>` or related stats table. Scope via `request.url` (e.g., `/api/projects/<project_id>/user_journeys/statistics`). Classify as `no_action`. When writing the aggregation Python recipe, skip `level == 'info'` or `title == 'Slow DB Query'` entries (see recipe above with `if level == 'info': continue`).
+- `AxiosError` (`Network Error`) at `/auth/login` — Client network connectivity failure during login redirect. Common on mobile devices (iPhone/iOS) with unstable connections. Tag `handled: no`. Extract productId and campaign/user-journey ID from `request.query` redirect parameter (see "Scope recovery: campaign ID from redirect parameter" section). Classify as `no_action` for isolated mobile network errors; monitor if volume is rising across many users.
 
 ## When to escalate vs stay as `no_action`
 

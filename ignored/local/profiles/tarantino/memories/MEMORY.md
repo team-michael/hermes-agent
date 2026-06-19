@@ -2,9 +2,7 @@ Primary Slack workspace for tarantino profile: notifly-greybox.slack.com (team N
 §
 **publish_one.sh / any gh flow: source .env by ABSOLUTE path** — terminal `$HOME`=`/home/ubuntu/.hermes/profiles/tarantino/home`, so `~/.hermes/.../.env` doubles into a nonexistent path & gh fails "gh auth login". Use `set -a; . /home/ubuntu/.hermes/profiles/tarantino/.env; set +a`. .env has GITHUB_TOKEN (read_file blocked by cred guard; hermes-github-api NOT on PATH → use gh).
 §
-Google OAuth recover (tarantino): token expires → `setup.py --check`=`REFRESH_FAILED invalid_grant`. Fix: `setup.py --auth-url` BARE (skill-doc flags `--services all --format json` DON'T exist in argparse → error), send URL→jace, `--auth-code "<URL>"`. Private Sheet blocked = re-auth, don't fabricate.
-§
-Tarantino ops: (1) write_file→
+Google OAuth recover (tarantino): token expires → `setup.py --check`=`REFRESH_FAILED invalid_grant`. Fix: `setup.py --auth-url` BARE, send URL→jace, `--auth-code "<URL>"`. **google-workspace setup.py SCOPES list drives re-auth & ONLY had drive.readonly → every re-auth SILENTLY downgraded Drive scope, breaking ALL HBB Drive uploads w/ 403 "insufficient authentication scopes" (2026-06-17). Added drive.file to setup.py SCOPES. HBB upload NEEDS drive.file.** Upload/Sheet 403 = re-auth, don't fabricate. setup.py venvs use uv (no pip): `uv pip install --python <venv> google-auth-oauthlib`.
 §
 RunForm slideshow: 10 topics. ONLY cron = batch4 `11552f25d69c` (Tue/Thu KST09, 4 eps×2/wk). Drive parent `1hAqXipvHle6b5rwhuS4ozxtw02zx9a9r` + drive.file scope. **SLACK_BOT_TOKEN** at `~/.hermes/profiles/tarantino/.env` (not auto-passthrough).
 §
