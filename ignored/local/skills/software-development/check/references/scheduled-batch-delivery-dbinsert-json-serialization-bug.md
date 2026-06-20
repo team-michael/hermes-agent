@@ -1,11 +1,12 @@
 # ScheduledBatchDelivery DbInsert `invalid input syntax for type json`
 
-Two different Lambda functions share this failure pattern. Determine which one is firing before choosing a fix target.
+Three Lambda functions share this failure pattern. Determine which one is firing before choosing a fix target.
 
 | Lambda | Channel | Primary source file | Known broken function |
 |--------|---------|---------------------|----------------------|
 | `scheduled-batch-delivery` | push-notification | `services/lambda/scheduled-batch-delivery/lib/push_utils.js` | `toSendFailureLog` (`sender_info`, `request_body`, `response_body`) |
 | `scheduled-batch-text-message-delivery` | SMS/LMS | `services/lambda/scheduled-batch-text-message-delivery/lib/nhncloud/send_text_message.js` | `prepareSendResultsToInsertForNHNCloud` (`extra_data`) |
+| `kakao-delivery-result-poller` | Kakao brand message | `services/lambda/kakao-delivery-result-poller/repository/delivery_result_repository.ts:132` | `buildDeliveryFailureLogInsertQuery` — `raw_request_body` SQL string interpolation with double-escaped URL encoding |
 
 ## Alarm patterns
 
@@ -38,6 +39,39 @@ For the push-notification path, the concrete log often shows `[object Object]` d
 ```
 Values: <uuid>,[object Object],<notifly_user_id>,58YS4P,[object Object],[object Object],push-notification
 ```
+
+## Root cause — Kakao brand message path (`kakao-delivery-result-poller`)
+
+`services/lambda/kakao-delivery-result-poller/repository/delivery_result_repository.ts:132`
+
+`buildDeliveryFailureLogInsertQuery` builds the INSERT via SQL string interpolation:
+```ts
+`('${escapeForSql(row.id)}', '${escapeForSql(row.notifly_user_id ?? '')}', '${escapeForSql(row.campaign_id)}', '${escapeForSql(row.subtype ?? '')}', '${escapeForSql(row.extra_data?.raw_request_body ?? JSON.stringify({}))}', '${escapeForSql(JSON.stringify(row.extra_data))}', '${escapeForSql(row.channel)}', '${escapeForSql(JSON.stringify({ platform: row.sender_platform }))}')`
+```
+
+The `request_body` column receives `row.extra_data?.raw_request_body`, which is itself an already-stringified JSON with double-escaped URL encoding. When the string contains Korean characters in URL parameters (e.g., `utm_content=미국주식`) embedded in the double-escaped `button_variable.appUrl` / `button_variable.webUrl`, the result after `escapeForSql` produces a PostgreSQL JSON that is structurally invalid.
+
+The `Params: undefined` / `Values: undefined` suffix in the error log confirms the pg driver's parameterized query also fails — the raw_request_body value cannot be bound to the `json` column.
+
+**Log evidence (2026-06-19):**
+```
+ERROR  invalid input syntax for type json
+Query: INSERT INTO delivery_failure_log_b2b4a8f879a75673b755bff42fc1deb6 (...) VALUES
+  ('...', '...', 'Y1tuTv', 'IMAGE',
+   '{"message_variable":{"article_summary":"...스페이스X..."},
+     "button_variable":{"appUrl":"class101.net/...&utm_content=미국주식\\",...}}',
+   ...);
+Values: undefined
+Params: undefined
+```
+
+**Primary trigger in this session:** Kakao BZM API error code `3018` (이미지 메시지 변수 오류) means the send already failed at the Kakao API level. The INSERT is for the failure log, not a delivery result — so delivery was already lost before the DB error.
+
+**Classification:** `needs_fix` — double failure: (1) Kakao API rejection for the campaign `Y1tuTv` (campaign content/variable configuration issue), (2) failure log INSERT broken (no record of failure preserved).
+
+**Fix target:** `repository/delivery_result_repository.ts:132` — use parameterized queries or sanitize `raw_request_body` with `JSON.parse` → `JSON.stringify` to normalize the double-escaping before insertion. Alternatively, truncate or strip the URL string to ASCII before binding.
+
+---
 
 ## Root cause — push-notification path (`scheduled-batch-delivery`)
 

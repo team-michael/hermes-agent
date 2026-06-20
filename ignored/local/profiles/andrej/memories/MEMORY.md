@@ -1,8 +1,8 @@
-Andrej env: terminal HOME can be profile home; set `HOME=/home/ubuntu` for gh/GWS, use `/home/ubuntu/.hermes/workspace`. GWS: `/home/ubuntu/.nvm/versions/node/v24.15.0/bin/gws`.
+Andrej env: terminal HOME can be profile home; set `HOME=/home/ubuntu` for gh/GWS, use `/home/ubuntu/.hermes/workspace`. GWS: `/home/ubuntu/.nvm/versions/node/v24.15.0/bin/gws`. JDK17: `/home/ubuntu/.hermes/jdks/jdk-17`.
 §
 Notifly project: project_id→DDB `project` product_id/name; product created_at in DDB `products`; per-project PG `table_${project_id}`. `project_statistics.metric_name`: no `project_*`/`notifly_*`; alias in mapper.
 §
-Notifly facts: PG/read-model first; Athena raw only explicit. FCM404≠APNs401. Delivery UI publishing/enqueue+delivery show ‘발송 중’; Redis `running`. API key: `update_api_secret_key.yml` only changes Cognito; integration-service Mixpanel Basic Auth checks DDB/Redis `project.cognito_api_auth`, so update + cache invalidate too.
+project_statistics stores billing input metrics as independent rows (`session_starts`, `events`, `user_property_updates`), not `data_point`; billing composition is later/plan-specific. Usage granularity: event-log row; params not separate; billing UTC/KST09.
 §
 Notifly docs: docs=`notifly-event/docs` Mintlify; web=`notifly-web`; Product KB=`notifly-product-knowledge`. Push-law docs: `mkt_push_agreed` example only; flow user-prop→default true; SDK note under unsubscribe/checklist.
 §
@@ -16,7 +16,7 @@ Remote/workflow ops: local Hermes isn't target; verify host; env/VPN/secrets tes
 §
 Notifly ECS SC: check `deployments[].serviceConnectConfiguration` (top-level may be null). Slack #engineering 2026-01-09: SC imposes 15s request timeout.
 §
-Notifly console: use `NOTIFLY_AUTH` email:password for `/ko/auth/login`; Michael Product is slug `michael` dashboard path.
+Notifly console: `NOTIFLY_AUTH` login; Michael slug `michael`. List delivery: avoid delaying old 종료 rows; use derived status, not status override.
 §
 Hermes `tarantino`: profile `/home/ubuntu/.hermes/profiles/tarantino`; related to `just-went-viral.com`; dashboard host `dashboard.just-went-viral.com`.
 §

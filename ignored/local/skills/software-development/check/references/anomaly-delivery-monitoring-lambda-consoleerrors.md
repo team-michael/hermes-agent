@@ -80,12 +80,87 @@ always fire.
 
 **Sudden volume increase pattern:**
 If this pattern appeared sporadically before (e.g. 1 event/day for 30 days)
-and then spikes sharply (e.g. 24 events on one day), check `LastModified` on
+and then spikes sharply (e.g. 24+ events on one day), check `LastModified` on
 the Lambda function. A deployment the previous day that changes anomaly
 detection logic or thresholds is a strong contributing factor. Correlate:
 1. `describe-function-configuration` → `LastModified`
 2. Logs Insights daily count for `high failure rate` over 30d (`bin(1d)`)
 3. Whether the campaigns involved are newly created or running continuously
+
+**Pitfall — helper `can_answer_root_cause: true` does NOT mean log content was confirmed**: The helper may return `can_answer_root_cause: true` while `logs.current_error_details` is absent. This means alarm metadata and history were sufficient for the helper's answerability gate — not that the actual `reason:` field was read. For `anomaly-delivery-monitoring`, Pattern 1/2 vs Pattern 3 depends entirely on the log's `reason:` value. Even when `can_answer_root_cause: true`, always run:
+
+```bash
+aws logs filter-log-events \
+  --log-group-name '/aws/lambda/anomaly-delivery-monitoring' \
+  --region ap-northeast-2 \
+  --start-time <StateReasonData.startDate - 5min in epoch ms> \
+  --end-time   <StateReasonData.startDate + 5min in epoch ms> \
+  --filter-pattern 'ERROR' \
+  --query 'events[*].{t:timestamp,m:message}' \
+  --output json | jq -r '.[] | "\(.t / 1000 | strftime("%Y-%m-%d %H:%M:%S"))  \(.m)"'
+```
+
+Do NOT assume `no_action` from helper output alone.
+
+**Pitfall — helper `alarm_count_30d` understates Pattern 3 frequency**: The
+helper counts `OK → ALARM` alarm transitions, not individual `ERROR` log lines.
+A single Lambda invocation that emits 2 `high failure rate` lines triggers one
+alarm transition but registers 2 log events. When Pattern 3 is suspected to be
+surging, always run a separate Logs Insights daily count query keyed on the
+literal phrase rather than relying on `history.alarm_count_*`:
+
+```sql
+fields @timestamp
+| filter @message like /high failure rate/
+| stats count() as cnt by bin(1d) as day
+| sort day desc
+```
+
+Real example (2026-06-19, confirmed live):
+`alarm_count_30d: 14` / `alarm_count_7d: 14` (helper transition counts) vs
+actual Pattern 3 Logs Insights daily log-event counts:
+
+| Date    | Log events |
+|---------|------------|
+| ≤ 6/16  | 1/day (sporadic baseline) |
+| 6/17    | 1 (surge begins same day as deploy) |
+| 6/18    | 28 |
+| 6/19    | 38 (still climbing mid-investigation) |
+
+Lambda `LastModified: 2026-06-17T08:10:24 UTC` (KST 17:10) — deployment
+exactly coincides with surge start.  All 4 breaching campaigns belonged to
+**bladderly** (dd000087d726596b9324ef93f982a899), push-notification channel:
+dEyGrL (14 alarms today), FO342R (13), H3hB0J (10), bHzuaZ (3).
+
+Real example (2026-06-20, confirmed live — same surge continuing):
+`alarm_count_30d: 14` (helper transition counts, still severely understated) vs
+actual daily log-event counts from Logs Insights:
+
+| Date    | Log events |
+|---------|------------|
+| ≤ 6/16  | 1/day (sporadic baseline) |
+| 6/17    | 1 |
+| 6/18    | 28 |
+| 6/19    | 40 |
+| 6/20    | 2 (09:30 KST, still ongoing) |
+
+Lambda `LastModified: 2026-06-17T08:10:24 UTC` (KST 17:10) — same deployment.
+Top campaigns (7d): bladderly/dEyGrL (27건), bladderly/H3hB0J (13건),
+bladderly/FO342R (13건), bladderly/YDHLsZ (12건), bladderly/bHzuaZ (5건).
+Secondary: class101 (b2b4a8f879a75673b755bff42fc1deb6)/nxmfsB (3건).
+Current alarm window: bladderly/bHzuaZ, bladderly/dEyGrL.
+
+Helper `can_answer_root_cause: true` was returned but `current_error_details`
+was absent. The actual `reason: high failure rate detected` was only confirmed
+by a manual `filter-log-events` follow-up. This is the canonical example of the
+"helper true but log content unconfirmed" pitfall above.
+
+Key lesson: `alarm_count_7d: 14` severely understated the real 83-event-7d
+volume. The Logs Insights daily-count query keyed on the literal phrase is the
+**only reliable frequency signal** for Pattern 3 surge detection. Helper
+transition counts severely undercount real failure volume when multiple ERROR
+lines fire per invocation (multiple campaigns → multiple lines → single alarm
+transition).
 
 ## Code-level mechanics of scheduled-but-not-delivered
 

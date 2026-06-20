@@ -114,7 +114,30 @@ The helper cannot parse alarm names that start with `[api-service]` because:
 
 Note: the helper does **not** expose `--alarm-name-prefix`, so the prefix-based workaround is unavailable.
 
-When the helper returns `can_answer_root_cause: false` for this alarm, use direct AWS CLI with `--query` matching (the field selector is not affected by bracket parsing):
+When the helper returns `can_answer_root_cause: false` for this alarm, use **boto3 paginator + client-side substring filter** (confirmed most reliable — 2026-06-19):
+
+```python
+import boto3, json
+cw = boto3.client('cloudwatch', region_name='ap-northeast-2')
+paginator = cw.get_paginator('describe_alarms')
+all_alarms = []
+for page in paginator.paginate(AlarmTypes=['MetricAlarm']):
+    all_alarms.extend(page['MetricAlarms'])
+# substring match avoids bracket/JSON parsing issues entirely
+matching = [a for a in all_alarms if 'api-service' in a['AlarmName'] and '4xx' in a['AlarmName'].lower()]
+for a in matching:
+    print(json.dumps({
+        'name': a['AlarmName'],
+        'namespace': a.get('Namespace'),
+        'metric': a.get('MetricName'),
+        'threshold': a.get('Threshold'),
+        'state': a.get('StateValue'),
+        'state_reason': a.get('StateReason','')[:300],
+        'state_updated': str(a.get('StateUpdatedTimestamp','')),
+    }))
+```
+
+Alternative: direct AWS CLI with `--query` matching (the field selector is not affected by bracket parsing):
 
 ```bash
 aws cloudwatch describe-alarms --region ap-northeast-2 \
@@ -655,6 +678,25 @@ When writing Logs Insights aggregate queries for `api-service` structured logs, 
 3. For `filter` and `fields` clauses, the quoted syntax `request.headers."user-agent"` works fine; the restriction applies only to `stats by`.
 
 Also note that `/authenticate` 400 responses may genuinely lack a `user-agent` header. When querying with `ispresent(request.headers."user-agent")`, an empty result set does not prove the field access is wrong; it may mean the client omitted the header.
+
+2026-06-19 alarm window (16:56–17:06 UTC / 2026-06-20 01:56–02:06 KST):
+- **Alarm transitions**: OK→ALARM at 17:11 UTC; metric datapoints [179.0 (16:56), 900.0 (17:01), 235.0 (17:06)]; threshold 100.0 with 3 of 4 datapoints required
+- Total `error-response` with status ≥ 400 (Logs Insights 16:50–17:25 UTC): **~1,331**
+- `/authenticate` 400: **1,302** (97.8%)
+  - User-Agent mix: `python-requests/2.32.3` (primary), `node` (secondary), IP `59.11.147.246` behind Cloudflare
+  - Level: **100% `warn`**
+  - `projectId`: **`"unknown"`** on all `/authenticate` lines
+- Secondary signatures (all `warn`):
+  - `DELETE /projects/80fd28969702573797f4d7f77063e47b/messages/text-message/blockservice/recipients/removes` 400: **12**
+  - `POST /track-event` 401 (`ffde3a7a000b5b2198961b3fff400acd`): **10**
+  - `POST /projects/b2b4a8f879a75673b755bff42fc1deb6/user-journeys/U86OKs/enter` 400: **3** (`class101`)
+  - `POST /campaign/300ef7dd1ea459a2bb0dbafd2aabc0c7/j4k6UJ/send` 400: **2** (`museclinic`)
+  - `GET /projects/b5d37a7e65af595f8b49a6e6ccf8a4c0/messages/kakao-alimtalk/templates` 401: **1**
+  - `GET /user-state/2b9f5a6685ba5b839803f1338a539724/...` 400: **1**
+- 30d/7d/1d/10m OK→ALARM counts (from `HistoryData`): **50 / 17 / 3 / 1**
+- Note: `node` UA appears alongside `python-requests` in this window — both are part of the same daily burst. Classification: consistent with prior sessions.
+
+Result: identical to the known daily ~02:11 KST `/authenticate` authentication rejection burst. All signals are handled `warn` validation rejections; no customer impact.
 
 ## Long-term remediation options
 

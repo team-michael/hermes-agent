@@ -23,6 +23,21 @@ If fresh standalone `ioredis` succeeds inside the same runtime but the app wrapp
 - Keep `connectTimeout`, `commandTimeout`, `maxRetriesPerRequest`, and `enableOfflineQueue: false` bounded.
 - If changing a shared Redis manager, add stale-client reconnect/retry tests; but avoid permanent verbose lifecycle logging.
 
+## Removal/A-B validation pattern
+
+Before keeping broad `packages/redis/src/index.ts` lifecycle changes, prove they are necessary. A smaller fix may already be enough.
+
+1. Capture a positive baseline on the current preview:
+   - authenticated `/health` returns the expected SHA;
+   - authenticated delivery API for at least one known Redis-only hash returns `mode: "realtime"`, not summary fallback;
+   - optional local `cloudflared access tcp` + standalone `ioredis` can `PING`/`HGETALL` a delivery monitor key.
+2. Revert the shared RedisManager changes only, keeping the product/delivery-policy path intact.
+3. Run local package gates: `@notifly/redis` test/build, `@notifly/delivery-policy` test/build, web-console targeted delivery tests/typecheck/prettier/diff-check.
+4. Push and wait for Cloudflare preview deploy success.
+5. Re-run the same authenticated delivery API smoke. If the same Redis-only campaigns still return `mode: "realtime"`, the shared RedisManager change was unnecessary and should stay removed.
+
+Important probe detail: local `cloudflared access tcp` to the Redis proxy may accept TCP but reset Redis commands unless the Access service token is supplied with `--id "$CF_ACCESS_CLIENT_ID" --secret "$CF_ACCESS_CLIENT_SECRET"`. Treat `ECONNRESET` without those flags as an auth/probe setup issue, not proof the proxy is broken.
+
 ## Temporary diagnostics cleanup
 
 Diagnostic endpoints/logs are useful to prove the boundary, but they should not survive final PR cleanup unless explicitly productized.

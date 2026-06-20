@@ -34,6 +34,8 @@ Reference for `AuroraOptimizedReadsCacheHitRatio` alarms after broad PostgreSQL 
 Reference for Notifly partner/security-audit checks about log integrity, S3 Versioning/Object Lock, CloudTrail validation, and Lambda-based automatic verification: `references/notifly-log-integrity-control-verification.md`.
 Reference for ECS log-derived `ErrorCount` alarms caused by malformed/empty JSON request bodies, including Ktor/Jackson `No content to map due to end-of-input` cases: `references/ecs-log-derived-errorcount-malformed-request.md`.
 Reference for Notifly Redis/ElastiCache cluster-mode ↔ Lambda investigations, including how to separate residual Redis warnings from actual Lambda timeout/SQS impact: `references/notifly-redis-lambda-cloudwatch-probes.md`.
+Reference for Notifly delivery queue DLQ alarms that occur near Redis warnings, including SQS/Lambda/Redis causality separation and partial-batch-response pitfalls: `references/notifly-sqs-dlq-vs-redis-warn-triage.md`.
+Reference for Notifly event-proxy project blocklist/unblock verification after deploy, including ECS env, `event_proxy.dropped.count`, and Athena `notifly_event_logs`: `references/notifly-event-proxy-unblock-verification.md`.
 Reference for live `api.notifly.tech` customer active-user estimates from CloudWatch app logs + Cloudflare edge analytics + ALB verification: `references/notifly-api-active-user-analysis.md`.
 
 1. **Check environment first**

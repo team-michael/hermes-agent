@@ -120,7 +120,9 @@ Beware misleading summary fields: if the captured tool exits non-zero, downstrea
 This often explains why logs look sparse.
 
 ## 5. Compare against the previous red baseline
-When `main` is already red, do not treat the current run's full failure list as caused by the latest change. First compare failed test IDs against the nearest prior `main` failure:
+When `main` is already red, do not treat the current run's full failure list as caused by the latest change. First compare failed test IDs against the nearest prior `main` failure.
+
+Also consider the inverse case: the PR was green earlier, then starts failing after a new base-branch commit lands. GitHub `pull_request` checks run on a synthetic merge of PR head + current base, so a newly merged `main` regression can appear as a PR failure. Use `references/pr-ci-synthetic-merge-main-regression.md` to trace failed head SHA, suspect `main` commits, and whether the same check failed on the base PR first.
 
 ```bash
 cache="$HOME/.hermes/cache/gha-compare-$NEW_RUN"

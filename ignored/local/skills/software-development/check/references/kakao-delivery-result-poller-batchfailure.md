@@ -64,6 +64,24 @@ EMF log lines contain plain JSON and carry `project_id`, `campaign_id`, `request
 
 When trying to isolate a specific invocation by `RequestId`, `filter_log_events` with the full UUID may return zero events even when the log stream exists. Use a time-bounded `filter-log-events` with no `filterPattern` (or a simpler term like `failure` / `ERROR`) and grep client-side.
 
+### C. `delivery_failure_log` INSERT `invalid input syntax for type json` (JSON double-escape bug)
+
+Log excerpt:
+```
+ERROR  invalid input syntax for type json
+Query: INSERT INTO delivery_failure_log_<project_id> (id, notifly_user_id, campaign_id, subtype, request_body, response_body, channel, sender_info) VALUES ('...', '...', '<campaign_id>', 'IMAGE', '{"message_variable":{"article_summary":"..."}, "button_variable":{"appUrl":"...&utm_content=한글\\",...}}', ...);
+Values: undefined
+Params: undefined
+```
+
+- `AWS/Lambda` `Errors = 0`, `Duration` normal.
+- The Lambda returns `{ batchItemFailures: [...] }` for every message where the DB insert failed — Kakao polling record is retried.
+- **Root cause:** `repository/delivery_result_repository.ts:132` — `raw_request_body` is an already-stringified JSON with double-escaped URL encoding containing Korean characters (e.g., `utm_content=미국주식`). After `escapeForSql`, the result is not valid PostgreSQL JSON. The `Params: undefined` / `Values: undefined` line confirms the pg parameterized query binding also fails.
+- **Upstream cause:** The send failure itself is usually triggered by a Kakao BZM API error (e.g., `3018` — 이미지 메시지 변수 오류). The INSERT failure is secondary — failure log record is lost, not the delivery attempt per se.
+- **Classification:** `needs_fix` — two independent issues: (1) Kakao API rejection (campaign variable/image issue, class101 project), (2) failure log INSERT broken.
+- **Scope extraction:** `delivery_failure_log_<project_id>` table suffix gives `project_id`; `campaign_id` appears in the VALUES clause directly.
+- **Fix target:** `repository/delivery_result_repository.ts:132` — normalize `raw_request_body` via `JSON.parse` → `JSON.stringify` before SQL interpolation, or switch to parameterized binding. See `references/scheduled-batch-delivery-dbinsert-json-serialization-bug.md` for the full pattern and fix options shared with `scheduled-batch-delivery` and `scheduled-batch-text-message-delivery`.
+
 ## Classification quick guide
 
 | Errors metric | ERROR logs present | Root cause | Status |
@@ -71,4 +89,5 @@ When trying to isolate a specific invocation by `RequestId`, `filter_log_events`
 | 0 | Yes, `N_RESEND_ENQUEUE_FAILED` + missing env var | Deployment regression | `needs_fix` |
 | 0 | Yes, `KakaoResultApiError` / provider error | Handled provider rejection | `no_action` |
 | 0 | No, only `completed_failure` PollAttempts | Batch-level handled failure | `no_action` |
+| 0 | Yes, `invalid input syntax for type json` on `delivery_failure_log_*` INSERT with `Params: undefined` | JSON double-escape bug in `delivery_result_repository.ts:132` + upstream Kakao API error | `needs_fix` |
 | >0 | Unhandled exception / timeout | Runtime bug | `needs_fix` or `urgent` |
