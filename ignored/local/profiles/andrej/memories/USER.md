@@ -6,7 +6,7 @@ Notifly RCA/debug: terse KR, asked-only, evidence first; classify existing/struc
 §
 In DMs, user wants infra explanations tailored to Mobile/iOS+SDK Eng background: use analogies only when mechanisms match; flag SDK implications for contracts/retries/offline/telemetry/DX.
 §
-Slack/Notifly: terse KR core only; PR iff asked; drafts no fences. Code/UI: readable helpers > dense conditionals; propose design/motion before build.
+Slack/Notifly: terse KR core; PR iff asked; no fences. Code/UI: readable helpers, reuse seams. “skill 실행” means apply+verify/push.
 §
 MSP/SmileShark: draft; no internal Slack refs.
 §

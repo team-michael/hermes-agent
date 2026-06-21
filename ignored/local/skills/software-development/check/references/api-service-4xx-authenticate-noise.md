@@ -114,7 +114,9 @@ The helper cannot parse alarm names that start with `[api-service]` because:
 
 Note: the helper does **not** expose `--alarm-name-prefix`, so the prefix-based workaround is unavailable.
 
-When the helper returns `can_answer_root_cause: false` for this alarm, use **boto3 paginator + client-side substring filter** (confirmed most reliable — 2026-06-19):
+When the helper returns `can_answer_root_cause: false` for this alarm, use **boto3 paginator + client-side substring filter** (confirmed most reliable — 2026-06-20).
+
+**Why `AlarmNamePrefix` also fails**: `describe_alarms(AlarmNamePrefix='api-service')` returns empty because the actual alarm name starts with `[api-service]` — the bracket is the first character. AWS prefix matching is literal, so only `AlarmNamePrefix='[api-service]'` would match, but that causes the same JSON-parsing issue as `--alarm-names`. Full paginate + client-side substring filter is the only safe approach.
 
 ```python
 import boto3, json
@@ -697,6 +699,23 @@ Also note that `/authenticate` 400 responses may genuinely lack a `user-agent` h
 - Note: `node` UA appears alongside `python-requests` in this window — both are part of the same daily burst. Classification: consistent with prior sessions.
 
 Result: identical to the known daily ~02:11 KST `/authenticate` authentication rejection burst. All signals are handled `warn` validation rejections; no customer impact.
+
+2026-06-20 alarm window (16:56–17:06 UTC / 2026-06-21 01:56–02:06 KST):
+- **Alarm transitions**: OK→ALARM at 17:11 UTC, ALARM→OK at 17:12 UTC; OK→ALARM at 17:16 UTC (2 transitions, back-to-back sliding-window artifact)
+- Metric datapoints confirming breach: 176.0 (16:56), 900.0 (17:01), 276.0 (17:06); threshold 100.0 with 3 of 4 datapoints required; post-peak 10.0 at 17:11
+- Total `error-response` with status ≥ 400 (Logs Insights 16:55–17:20 UTC): **1,364** across 5 path groups
+- `/authenticate` 400: **1,336** (97.9%)
+  - User-Agent: `Apache-HttpClient/5.3.1 (Java/17.0.19)` **1,323**, `python-requests/2.32.3` **13**
+  - Level: **100% `warn`**; explicit `level == "error"` count: **0**
+  - `projectId`: **`"unknown"`** on all `/authenticate` lines
+- Secondary signatures (all `warn`):
+  - `POST /track-event` 401: **14**
+  - `/projects/80fd28969702573797f4d7f77063e47b/messages/text-message/blockservice/recipients/removes` 400: **12**
+  - `/projects/aac1cb05f73c57b18d7c7f2e985444e6/messages/kakao-alimtalk/templates` 401: **1**
+  - `/projects/b5d37a7e65af595f8b49a6e6ccf8a4c0/messages/kakao-alimtalk/templates` 401: **1**
+- 30d/7d/1d/10m OK→ALARM counts (HistoryData): **50 / 16 / 2 / 2**
+
+Result: identical to the known daily ~02:11 KST `/authenticate` authentication rejection burst. All signals are handled `warn` validation rejections; no customer impact. `Apache-HttpClient/5.3.1` UA dominance resumed after previous session's `python-requests` shift, confirming multi-UA rotation within the same source.
 
 ## Long-term remediation options
 
