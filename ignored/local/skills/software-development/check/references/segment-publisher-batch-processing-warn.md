@@ -33,6 +33,8 @@ Daily `Sum=1.0` at roughly the same clock time for ~30 days (verified via `get_m
 
 Alarm-history transitions on the current `ConsoleErrors` alarm are `OK → ALARM → OK`. The helper counts these transitions directly from `describe-alarm-history` for the `빈도` field. Cross-check with `get_metric_statistics Period=86400 Sum` on `ConsoleErrors` / `segment-publisher-prod slow eic query` if the helper transition counts look unexpectedly high.
 
+**Pitfall — 30일/7일 alarm_count 동일 현상**: 30일 알람 count와 7일 알람 count가 동일한 값(예: 둘 다 6회)으로 나타나는 경우, 이는 모든 알람이 최근 7일 이내에 집중 발생했음을 의미한다. `daily_alarm_counts`를 보면 실제 날짜별 분포를 확인할 수 있다. 이것이 이상 신호가 아닌지 확인하려면 30일 전체 기간 대비 최근 집중도를 체크한다. 2026-06-18~21 기간에 4일 연속 발생(총 6회) 패턴은 `class101` 대규모 다중 캠페인 배치가 정기화된 신호로, baseline 수준이다.
+
 (The old `Custom/segment-publisher` alarm used `INSUFFICIENT_DATA → ALARM → INSUFFICIENT_DATA` before its removal circa 2026-06-04; prior session notes may reference that transition style.)
 
 ## Root cause
@@ -59,7 +61,7 @@ Total processing time: <duration_ms> ms
 
 The triggering stream varies per invocation (different ECS tasks handle different batches). To find the campaign/project:
 
-1. Identify the active stream around the alarm-datapoint time via `describe_log_streams(orderBy='LastEventTime', descending=True)`. For large-batch tasks the trigger stream may be ranked 5th–10th because it finishes earlier than smaller active tasks; see the `ecs-log-manual-trace.md` reference.
+1. Identify the active stream around the alarm-datapoint time via `describe_log_streams(orderBy='LastEventTime', descending=True, limit=20)`. **Key filtering step**: Many of the returned streams have duration ~0 seconds (short-lived triggerer tasks). Filter by `(lastEventTimestamp - firstEventTimestamp) / 1000 / 60 > 5` minutes to isolate the long-running batch stream that carries the WARN line. The triggering stream is typically 16–35 minutes long and ranks 5th–15th in the `LastEventTime` ordering; it finishes and its stream closes *before* the many subsequent short tasks complete. Compute durations in Python/boto3 to avoid manual inspection of 20+ stream names.
 2. Use `get_log_events` on that stream bounded to the alarm window (±5 min).
    - **AWS CLI v2 pitfall**: use `--no-start-from-head` instead of `--start-from-head false`.
 3. Look for:
@@ -73,6 +75,7 @@ The triggering stream varies per invocation (different ECS tasks handle differen
 When the `Received event` payload contains `"schedule_type": "user_journey"` and a `user_journeys` array, report the scope as **user journey** (mutually exclusive with campaign), using the ID from the array.
 
 Observed projects/campaigns in recent triggers (scope varies by day because `UL1T00` is not globally unique):
+- **`class101`** / multi-campaign batch `CNGJjd`, `3KWfBG`, `VMyJo5`, `WPE9J6`, `IdxUZt`, `C5Zpf0`, `HxbGSr`, `a84kiE` (2026-06-21 05:59–06:30 UTC, ~31.2 min, **campaign**, rss ~2.0 GB; 30일/7일 각 6회)
 - **`class101`** / multi-campaign batch `CNGJjd`, `C5Zpf0`, `WPE9J6`, `VMyJo5`, `3KWfBG`, `a84kiE`, `FQgbL9`, `sOk5Yk`, `IdxUZt`, `HxbGSr` (2026-06-02 06:29 UTC, ~30.3 min, **campaign**, rss peaked at **4717 MB**)
 - **`melting`** / `k6bkO6` (2026-05-24 06:29 UTC, ~30.4 min, multi-campaign batch, rss peaked at **4655 MB**)
 - `melting` / `k6bkO6` (2026-05-15 06:30 UTC, ~31.4 min)

@@ -700,6 +700,12 @@ Also note that `/authenticate` 400 responses may genuinely lack a `user-agent` h
 
 Result: identical to the known daily ~02:11 KST `/authenticate` authentication rejection burst. All signals are handled `warn` validation rejections; no customer impact.
 
+2026-06-21 alarm window (16:56–17:06 UTC / 2026-06-22 01:56–02:06 KST):
+- **Alarm transitions**: OK→ALARM at 17:11 UTC, ALARM→OK at 17:14 UTC (3 min); metric datapoints 885.0 (17:00), 712.0 (17:05), 10.0 (17:10); threshold 100.0 with 3 of 4 datapoints required
+- Total (Logs Insights not run; consistent with prior day): `/authenticate` 400 dominant, level `warn`, `projectId: "unknown"`
+- 30d/7d/1d/10m OK→ALARM counts (HistoryData): **50 / 16 / 1 / 1**
+- Result: identical to the known daily ~02:11 KST `/authenticate` authentication rejection burst. No customer impact.
+
 2026-06-20 alarm window (16:56–17:06 UTC / 2026-06-21 01:56–02:06 KST):
 - **Alarm transitions**: OK→ALARM at 17:11 UTC, ALARM→OK at 17:12 UTC; OK→ALARM at 17:16 UTC (2 transitions, back-to-back sliding-window artifact)
 - Metric datapoints confirming breach: 176.0 (16:56), 900.0 (17:01), 276.0 (17:06); threshold 100.0 with 3 of 4 datapoints required; post-peak 10.0 at 17:11

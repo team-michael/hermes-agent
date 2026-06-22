@@ -14,7 +14,17 @@ Alarm datapoint: 1.0 (single increment)
 
 ### Root Causes
 
-1. **Log ingestion lag on metric filter evaluation**: CloudWatch Logs metric filters run asynchronously and may index/match logs after the Lambda invocation completes. If a prior deployment left ERROR log lines in the stream (e.g., a crashed invocation from an earlier version), the metric filter may match those retroactively and increment during a fresh OK→ALARM datapoint window even when current invocations are INFO-only.
+1. **SQS `receiptHandle` base64 false positive** (2026-06-22): CloudWatch Logs `%ERROR%` filter matches the literal substring `ERROR` anywhere in a log line — including inside base64-encoded SQS `receiptHandle` strings that happen to contain `ERROR` in their character sequence (e.g., `AQEBBDOg0fIp...cF+CPDdl...`). This produces a metric increment against an `INFO`-level `Received event:` log line with no real error. Lambda `Errors=0`, `Throttles=0`, Duration normal. All invocations complete successfully.
+
+   **Classification**: always `no_action` when the only matching line is `Received event:` or `Received event from SQS:` at INFO level.
+
+   **Triage fast-path**: when `filter_log_events --filter-pattern '%ERROR|Status: timeout%'` returns lines with log level `INFO` containing `Received event:`, inspect the `receiptHandle` field. If the match originates from the `receiptHandle` value (a ~200–400 character base64 string), the alarm is a structural false positive.
+
+   **Observed case**: `kakao-brand-message-delivery` — receiptHandle `AQEBBDOg0fIp...cF+CPDd...jIIDcbKs...` contains literal `ERROR` substring. Invocations completed normally (KakaoApiSend=success, DbInsert=success). Project: moyo (`a78f6de3abdc5d7ca175486626e2ab1c`), campaign `jXy3pD`.
+
+   **Long-term fix**: remove `receiptHandle` from `Received event:` logging, or replace with `<omitted>`. File: `services/lambda/<function-name>/index.ts` — the `console.log('Received event:', JSON.stringify(event))` pattern. Log only `messageId` per SQS record instead.
+
+2. **Log ingestion lag on metric filter evaluation**: CloudWatch Logs metric filters run asynchronously and may index/match logs after the Lambda invocation completes. If a prior deployment left ERROR log lines in the stream (e.g., a crashed invocation from an earlier version), the metric filter may match those retroactively and increment during a fresh OK→ALARM datapoint window even when current invocations are INFO-only.
 
 2. **Metric filter pattern overly broad**: A filter like `%ERROR%` will match literal `"ERROR"` strings embedded in JSON payloads, HTTP access logs, or concatenated text, even when the semantic "error condition" did not occur (e.g., `"status":"ERROR_RETRY"`, `"templateName":"service_error"`). Combined with log-level downgrade (e.g., WARN was changed to INFO recently), old INFO lines may match and old ERROR lines may linger.
 

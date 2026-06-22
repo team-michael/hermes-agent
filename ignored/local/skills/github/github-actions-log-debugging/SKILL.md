@@ -120,6 +120,8 @@ Beware misleading summary fields: if the captured tool exits non-zero, downstrea
 This often explains why logs look sparse.
 
 ## 5. Compare against the previous red baseline
+When many PR checks look red at once, first identify whether they are independent failures or fan-out from one shared blocker. In Notifly workspace CI, one early `api-service` typecheck failure can make downstream service checks appear failed/cancelled/pending. Do not dismiss this as unrelated if the user asked to fix CI; fix the first shared blocker, push, and re-watch until all expected checks pass.
+
 When `main` is already red, do not treat the current run's full failure list as caused by the latest change. First compare failed test IDs against the nearest prior `main` failure.
 
 Also consider the inverse case: the PR was green earlier, then starts failing after a new base-branch commit lands. GitHub `pull_request` checks run on a synthetic merge of PR head + current base, so a newly merged `main` regression can appear as a PR failure. Use `references/pr-ci-synthetic-merge-main-regression.md` to trace failed head SHA, suspect `main` commits, and whether the same check failed on the base PR first.
@@ -142,6 +144,9 @@ Tests that call debounce/rate-limit helpers soon after process start can fail if
 
 ### CI drift pattern: live recommendation defaults
 If tests are meant to verify routing/credential selection, mock live model recommendation functions. Otherwise changing service-side defaults (e.g. provider recommended auxiliary model rotating from one model ID to another) makes unrelated tests fail. Keep separate tests for the actual recommendation path.
+
+### Typecheck pattern: JS `// @ts-check` structural typing on fake framework contexts
+For JavaScript services checked by `tsc -p tsconfig.json`, a runtime-valid test/probe object can still fail CI if it is passed to a function whose JSDoc expects a full framework type. Example: passing `{ addIssue }` to a helper annotated with `import('zod').RefinementCtx` fails because `RefinementCtx` also requires `path`. First inspect the failing line and the callee JSDoc, not just TypeScript source files. Minimal fixes are either: provide the missing structural fields in the fake context (e.g. `{ path: [], addIssue }`) or narrow the helper's JSDoc to the actual required interface/`Pick<>`. If sibling matrix jobs are cancelled immediately after this first typecheck failure, treat them as fan-out from fail-fast unless their logs show an independent failure.
 
 ### CI hang pattern: Jest finished but Node stays alive
 If a JS service CI step takes 30+ minutes but the log says `Test Suites: ... passed`, `Time: 20s`, then `Jest did not exit one second after the test run has completed`, compare the test runner's reported time with the enclosing task/workflow step time. A large gap means the tests finished; Node is waiting on referenced handles. Inspect new code/tests for long `setTimeout`/`setInterval`, servers, Redis/DB clients, or streams whose cleanup depends on abort events that may not fire in `app.request()`/unit-test environments. For production long-lived timers attached to sockets/SSE, prefer `timer.unref?.()` so they do not keep CI/test processes alive; verify with a minimal child-process repro that exits only after timers are unref'ed. Avoid `jest --forceExit` as the primary fix because it masks real handle leaks. For a concise SSE-specific repro/test recipe, see `references/jest-open-handle-sse-timers.md`.
