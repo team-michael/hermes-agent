@@ -41,6 +41,7 @@ class KimiProfile(ProviderProfile):
         enabled = reasoning_config.get("enabled", True)
         if enabled is False:
             extra_body["thinking"] = {"type": "disabled"}
+            extra_body["chat_template_kwargs"] = {"thinking": False}
             return extra_body, top_level
 
         # Enabled: prefer an explicit effort; only fall back to extra_body

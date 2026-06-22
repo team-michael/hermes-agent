@@ -601,6 +601,27 @@ def _resolve_api_key_provider_secret(
     return "", ""
 
 
+def _resolve_cloudflare_workers_ai_base_url(default_base_url: str, env_url: str = "") -> str:
+    """Resolve Cloudflare Workers AI's account-scoped OpenAI-compatible base URL."""
+    from hermes_cli.config import get_env_value
+
+    base_url = (
+        (env_url or "").strip()
+        or (get_env_value("CLOUDFLARE_BASE_URL") or "").strip()
+        or (get_env_value("CF_BASE_URL") or "").strip()
+        or (default_base_url or "").strip()
+    )
+    account_id = (
+        (get_env_value("CLOUDFLARE_ACCOUNT_ID") or "").strip()
+        or (get_env_value("CF_ACCOUNT_ID") or "").strip()
+    )
+    if account_id:
+        base_url = base_url.replace("${CLOUDFLARE_ACCOUNT_ID}", account_id)
+        base_url = base_url.replace("${CF_ACCOUNT_ID}", account_id)
+        base_url = base_url.replace("{account_id}", account_id)
+    return os.path.expandvars(base_url).rstrip("/")
+
+
 # =============================================================================
 # Z.AI Endpoint Detection
 # =============================================================================
@@ -5768,6 +5789,8 @@ def get_api_key_provider_status(provider_id: str) -> Dict[str, Any]:
 
     if provider_id in {"kimi-coding", "kimi-coding-cn"}:
         base_url = _resolve_kimi_base_url(api_key, pconfig.inference_base_url, env_url)
+    elif provider_id == "cloudflare":
+        base_url = _resolve_cloudflare_workers_ai_base_url(pconfig.inference_base_url, env_url)
     elif env_url:
         base_url = env_url
     else:
@@ -5959,6 +5982,8 @@ def resolve_api_key_provider_credentials(provider_id: str) -> Dict[str, Any]:
         base_url = _resolve_kimi_base_url(api_key, pconfig.inference_base_url, env_url)
     elif provider_id == "zai":
         base_url = _resolve_zai_base_url(api_key, pconfig.inference_base_url, env_url)
+    elif provider_id == "cloudflare":
+        base_url = _resolve_cloudflare_workers_ai_base_url(pconfig.inference_base_url, env_url)
     elif env_url:
         base_url = env_url.rstrip("/")
     else:

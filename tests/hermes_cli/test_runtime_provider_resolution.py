@@ -880,6 +880,55 @@ def test_named_custom_provider_expands_env_vars_in_providers_dict(monkeypatch):
     assert resolved["requested_provider"] == "workers-ai"
 
 
+def test_cloudflare_native_provider_resolves_account_scoped_base_url(monkeypatch):
+    class _Pool:
+        def has_credentials(self):
+            return False
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "cf-secret")
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "acct-123")
+    monkeypatch.setattr(rp, "load_pool", lambda provider: _Pool())
+    monkeypatch.setattr(
+        rp,
+        "_get_model_config",
+        lambda: {
+            "provider": "cloudflare",
+            "default": "@cf/zai-org/glm-5.2",
+        },
+    )
+
+    resolved = rp.resolve_runtime_provider(requested="cloudflare")
+
+    assert resolved["provider"] == "cloudflare"
+    assert resolved["api_mode"] == "chat_completions"
+    assert resolved["base_url"] == "https://api.cloudflare.com/client/v4/accounts/acct-123/ai/v1"
+    assert resolved["api_key"] == "cf-secret"
+    assert resolved["requested_provider"] == "cloudflare"
+
+
+def test_cloudflare_alias_resolves_native_without_custom_shadow(monkeypatch):
+    class _Pool:
+        def has_credentials(self):
+            return False
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "cf-secret")
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "acct-123")
+    monkeypatch.setattr(rp, "load_pool", lambda provider: _Pool())
+    monkeypatch.setattr(rp, "load_config", lambda: {})
+    monkeypatch.setattr(rp, "_get_model_config", lambda: {})
+
+    resolved = rp.resolve_runtime_provider(requested="cf")
+
+    assert resolved["provider"] == "cloudflare"
+    assert resolved["base_url"] == "https://api.cloudflare.com/client/v4/accounts/acct-123/ai/v1"
+    assert resolved["api_key"] == "cf-secret"
+    assert resolved["requested_provider"] == "cf"
+
+
 def test_named_custom_provider_falls_back_to_openai_api_key(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "env-openai-key")
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)

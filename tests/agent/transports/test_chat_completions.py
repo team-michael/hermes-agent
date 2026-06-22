@@ -162,6 +162,32 @@ class TestChatCompletionsBuildKwargs:
         kw = transport.build_kwargs(model="gpt-4o", messages=msgs, tools=tools)
         assert kw["tools"] == tools
 
+    def test_cloudflare_workers_ai_reasoning_off_top_level(self, transport):
+        from providers import get_provider_profile
+        profile = get_provider_profile("workers-ai")
+        msgs = [{"role": "user", "content": "Hi"}]
+        kw = transport.build_kwargs(
+            model="@cf/zai-org/glm-5.2",
+            messages=msgs,
+            provider_profile=profile,
+            reasoning_config={"enabled": False},
+        )
+        assert kw["reasoning_effort"] == "none"
+        assert "extra_body" not in kw
+
+    def test_cloudflare_workers_ai_omits_reasoning_for_other_families(self, transport):
+        from providers import get_provider_profile
+        profile = get_provider_profile("workers-ai")
+        msgs = [{"role": "user", "content": "Hi"}]
+        kw = transport.build_kwargs(
+            model="@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+            messages=msgs,
+            provider_profile=profile,
+            reasoning_config={"enabled": False},
+        )
+        assert "reasoning_effort" not in kw
+        assert "extra_body" not in kw
+
     def test_openrouter_provider_prefs(self, transport):
         from providers import get_provider_profile
         profile = get_provider_profile("openrouter")

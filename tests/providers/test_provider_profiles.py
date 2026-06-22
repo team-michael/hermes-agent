@@ -99,19 +99,27 @@ class TestKimiProfile:
 
 
 class TestWorkersAIProfile:
-    def test_reasoning_effort_is_model_agnostic_top_level(self):
-        p = get_provider_profile("workers-ai")
-        for model in [
+    def test_alias_lookup(self):
+        assert get_provider_profile("workers-ai").name == "cloudflare"
+        assert get_provider_profile("cf").name == "cloudflare"
+
+    @pytest.mark.parametrize(
+        "model",
+        [
+            "@cf/zai-org/glm-5.2",
+            "zai-org/glm-5.2",
             "@cf/moonshotai/kimi-k2.6",
-            "@cf/google/gemma-4-26b-a4b-it",
-            "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-        ]:
-            eb, tl = p.build_api_kwargs_extras(
-                reasoning_config={"enabled": True, "effort": "high"},
-                model=model,
-            )
-            assert eb == {}
-            assert tl == {"reasoning_effort": "high"}
+            "@cf/moonshotai/kimi-k2.7-code",
+        ],
+    )
+    def test_reasoning_off_uses_top_level_for_glm_and_kimi(self, model):
+        p = get_provider_profile("workers-ai")
+        eb, tl = p.build_api_kwargs_extras(
+            reasoning_config={"enabled": False},
+            model=model,
+        )
+        assert eb == {}
+        assert tl == {"reasoning_effort": "none"}
 
     @pytest.mark.parametrize(
         "reasoning_config, expected",
@@ -126,20 +134,35 @@ class TestWorkersAIProfile:
             ({"enabled": True, "effort": "max"}, "high"),
         ],
     )
-    def test_reasoning_effort_normalization(self, reasoning_config, expected):
+    def test_reasoning_effort_normalization_for_glm_kimi_common_denominator(
+        self, reasoning_config, expected
+    ):
         p = get_provider_profile("workers-ai")
         eb, tl = p.build_api_kwargs_extras(
             reasoning_config=reasoning_config,
-            model="@cf/google/gemma-4-26b-a4b-it",
+            model="@cf/moonshotai/kimi-k2.6",
         )
         assert eb == {}
         assert tl == {"reasoning_effort": expected}
+
+    def test_non_reasoning_families_omit_reasoning_effort(self):
+        p = get_provider_profile("workers-ai")
+        for model in [
+            "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+            "@cf/google/gemma-4-26b-a4b-it",
+        ]:
+            eb, tl = p.build_api_kwargs_extras(
+                reasoning_config={"enabled": False},
+                model=model,
+            )
+            assert eb == {}
+            assert tl == {}
 
     def test_no_reasoning_config_omits_reasoning_effort(self):
         p = get_provider_profile("workers-ai")
         eb, tl = p.build_api_kwargs_extras(
             reasoning_config=None,
-            model="@cf/google/gemma-4-26b-a4b-it",
+            model="@cf/zai-org/glm-5.2",
         )
         assert eb == {}
         assert tl == {}

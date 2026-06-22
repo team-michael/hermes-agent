@@ -379,6 +379,17 @@ def _resolve_runtime_from_pool_entry(
         # Only override when the pool entry has no explicit base_url (i.e. it
         # fell back to the hardcoded default).  Env var overrides win (#6039).
         pconfig = PROVIDER_REGISTRY.get(provider)
+        if provider == "cloudflare" and (
+            not base_url
+            or "{account_id}" in base_url
+            or "${CLOUDFLARE_ACCOUNT_ID}" in base_url
+            or "${CF_ACCOUNT_ID}" in base_url
+        ):
+            try:
+                creds = resolve_api_key_provider_credentials(provider)
+                base_url = creds.get("base_url", "").rstrip("/")
+            except Exception:
+                pass
         pool_url_is_default = pconfig and base_url.rstrip("/") == pconfig.inference_base_url.rstrip("/")
         if configured_provider == provider and pool_url_is_default:
             cfg_base_url = str(model_cfg.get("base_url") or "").strip().rstrip("/")
@@ -1190,7 +1201,7 @@ def _resolve_explicit_runtime(
 
         base_url = explicit_base_url
         if not base_url:
-            if provider in {"kimi-coding", "kimi-coding-cn"}:
+            if provider in {"kimi-coding", "kimi-coding-cn", "cloudflare"}:
                 creds = resolve_api_key_provider_credentials(provider)
                 base_url = creds.get("base_url", "").rstrip("/")
             else:
