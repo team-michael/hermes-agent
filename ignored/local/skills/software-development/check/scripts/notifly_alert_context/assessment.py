@@ -219,7 +219,7 @@ def assess_helper_context(data: Dict[str, Any]) -> Dict[str, Any]:
                 followups,
                 'query_current_alarm_log_contexts',
                 'AWS CloudWatch Logs Insights',
-                'Query the latest ALARM window with the primary metric filter, then fetch trigger-centered stream context.',
+                'Query the latest ALARM breaching datapoint window with the primary metric filter, then fetch trigger-centered stream context.',
                 ['logs.current_top_signatures', 'logs.current_trigger_contexts'],
                 'The final root cause should cite the current triggering log body.',
             )

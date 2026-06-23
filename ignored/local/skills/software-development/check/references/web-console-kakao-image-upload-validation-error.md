@@ -71,6 +71,10 @@ Absence confirms the first three are external provider errors, not code paths we
 
 **Pitfall — `filter-log-events` case mismatch:** The metric filter uses `%[Ee][Rr][Rr][Oo][Rr]|Exception%`, so a bare `filterPattern='ERROR'` in `filter-log-events` may return zero matches while `filterPattern='Exception'` catches the trigger. Always test both terms, or run a raw tail without `filterPattern`, when the first query is empty.
 
+## Related: LMS 대체 문자 title 필드 미입력 오류
+
+`Error: The title can not be empty.`는 위 목록과 별개의 패턴이다. Kakao 외부 제공자 오류가 아니라 web-console 서버 사이드 자체 검증 오류 (LMS 타입 선택 시 title 필수 입력 미준수). 동일 IP에서 rapid recurrence 형태로 반복 발생할 수 있음. 분류는 동일하게 `no_action`. 상세 내용은 `references/web-console-kakao-brand-message-test-send-title-empty.md` 참조.
+
 ## Remediation direction
 
 - For the first three and fifth external-provider patterns: downgrade the log level from `ERROR` to `WARN` when the exception is caught and handled, or suppress them at the Kakao wrapper layer.

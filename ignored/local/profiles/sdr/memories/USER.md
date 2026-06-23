@@ -1,4 +1,4 @@
-User wants Notifly SDR/account work concise/result-focused: contact quality, fit, stack evidence, outreach angle; label confidence; avoid guessed personal emails. GTM cleanup goal: unify scattered prospect/customer Sheets; zero-history outbound stays in Sheets; any history goes to Trackit; clean Trackit duplicates/noise before CRM use.
+User wants Notifly SDR/account work concise/result-focused: contact quality, fit, stack evidence, outreach angle; label confidence; avoid guessed personal emails. GTM cleanup goal: unify prospect/customer Sheets; zero-history accounts stay in Sheets; any history goes to Trackit; Trackit duplicate/noise cleanup is review-first via Sheets, with no write/delete/merge unless explicitly approved.
 §
 User prefers future Google Drive deliverables for Notifly competitor/consulting/GTM analysis in the sdr profile to be stored under Drive folder `business` ID `1BUaJE9Tp3yAF_BvSx2lrYnyhGJd30FAo` or its subfolders.
 §

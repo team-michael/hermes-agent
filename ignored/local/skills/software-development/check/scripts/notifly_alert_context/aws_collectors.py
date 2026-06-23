@@ -87,14 +87,23 @@ def collect_alarm_history(session, alarm_name: Optional[str], days: int) -> Opti
                 if summary:
                     summaries.append(summary)
                 new_state = None
+                state_reason = None
+                state_reason_data = None
                 try:
                     data = json.loads(item.get('HistoryData') or '{}')
-                    new_state = (
-                        data.get('newState', {}).get('stateValue')
-                        or data.get('stateUpdate', {}).get('stateValue')
-                    )
+                    new_state_obj = data.get('newState', {}) or data.get('stateUpdate', {}) or {}
+                    new_state = new_state_obj.get('stateValue')
+                    state_reason = new_state_obj.get('stateReason')
+                    state_reason_data = new_state_obj.get('stateReasonData')
+                    if isinstance(state_reason_data, str):
+                        try:
+                            state_reason_data = json.loads(state_reason_data)
+                        except Exception:
+                            pass
                 except Exception:
                     new_state = None
+                    state_reason = None
+                    state_reason_data = None
                 if not new_state and 'to ALARM' in summary:
                     new_state = 'ALARM'
                 if new_state:
@@ -120,6 +129,8 @@ def collect_alarm_history(session, alarm_name: Optional[str], days: int) -> Opti
                             'timestamp': ts.isoformat(),
                             'type': hist_type,
                             'summary': summary,
+                            'state_reason': state_reason,
+                            'state_reason_data': state_reason_data,
                         }
             next_token = resp.get('NextToken')
             if not next_token or len(items_out) >= 12 and sum(by_type_lookback.values()) >= 300:
@@ -625,6 +636,9 @@ def parse_datetime(value: Any) -> Optional[datetime]:
     text = str(value).strip()
     if text.endswith('Z'):
         text = text[:-1] + '+00:00'
+    m = re.search(r'([+-]\d{2})(\d{2})$', text)
+    if m:
+        text = text[:m.start()] + f'{m.group(1)}:{m.group(2)}'
     try:
         parsed = datetime.fromisoformat(text)
     except Exception:

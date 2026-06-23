@@ -4,7 +4,7 @@ Primary Slack workspace for tarantino profile: notifly-greybox.slack.com (team N
 §
 Google OAuth recover (tarantino): token expires → `setup.py --check`=`REFRESH_FAILED invalid_grant`. Fix: `setup.py --auth-url` BARE, send URL→jace, `--auth-code "<URL>"`. **google-workspace setup.py SCOPES list drives re-auth & ONLY had drive.readonly → every re-auth SILENTLY downgraded Drive scope, breaking ALL HBB Drive uploads w/ 403 "insufficient authentication scopes" (2026-06-17). Added drive.file to setup.py SCOPES. HBB upload NEEDS drive.file.** Upload/Sheet 403 = re-auth, don't fabricate. setup.py venvs use uv (no pip): `uv pip install --python <venv> google-auth-oauthlib`.
 §
-ops → tiktok-daily-account-report skill. yt-dlp installed in venv clix-growth (pip works there) — downloads TikTok MP4s captcha-free for single-post creative teardown (see tiktok-account-viral-teardown skill).
+ops → tiktok-daily-account-report skill (yt-dlp in venv clix-growth = captcha-free DL). Clix app "virtual pet grows to look like you", LION mascot. Track A: jellycat-style cuteness, FLAT SOLID pastel bg, char-only (jace likes). Track B: reveal "fed diary→became me".
 §
 Clix prompt-builder: github.com/clix-so/clix-prompt-builder → https://clix-prompt-builder.pages.dev (CF Pages auto-deploy on main). Vite+React SPA + Pages Functions + Google Sheets DB. Composers: src/lib/{image,video,naturalness,axes}.ts. Image-prompt craft → image-prompt-engineering skill.
 §

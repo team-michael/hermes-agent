@@ -229,9 +229,10 @@ def project_campaign_pairs_from_logs(logs_insights: Optional[Dict[str, Any]]) ->
     if not isinstance(logs_insights, dict):
         return []
     pairs: List[Dict[str, Any]] = []
-    current = logs_insights.get('current_project_campaign_pairs') or []
-    recent = logs_insights.get('project_campaign_pairs') or []
-    source_rows = current or recent
+    # Only current alarm-window pairs are allowed to become primary scope.
+    # Historical/recent samples are useful for frequency/baseline, but using them
+    # as scope pollutes answers when multiple unrelated alerts share a log group.
+    source_rows = logs_insights.get('current_project_campaign_pairs') or []
     seen = set()
     for pair in source_rows:
         if not isinstance(pair, dict):
@@ -247,10 +248,7 @@ def project_campaign_pairs_from_logs(logs_insights: Optional[Dict[str, Any]]) ->
         out = {'project_id': project_id, 'campaign_id': campaign_id}
         if pair.get('count') is not None:
             out['count'] = pair.get('count')
-        if current:
-            out['scope_window'] = 'current_alarm_window'
-        else:
-            out['scope_window'] = 'recent_sample'
+        out['scope_window'] = 'current_alarm_window'
         pairs.append(out)
     return pairs
 
@@ -282,7 +280,13 @@ def merge_scope_detections(
     current_detail_text = '\n'.join(current_detail_text_parts)
     current_detail_campaign_ids = detect_campaign_ids(current_detail_text)
     rds_project_ids = project_ids_from_rds_performance_insights(rds_performance_insights)
-    candidate_text = '\n'.join([text, json.dumps(logs_insights, ensure_ascii=False, default=str)])
+
+    current_context_text_parts: List[str] = []
+    for ctx in (logs_insights or {}).get('current_trigger_contexts') or []:
+        if not isinstance(ctx, dict):
+            continue
+        current_context_text_parts.append(str(ctx.get('trigger') or ''))
+    candidate_text = '\n'.join([text, current_detail_text, '\n'.join(current_context_text_parts)])
 
     if current_detail_project_ids or pair_project_ids:
         project_ids = unique([*initial_project_ids, *current_detail_project_ids, *pair_project_ids, *rds_project_ids])

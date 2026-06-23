@@ -245,7 +245,71 @@ def run_logs_insights_query_window_groups(
         log_groups=log_groups,
     )
 
+def _comparison_is_breaching(value: Any, threshold: Any, operator: str) -> bool:
+    try:
+        value_f = float(value)
+        threshold_f = float(threshold)
+    except Exception:
+        return value is not None
+    op = str(operator or '')
+    if op == 'GreaterThanOrEqualToThreshold':
+        return value_f >= threshold_f
+    if op == 'GreaterThanThreshold':
+        return value_f > threshold_f
+    if op == 'LessThanOrEqualToThreshold':
+        return value_f <= threshold_f
+    if op == 'LessThanThreshold':
+        return value_f < threshold_f
+    return True
+
+
+def _state_reason_datapoint_window(alarm: Optional[Dict[str, Any]], history: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    latest = (history or {}).get('latest_alarm_transition') or {}
+    reason_data = latest.get('state_reason_data')
+    if not isinstance(reason_data, dict):
+        return None
+    try:
+        period = int(reason_data.get('period') or (alarm or {}).get('Period') or 60)
+    except Exception:
+        period = 60
+    period = max(1, period)
+    threshold = reason_data.get('threshold')
+    if threshold is None and isinstance(alarm, dict):
+        threshold = alarm.get('Threshold')
+    operator = (alarm or {}).get('ComparisonOperator') if isinstance(alarm, dict) else None
+    datapoints = reason_data.get('evaluatedDatapoints') or []
+    parsed: List[datetime] = []
+    for datapoint in datapoints:
+        if not isinstance(datapoint, dict):
+            continue
+        ts = parse_datetime(datapoint.get('timestamp'))
+        if not ts:
+            continue
+        if datapoint.get('value') is None or _comparison_is_breaching(datapoint.get('value'), threshold, operator or ''):
+            parsed.append(ts)
+    if not parsed:
+        start = parse_datetime(reason_data.get('startDate'))
+        if start:
+            parsed.append(start)
+    if not parsed:
+        return None
+    start = min(parsed)
+    end = max(parsed) + timedelta(seconds=period)
+    return {
+        'basis': 'latest_alarm_state_reason_data',
+        'alarm_transition_time': latest.get('timestamp'),
+        'start': start.isoformat(),
+        'end': end.isoformat(),
+        'datapoint_period_seconds': period,
+        'evaluated_datapoints': [ts.isoformat() for ts in sorted(parsed)],
+    }
+
+
 def alarm_trigger_window(alarm: Optional[Dict[str, Any]], history: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    state_window = _state_reason_datapoint_window(alarm, history)
+    if state_window:
+        return state_window
+
     anchor = parse_datetime(((history or {}).get('latest_alarm_transition') or {}).get('timestamp'))
     basis = 'latest_alarm_transition'
     if anchor is None and isinstance(alarm, dict) and alarm.get('StateValue') == 'ALARM':
@@ -371,7 +435,7 @@ def choose_error_context_anchor_index(
         return center
     best_score, _, best_idx = min(ranked)
     center_score = error_context_score(ordered[center].get('message') or '')
-    if center_score >= 700 or best_score < center_score:
+    if center_score >= 700 and best_score < center_score:
         return best_idx
     return center
 
@@ -654,6 +718,39 @@ def current_error_details_from_contexts(
                 signal_lines.append(line)
             elif is_context:
                 context_lines.append(line)
+        trigger_line = sanitize_log_line(str(ctx.get('trigger') or ''), limit=360)
+        concrete_trigger = bool(trigger_line) and error_context_score(trigger_line) < 700
+        if concrete_trigger and not signal_lines:
+            trigger_pairs = merge_project_campaign_pairs([
+                *detect_project_campaign_pairs(trigger_line),
+                *(ctx.get('project_campaign_pairs') or []),
+            ])
+            trigger_table_refs = [
+                *detect_sharded_table_refs(trigger_line),
+                *[
+                    ref for ref in (ctx.get('table_refs') or [])
+                    if isinstance(ref, dict)
+                ],
+            ]
+            details.append({
+                'timestamp': ctx.get('timestamp'),
+                'log_group': ctx.get('log_group'),
+                'log_stream': ctx.get('log_stream'),
+                'trigger': ctx.get('trigger'),
+                'likely_error': trigger_line,
+                'project_ids': unique([
+                    *detect_project_ids(trigger_line),
+                    *(ctx.get('project_ids') or []),
+                    *[pair['project_id'] for pair in trigger_pairs],
+                ]),
+                'project_campaign_pairs': trigger_pairs,
+                'table_names': detect_sharded_table_names(trigger_line),
+                'table_refs': trigger_table_refs,
+                'context_lines': [],
+                'error_lines': [],
+                'root_cause_hint': trigger_line,
+            })
+            continue
         if not signal_lines and not context_lines:
             continue
         ranked_signal_lines = sorted(signal_lines, key=error_priority)
@@ -832,7 +929,7 @@ fields @timestamp, @message, @logStream, @log
     detected_campaign_ids: List[str] = []
     detected_user_journey_ids: List[str] = []
     detected_user_journey_refs: List[str] = []
-    for row in [*current_rows, *recent_rows]:
+    for row in current_rows:
         message = row.get('@message') or row.get('message') or ''
         detected_project_ids.extend(detect_project_ids(message))
         detected_campaign_ids.extend(detect_campaign_ids(message))
@@ -878,7 +975,7 @@ fields @timestamp, @message, @logStream, @log
         'current_project_campaign_pairs': current_project_campaign_pairs,
         'project_campaign_pairs': recent_project_campaign_pairs,
         'top_signatures': top_signatures,
-        'trigger_contexts': current_trigger_contexts or recent_trigger_contexts,
+        'trigger_contexts': current_trigger_contexts,
         'recent_trigger_contexts': recent_trigger_contexts,
         'detected_scope_ids': {
             'project_ids': unique(detected_project_ids)[:10],

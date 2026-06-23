@@ -13,6 +13,7 @@ CHECK_SCRIPTS = CHECK_SKILL_ROOT / 'scripts'
 sys.path.insert(0, str(CHECK_SCRIPTS))
 
 from notifly_alert_context.detect import (  # noqa: E402
+    detect_campaign_ids,
     detect_project_campaign_pairs,
     detect_lambda_names,
     detect_project_ids,
@@ -31,6 +32,7 @@ from notifly_alert_context.assessment import (  # noqa: E402
 )
 from notifly_alert_context.aws_collectors import collect_alarm_history  # noqa: E402
 from notifly_alert_context.logs import (  # noqa: E402
+    alarm_trigger_window,
     centered_log_context_lines,
     current_error_details_from_contexts,
 )
@@ -72,6 +74,12 @@ def test_latency_alarm_name_is_not_inferred_as_lambda_name():
     text = 'CloudWatch Alarm | ScheduledBatchDelivery-P2-FCMLatencyP99 | ap-northeast-2'
 
     assert detect_lambda_names(text, [], {'Namespace': 'Notifly/ScheduledBatchDelivery', 'Dimensions': []}) == []
+
+
+def test_campaign_ids_ignore_nullish_placeholders():
+    text = "campaign_id: undefined\ncampaign_id: null\ncampaign_id: NX5iRi"
+
+    assert detect_campaign_ids(text) == ['NX5iRi']
 
 
 def test_custom_namespace_metric_alarm_gets_service_wide_scope():
@@ -233,6 +241,21 @@ def test_centered_log_context_reanchors_generic_pg_error_property_line():
     assert 'Params:' not in joined
 
 
+def test_centered_log_context_keeps_concrete_metric_filter_match_as_anchor():
+    trigger_ms = 1777366975138
+    trigger = 'INFO Kakao Bizmessage request body imageLink=https://example.com/?referral_code=ERROR9T9U6'
+    events = [
+        {'timestamp': trigger_ms - 1000, 'message': 'WARN fileBasedConditions not found: fileNames=a.csv, projectId=<project_id>'},
+        {'timestamp': trigger_ms, 'message': trigger},
+        {'timestamp': trigger_ms + 1000, 'message': 'INFO Polling task enqueued'},
+    ]
+
+    centered = centered_log_context_lines(events, trigger_ms, trigger, radius=3)
+
+    assert centered['anchor_shifted'] is False
+    assert centered['anchor_line'] == 'INFO Kakao Bizmessage request body imageLink=<url>'
+
+
 def test_current_error_details_uses_error_blocks_when_trigger_is_generic_pg_field():
     project_id = 'b2b4a8f879a75673b755bff42fc1deb6'
     details = current_error_details_from_contexts([
@@ -268,6 +291,35 @@ def test_current_error_details_uses_error_blocks_when_trigger_is_generic_pg_fiel
     assert details[0]['likely_error'].startswith('duplicate key value violates unique constraint')
     assert details[0]['table_refs'][0]['project_id'] == project_id
     assert "severity: 'ERROR'," not in details[0]['error_lines']
+
+
+def test_current_error_details_keeps_concrete_trigger_over_neighboring_context():
+    trigger = 'INFO Kakao Bizmessage request body imageLink=https://example.com/?referral_code=ERROR9T9U6'
+    details = current_error_details_from_contexts([
+        {
+            'timestamp': '2026-06-21T23:32:32.334000+00:00',
+            'log_group': '/aws/lambda/kakao-brand-message-delivery',
+            'log_stream': '2026/06/21/[$LATEST]example',
+            'trigger': trigger,
+            'surrounding_lines': [
+                'WARN fileBasedConditions not found: fileNames=a.csv, projectId=<project_id>',
+                trigger,
+                'INFO Polling task enqueued',
+            ],
+            'error_blocks': [
+                {
+                    'anchor': trigger,
+                    'lines': [
+                        'WARN fileBasedConditions not found: fileNames=a.csv, projectId=<project_id>',
+                    ],
+                }
+            ],
+        }
+    ])
+
+    assert details
+    assert details[0]['likely_error'] == 'INFO Kakao Bizmessage request body imageLink=<url>'
+    assert details[0]['root_cause_hint'] == 'INFO Kakao Bizmessage request body imageLink=<url>'
 
 
 def test_log_context_assessment_treats_error_blocks_as_actionable_detail():
@@ -348,6 +400,66 @@ def test_merge_scope_detections_keeps_current_pairs_as_primary_scope():
     ]
 
 
+def test_merge_scope_detections_does_not_promote_recent_sample_scope():
+    logs_insights = {
+        'project_campaign_pairs': [
+            {'project_id': PROJECT_FRESHEASY, 'campaign_id': 'WHVsPV', 'count': 3},
+        ],
+        'detected_scope_ids': {
+            'project_ids': [PROJECT_FRESHEASY],
+            'campaign_ids': ['WHVsPV'],
+        },
+        'top_signatures': [
+            {
+                'signature': 'historical matching error',
+                'sample_lines': [
+                    f'campaign_id: WHVsPV, project_id: {PROJECT_FRESHEASY}'
+                ],
+            }
+        ],
+    }
+
+    merged = merge_scope_detections(
+        '',
+        logs_insights,
+        None,
+        [],
+        [],
+        [],
+        [],
+    )
+
+    assert merged['project_ids'] == []
+    assert merged['campaign_ids'] == []
+    assert merged['project_campaign_pairs'] == []
+
+
+def test_merge_scope_detections_does_not_promote_surrounding_lines_for_scope():
+    logs_insights = {
+        'current_trigger_contexts': [
+            {
+                'trigger': 'INFO Kakao Bizmessage request body imageLink=https://example.com/?referral_code=ERROR9T9U6',
+                'surrounding_lines': [
+                    f'INFO Received event from SQS: campaign_id: WHVsPV, project_id: {PROJECT_FRESHEASY}',
+                ],
+            }
+        ],
+    }
+
+    merged = merge_scope_detections(
+        '',
+        logs_insights,
+        None,
+        [],
+        [],
+        [],
+        [],
+    )
+
+    assert merged['project_ids'] == []
+    assert merged['campaign_ids'] == []
+
+
 def test_collect_notifly_alert_context_wrapper_keeps_cli_path_stable():
     result = subprocess.run(
         [sys.executable, str(CHECK_SCRIPTS / 'collect_notifly_alert_context.py'), '--help'],
@@ -412,6 +524,79 @@ def test_alarm_history_exposes_fixed_frequency_windows():
     assert history['alarm_count_7d'] == 4
     assert history['alarm_count_lookback'] == 5
     assert history['rapid_recurrence']['status'] == 'rapid'
+
+
+def test_alarm_history_preserves_latest_alarm_state_reason_data():
+    now = datetime(2026, 6, 22, 5, 43, 40, tzinfo=timezone.utc)
+    reason_data = {
+        'version': '1.0',
+        'queryDate': '2026-06-22T05:43:40.498+0000',
+        'startDate': '2026-06-22T05:42:00.000+0000',
+        'statistic': 'Sum',
+        'period': 60,
+        'recentDatapoints': [1.0],
+        'threshold': 1.0,
+        'evaluatedDatapoints': [
+            {
+                'timestamp': '2026-06-22T05:42:00.000+0000',
+                'sampleCount': 16.0,
+                'value': 1.0,
+            }
+        ],
+    }
+
+    class FakeCloudWatch:
+        def describe_alarm_history(self, **_kwargs):
+            return {
+                'AlarmHistoryItems': [
+                    {
+                        'Timestamp': now,
+                        'HistoryItemType': 'StateUpdate',
+                        'HistorySummary': 'Alarm updated from OK to ALARM',
+                        'HistoryData': json.dumps({
+                            'newState': {
+                                'stateValue': 'ALARM',
+                                'stateReason': 'Threshold Crossed',
+                                'stateReasonData': reason_data,
+                            }
+                        }),
+                    },
+                ],
+            }
+
+    class FakeSession:
+        def client(self, name):
+            assert name == 'cloudwatch'
+            return FakeCloudWatch()
+
+    history = collect_alarm_history(FakeSession(), 'example-alarm', 30)
+
+    assert history['latest_alarm_transition']['state_reason'] == 'Threshold Crossed'
+    assert history['latest_alarm_transition']['state_reason_data'] == reason_data
+
+
+def test_alarm_trigger_window_uses_breaching_datapoint_period():
+    history = {
+        'latest_alarm_transition': {
+            'timestamp': '2026-06-22T05:43:40.501000+00:00',
+            'state_reason_data': {
+                'period': 60,
+                'evaluatedDatapoints': [
+                    {
+                        'timestamp': '2026-06-22T05:42:00.000+0000',
+                        'value': 1.0,
+                    }
+                ],
+            },
+        }
+    }
+
+    window = alarm_trigger_window({'Period': 60, 'EvaluationPeriods': 1}, history)
+
+    assert window['basis'] == 'latest_alarm_state_reason_data'
+    assert window['start'] == '2026-06-22T05:42:00+00:00'
+    assert window['end'] == '2026-06-22T05:43:00+00:00'
+    assert window['datapoint_period_seconds'] == 60
 
 
 def test_collector_registry_has_unique_ordered_keys():

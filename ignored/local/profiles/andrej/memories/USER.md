@@ -12,6 +12,8 @@ MSP/SmileShark: draft; no internal Slack refs.
 §
 CS eval Sheets: source-only, tool-use not answer-quality, preserve visual formatting/colors; MCP discovery; keep prompt/API/benchmarks separate.
 §
-UI/docs/legal/regression: fresh screenshots/preview/PDF; verify real UI; preserve keys; KR docs terms. Landing: JTBD headlines; no duplicate eyebrow; dense natural demos/tables/bullets.
+UI/docs: verify real UI; screenshots inline at relevant sections, not appendix; concise cause-focused KR docs; preserve keys/terms.
 §
 GFSA 외부심사용 문서는 내부 ID/PR/티켓/SHA/Slack 링크를 빼고, 기능·KR 진행률·근거만 간결히 쓴다.
+§
+Exam prep: chunked study→quiz; strict source text.

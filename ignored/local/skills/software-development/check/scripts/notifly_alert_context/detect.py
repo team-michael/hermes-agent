@@ -88,7 +88,7 @@ def detect_campaign_ids(text: str) -> List[str]:
     out: List[str] = []
     for pattern in patterns:
         out.extend(re.findall(pattern, text, flags=re.I))
-    noise = {'for', 'from', 'and', 'the', 'with', 'null', 'none', 'unknown'}
+    noise = {'for', 'from', 'and', 'the', 'with', 'null', 'none', 'undefined', 'unknown'}
     return unique([item for item in out if item.lower() not in noise])
 
 def detect_project_campaign_pairs(text: str) -> List[Dict[str, str]]:
