@@ -386,6 +386,17 @@ Otherwise a public HTML page, redirect loop, or other non-health response can fa
 
 If you enable `workers.dev` only for CI diagnostics, add a failure cleanup step that disables it again. Otherwise a failed deployment may leave an unnecessary public alternate hostname behind.
 
+## Finding prior Cloudflare issue context
+
+When the user asks for a previous “Cloudflare issue/ticket/session”, first disambiguate by failure class instead of broad-searching only for `Cloudflare issue` (that query is noisy because many skills mention Cloudflare):
+
+1. **Vendor DNS/custom-domain propagation bug** — search this skill for `authoritative DNS`, `NXDOMAIN`, `custom domain object exists`, or `internal service that propagates DNS changes`. This is the prior support-escalation pattern where Cloudflare control plane had the Worker Custom Domain/DNS record but authoritative DNS still returned NXDOMAIN.
+2. **Workers AI / Hermes profile model switch** — use `hermes-gateway-profile-operations` references for `@cf/zai-org/glm-5.2`, `@cf/moonshotai/kimi-*`, and `reasoning_effort: "none"`.
+3. **Cloudflare Container + Redis Cluster** — use this skill’s Redis/Envoy references (`redis-cluster-through-cloudflared`, `cloudflare-container-redis-cluster-options`, `notifly-envoy-redis-proxy-stack`) and session-search terms like `ElastiCache Cluster`, `Envoy Redis proxy`, `Workers VPC`.
+4. **AI Agent stream cut / Cloudflare-ALB edge** — use `notifly-web-console-frontend-bugfix` references such as `ai-agent-stream-edge-timeout-lock` and `ai-agent-stream-abort-autostop-owner-lock`.
+
+If session search is needed, use exact mechanism phrases (`"Worker Custom Domain" "NXDOMAIN"`, `"authoritative DNS"`, `"Cloudflare support" "DNS"`, `"ElastiCache Cluster" "Cloudflare"`) rather than generic `Cloudflare issue`.
+
 ## Minimal reusable summary
 
 When Cloudflare preview deploy fails after `wrangler deploy` success, first test whether the hostname resolves from the runner. If not, the likely culprit is DNS/custom-domain propagation, not credentials and not the container runtime.

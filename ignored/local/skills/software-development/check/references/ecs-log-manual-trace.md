@@ -124,3 +124,41 @@ This gives:
   - Or skip `filterPattern` entirely and use `get-log-events` on the known stream, selecting lines client-side.
   - For Logs Insights, use `| filter @message like /abort/` which works on any text format.
   - For regex multi-term matching in `filter-log-events`, use the `like /pattern/` operator inside the structured block, but only when you know the log format is JSON.
+- **AWS CLI `--query` collides with `logs start-query`**: The global `--query` JMESPath parameter shadows the service parameter. `aws logs start-query --query 'fields ...'` fails with `ParamValidation: Bad jmespath expression: Unknown token '='`. Always use `--query-string` (with hyphen) for the Logs Insights query, or use boto3 `logs.start_query(queryString=...)` which has no collision.
+- **Multi-line Logs Insights query strings from heredoc scripts can fail**: `python3 - <<'PYEOF'` scripts containing triple-quoted multi-line query strings can produce `MalformedQueryException: unexpected symbol found <EOF> at line 1 and position 0` even when the Python string is correctly formed and printed. **Workaround**: write the script to a file under `~/.hermes/` (e.g., `~/.hermes/tmp_logsinsights.py`) and run with `python3 <file>`, using single-line query strings with `|` pipe separators (e.g., `'fields status, path | filter @message like "error" | stats count() by status | limit 20'`).
+
+## Boto3 alternative for Logs Insights queries
+
+When the AWS CLI `start-query` is problematic (bracket-prefix alarms, `--query` collision, or complex multi-clause queries), use boto3 from a file-based Python script. This is the most reliable pattern:
+
+```python
+import boto3, time, json
+from datetime import datetime, timezone
+
+session = boto3.Session(region_name='ap-northeast-2')
+logs = session.client('logs')
+
+start_ts = int(datetime(2026, 6, 23, 16, 50, 0, tzinfo=timezone.utc).timestamp() * 1000)
+end_ts = int(datetime(2026, 6, 23, 17, 15, 0, tzinfo=timezone.utc).timestamp() * 1000)
+
+# Single-line query string — more reliable than multi-line
+query_str = 'fields status, path, method, projectId, level | filter @message like "error-response" | stats count() as cnt by status, path, method, level | sort cnt desc | limit 20'
+
+resp = logs.start_query(
+    logGroupName='/aws/ecs/notifly-services-prod/api-service',
+    startTime=start_ts,
+    endTime=end_ts,
+    queryString=query_str
+)
+query_id = resp['queryId']
+time.sleep(8)
+result = logs.get_query_results(queryId=query_id)
+for row in result.get('results', [])[:20]:
+    vals = {f['field']: f['value'] for f in row}
+    print(f"  status={vals.get('status','')} | path={vals.get('path','')} | count={vals.get('cnt','')}")
+```
+
+Key points:
+- Use absolute paths for `.env` loading (see `references/execute-code-env-credential-loading.md`).
+- `terminal` heredoc Python (`python3 - <<'PY'`) inherits shell env credentials and works for simple scripts, but file-based scripts are more reliable for queries with complex syntax.
+- `execute_code` does NOT inherit shell env — always parse `.env` explicitly before boto3 calls.

@@ -59,6 +59,23 @@ print(f"Method: {creds.method}" if hasattr(creds, 'method') else "No method attr
 # 'env' or explicit keys = .env loaded correctly
 ```
 
+## `HOME` override pitfall — `~` expansion breaks in profile-isolated sessions
+
+In Hermes profile-isolated sessions, the `HOME` environment variable is set to a profile-specific subdirectory (e.g., `HOME=/home/ubuntu/.hermes/profiles/hashimoto/home`), not the real user home (`/home/ubuntu`). This causes `os.path.expanduser("~/.hermes/...")` to resolve to a nonsensical path like `/home/ubuntu/.hermes/profiles/hashimoto/home/.hermes/profiles/hashimoto/.env`, resulting in `FileNotFoundError`.
+
+**Never use `~` or `os.path.expanduser` for Hermes `.env` paths in inline Python scripts.** Always use the absolute path directly:
+
+```python
+# WRONG — HOME override breaks tilde expansion
+env_path = os.path.expanduser("~/.hermes/profiles/hashimoto/.env")
+
+# RIGHT — absolute path is immune to HOME override
+env_path = "/home/ubuntu/.hermes/profiles/hashimoto/.env"
+```
+
+The `HERMES_HOME` environment variable (`/home/ubuntu/.hermes/profiles/hashimoto`) can also be used as a base, but the absolute path is the most reliable form for inline scripts.
+
 ## Session history
 
 - 2026-06-22: `execute_code` boto3 calls failed with `AccessDenied` on `cloudwatch:DescribeAlarms` because `.env` was not loaded. boto3 used `EC2CloudWatchAgentRole` from EC2 instance metadata. Fix: explicit `.env` parsing + credential passing. After fix, all CloudWatch/Logs Insights calls succeeded.
+- 2026-06-23: Inline Python script in `terminal` used `os.path.expanduser("~/.hermes/...")` which resolved to `/home/ubuntu/.hermes/profiles/hashimoto/home/.hermes/...` due to `HOME=/home/ubuntu/.hermes/profiles/hashimoto/home`. Fix: use absolute path `/home/ubuntu/.hermes/profiles/hashimoto/.env` directly.

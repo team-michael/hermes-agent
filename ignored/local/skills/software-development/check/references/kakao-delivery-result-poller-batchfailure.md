@@ -82,6 +82,37 @@ Params: undefined
 - **Scope extraction:** `delivery_failure_log_<project_id>` table suffix gives `project_id`; `campaign_id` appears in the VALUES clause directly.
 - **Fix target:** `repository/delivery_result_repository.ts:132` — normalize `raw_request_body` via `JSON.parse` → `JSON.stringify` before SQL interpolation, or switch to parameterized binding. See `references/scheduled-batch-delivery-dbinsert-json-serialization-bug.md` for the full pattern and fix options shared with `scheduled-batch-delivery` and `scheduled-batch-text-message-delivery`.
 
+### D. DynamoDB on-demand adaptive capacity throttling (`ThrottlingException`)
+
+Log excerpt:
+```
+ERROR Failed to process Kakao polling record ThrottlingException: Throughput exceeds the current capacity of your table or index. DynamoDB is automatically scaling your table or index so please try again shortly.
+    at AwsJson1_0Protocol.handleError (.../@aws-sdk/client-dynamodb/...)
+    at async repository/polling_state_repository.js:77
+    at async withExternalMetrics (/var/task/emf.js:37)
+    at async processIplusNFailover (/var/task/...)
+```
+
+- `AWS/Lambda` `Errors = 0`, `Throttles = 0` — the error is caught and returned as `batchItemFailures`.
+- **Root cause:** DynamoDB table `kakao_delivery_result_polling_state` (on-demand / `PAY_PER_REQUEST`) hits adaptive capacity limits during a burst of polling state writes. Despite being on-demand, DynamoDB can throttle when a single partition key receives a sudden high write rate that exceeds the per-partition burst bucket.
+- **Evidence pattern:**
+  - `WriteThrottleEvents` on the table (e.g., 40 at 11:44, 25 at 11:45, 12 at 11:46)
+  - `ConsumedWriteCapacityUnits` spike (e.g., 141,144 in 1 minute)
+  - Lambda `ConcurrentExecutions` spike (e.g., 1 → 5) and `Invocations` surge (e.g., 4 → 136/min) — a scheduled campaign batch floods the queue
+  - Table `ItemCount` is small (e.g., 53) — the throttle is from burst write rate, not table size
+- **Scope:** The burst is typically driven by one project's Kakao brand message campaign batch. Extract `project_id` from the concurrent `PollAttempt` EMF logs in the same window. Common: `b2b4a8f879a75673b755bff42fc1deb6` (class101).
+- **DLQ context:** `maxReceiveCount=3` on `kakao-delivery-result-poller-queue`. Messages that fail 3 times are DLQ'd. DLQ may accumulate (e.g., 237 messages from a prior day's campaign `DR4eXt`). These are polling tasks that exhausted retries — the actual Kakao messages were already sent; only the delivery result polling state is lost.
+- **Classification:** `no_action` when isolated (1-2 times/month, Lambda self-recovers, SQS retries handle the failed batch). The polling state loss means the system may not record the final delivery status for some messages, but the messages themselves were delivered.
+- **Recurrence:** 3 OK→ALARM transitions in 30 days (2026-06-23, 2026-06-19, 2026-06-04). The 6/19 event was the same DynamoDB throttle pattern; the 6/4 event was Signature A (missing env var).
+
+### Datapoint timestamp interpretation
+
+CloudWatch alarm `StateReasonData` shows a datapoint at timestamp T with Period P. The datapoint covers the window **[T, T+P)** — T is the period **START**, not the end. The actual triggering event is typically near T+P (the end of the window), not near T.
+
+Example: datapoint at `11:40:00` with `Period=300` covers `[11:40:00, 11:45:00)`. The ThrottlingException occurred at `11:44:47` — 4 minutes and 47 seconds into the window. Searching logs in `[11:35:00, 11:40:00)` (the previous period) will miss the actual trigger entirely.
+
+When the helper or `describe-alarms` returns `StateReasonData.recentDatapoints[].timestamp`, always compute the search window as `[timestamp, timestamp + period)` and search towards the end of that window first.
+
 ## Classification quick guide
 
 | Errors metric | ERROR logs present | Root cause | Status |
@@ -90,4 +121,5 @@ Params: undefined
 | 0 | Yes, `KakaoResultApiError` / provider error | Handled provider rejection | `no_action` |
 | 0 | No, only `completed_failure` PollAttempts | Batch-level handled failure | `no_action` |
 | 0 | Yes, `invalid input syntax for type json` on `delivery_failure_log_*` INSERT with `Params: undefined` | JSON double-escape bug in `delivery_result_repository.ts:132` + upstream Kakao API error | `needs_fix` |
+| 0 | Yes, `ThrottlingException` on `kakao_delivery_result_polling_state` DynamoDB table | On-demand adaptive capacity burst throttle during campaign batch | `no_action` |
 | >0 | Unhandled exception / timeout | Runtime bug | `needs_fix` or `urgent` |

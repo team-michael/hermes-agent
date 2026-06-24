@@ -6,13 +6,13 @@ Notifly RCA/debug: terse KR, asked-only, evidence first; classify existing/struc
 §
 In DMs, user wants infra explanations tailored to Mobile/iOS+SDK Eng background: use analogies only when mechanisms match; flag SDK implications for contracts/retries/offline/telemetry/DX.
 §
-Slack/Notifly: terse KR; PR iff asked; no fences/jargon; minimal code; apply+verify/push. Self-host: set up and verify UI/API; VPN HTTP OK if scoped.
+Slack/Notifly: terse KR; PR iff asked; no tables/fences/jargon; bullets; minimal code; apply+verify/push; delivery=result; avoid Lua/tricky fixes.
 §
-MSP/SmileShark: draft; no internal Slack refs.
+MSP: no internal refs; cause-only, minimal.
 §
 CS eval Sheets: source-only, tool-use not answer-quality, preserve visual formatting/colors; MCP discovery; keep prompt/API/benchmarks separate.
 §
-UI/docs: verify real UI; screenshots inline at relevant sections, not appendix; concise cause-focused KR docs; preserve keys/terms.
+UI/docs/landing: verify real UI; screenshots inline; concise KR; preserve keys/terms; avoid copy that implies product weakness.
 §
 GFSA 외부심사용 문서는 내부 ID/PR/티켓/SHA/Slack 링크를 빼고, 기능·KR 진행률·근거만 간결히 쓴다.
 §

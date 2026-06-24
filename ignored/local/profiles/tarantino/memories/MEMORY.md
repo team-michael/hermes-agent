@@ -8,4 +8,4 @@ ops → tiktok-daily-account-report skill (yt-dlp in venv clix-growth = captcha-
 §
 Clix prompt-builder: github.com/clix-so/clix-prompt-builder → https://clix-prompt-builder.pages.dev (CF Pages auto-deploy on main). Vite+React SPA + Pages Functions + Google Sheets DB. Composers: src/lib/{image,video,naturalness,axes}.ts. Image-prompt craft → image-prompt-engineering skill.
 §
-**`send_message(slack_table=…)`** (tarantino). Slack mp4 ≥40MB → 500; re-encode crf 23. r2v `@Image2` persona 인종/나이/헤어 explicit lock. ZaiSpace → zaispace-bestie-carousel skill. Duolog → duolog-date-ideas-carousel skill ("불투명도 낮춰줘"=MORE transparent). HBB daily tone: GOLD_EXAMPLE few-shot in daily_episode.py = jace favorite; new favorite → swap it.
+ZaiSpace → zaispace-bestie-carousel skill (couple-momo track: gf=원피스 momo / bf=후드 momo, same place "두 카메라롤"; jace prefers OUTFIT-lock contrast, momo PARTICIPATING in scene not held, momo SMALL in frame, bf shot deliberately shaky, and carousel = per-scene LEFT(gf)|RIGHT(bf) full-bleed diptych slides — daily cron KST07:00→#clix-app-growth-report).

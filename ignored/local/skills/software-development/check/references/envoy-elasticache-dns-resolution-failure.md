@@ -90,6 +90,66 @@ An Envoy proxy deployed as an ECS service (`notifly-cache-prod-proxy`) that forw
 - Envoy DNS resolver: Envoy's built-in c-ares-based resolver (configurable via `dns_resolvers` in cluster config)
 - ElastiCache service discovery: AWS ElastiCache uses `.bcs.<region>.cache.amazonaws.com` FQDN for cluster mode nodes
 
+## Variant: `cache-proxy-prod console error` (2026-06-23 session)
+
+A newer deployment of the Envoy Redis proxy uses different naming:
+
+- **Alarm name**: `cache-proxy-prod console error`
+- **Log group**: `/aws/ecs/notifly-services-prod/cache-proxy`
+- **Metric filter**: `%error|ERROR|Exception|upstream failure|no upstream host%`
+- **Threshold**: Sum ≥ 1.0 per 60s (more sensitive than the `notifly-cache-prod-proxy` variant's `> 1.0`)
+- **DNS suffix**: `.bcshxz.apn2.cache.amazonaws.com` (full ElastiCache FQDN, not truncated `.bcs`)
+- **ElastiCache cluster**: `notifly-cache-prod` (Valkey engine, 2 shards × 2 nodes: `0001-001`, `0001-002`, `0002-001`, `0002-002`)
+- **Transition pattern**: `INSUFFICIENT_DATA → ALARM` (not `OK → ALARM`), same as periodic batch alarms
+
+### Error signature (identical Envoy source)
+
+```
+[2026-06-23 03:11:07.938][1][error][upstream] [source/extensions/clusters/redis/redis_cluster.cc:384] Unable to resolve cluster slot primary hostname notifly-cache-prod-0002-001.notifly-cache-prod.bcshxz.apn2.cache.amazonaws.com
+[2026-06-23 03:11:08.024][1][error][upstream] [source/extensions/clusters/redis/redis_cluster.cc:384] Unable to resolve cluster slot primary hostname notifly-cache-prod-0001-002.notifly-cache-prod.bcshxz.apn2.cache.amazonaws.com
+```
+
+### Session findings (2026-06-23)
+
+- **Recurrence**: 4 occurrences in 30 days (6/19 14:13, 6/20 00:57, 6/23 03:12, 6/23 08:58 UTC), each producing 1–2 log lines within 1 second, then no further errors. The 08:58 UTC alarm produced only 1 error line (`0001-002` only), showing the pattern can emit 1 or 2 lines per occurrence.
+- **DNS resolution at investigation time**: Both hostnames resolved successfully via `nslookup` (10.0.155.108, 10.0.130.71).
+- **ElastiCache status**: All 4 nodes `available`, engine Valkey 8.0.1, node type `cache.t4g.micro`, no replication-group or cache-cluster events in the alarm windows. AutomaticFailover enabled, 2 shards × 2 nodes.
+- **ElastiCache snapshot window correlation**: The 03:12 UTC alarm fell within the daily snapshot window (02:30–03:30 UTC). The snapshot creates a brief I/O and CPU spike on the snapshot-target node that can cause transient DNS resolution delay from the Envoy proxy. However, 2 of 4 alarms (6/19 14:13, 6/20 00:57, 6/23 08:58) occurred outside the snapshot window, so the snapshot is a contributing factor for some occurrences but not the sole root cause.
+- **EngineCPUUtilization**: 2–3% on both `0001-002` and `0002-001` during the 08:57 UTC alarm window, confirming no real load issue.
+- **Customer impact**: None — errors lasted <1 second, proxy self-recovered, cache operations continued normally.
+- **Classification**: `no_action` — transient DNS resolution spike during Envoy Redis cluster slot refresh.
+- **Long-term suggestion**: The metric filter `%error|ERROR|Exception|upstream failure|no upstream host%` is overly broad for this service. Consider raising the alarm threshold to `Sum >= 5` over `Period 300s`, or adding a filter exclusion for `redis_cluster.cc` transient DNS errors to reduce alert noise.
+
+### Pitfall — `filterPattern='ERROR'` does not match Envoy lowercase `[error]`
+
+Envoy logs use lowercase `[error]` as the log level label. When performing manual `filter_log_events` with `filterPattern='ERROR'`, zero results are returned even though the triggering log lines exist in the stream. The metric filter pattern `%error|ERROR|Exception|upstream failure|no upstream host%` catches both cases, but manual follow-up must use either no filter pattern or a case-insensitive approach.
+
+**Fix**: Use `filter_log_events` with no `filterPattern` (broad scan) or use `filterPattern='error'` (lowercase) when investigating Envoy proxy logs.
+
+### Pitfall — helper `current_trigger_contexts` empty despite alarm breach
+
+The helper returned `current_trigger_contexts: []` for this alarm even though the alarm window (03:11:00–03:12:00 UTC) contained 2 matching log events at 03:11:07 and 03:11:08. This is the CloudWatch Logs Insights ingestion delay pattern already documented in SKILL.md. Manual `filter_log_events` (the direct API, not Logs Insights) found the events immediately. When the helper reports empty `current_trigger_contexts` for a cache-proxy alarm, fall back to direct `filter_log_events` with no filter pattern on the exact alarm window.
+
+### Verification commands (2026-06-23 session)
+
+```python
+# DNS resolution check (from the Hermes host — not VPC-internal, but confirms record exists)
+import socket
+socket.gethostbyname("notifly-cache-prod-0002-001.notifly-cache-prod.bcshxz.apn2.cache.amazonaws.com")
+
+# ElastiCache cluster status
+aws elasticache describe-replication-groups --region ap-northeast-2 \
+  --query 'ReplicationGroups[?ReplicationGroupId==`notifly-cache-prod`].{Status:Status,Engine:Engine,NodeGroups:NodeGroups[*].{NodeGroupId:NodeGroupId,Status:Status,Members:NodeGroupMembers[*].{ClusterId:CacheClusterId,NodeId:CacheNodeId,Role:CurrentRole}}}' \
+  --output json
+
+# Manual log search (no filterPattern — avoids Envoy lowercase [error] pitfall)
+aws logs filter-log-events \
+  --log-group-name /aws/ecs/notifly-services-prod/cache-proxy \
+  --start-time $(date -d '2026-06-23 03:10:00 UTC' +%s)000 \
+  --end-time $(date -d '2026-06-23 03:13:00 UTC' +%s)000 \
+  --region ap-northeast-2
+```
+
 ### See also
 
 - `oncall-cloudwatch-alert-triage` — general ECS console error alert methodology
