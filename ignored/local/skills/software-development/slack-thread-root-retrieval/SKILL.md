@@ -164,6 +164,27 @@ If the app cannot retrieve the root due to membership or policy:
 - ask them to invite the app or reinstall with updated scopes
 - optionally ask them to paste the root message manually so work can continue
 
+## Absorbed skills: Slack thread context debugging and session history
+
+The following reference files were absorbed from formerly standalone skills. Each covers a specific facet of the same class-level problem: diagnosing why Hermes cannot read Slack thread root messages or recovering context when live API access is unavailable.
+
+### AWS Chatbot / Amazon Q thread context debugging
+- `references/slack-aws-chatbot-thread-context-debugging.md` — Diagnoses why Hermes misses AWS Chatbot / Amazon Q alert roots; `allow_bots` config vs gateway code fix; attachment/block parsing; reaction lifecycle (`message_subscriptions` vs `channel_skill_bindings`); testing checklist
+
+### Hermes gateway Slack thread context debugging
+- `references/hermes-slack-thread-context-debugging.md` — Deep gateway code fix guide for `_fetch_thread_context()` bot filtering and attachment/block extraction; `_extract_slack_message_text()` helper; session suspend/restore masking; `/mute` `/unmute` multi-profile behavior
+- `references/hermes-slack-thread-context-debugging-slack-mute-unmute-multiple-profiles.md` — Multi-profile mute/unmute session-specific reference
+
+### Slack alert session history recovery
+- `references/slack-alert-session-history.md` — Recover alert root details and prior thread context from Hermes session archives when live Slack API is unavailable; `sessions.json` lookup, `session_search` fallback, cross-profile archive inspection
+- `scripts/slack-alert-session-history-inspect_slack_alert_session_history.py` — Reusable script to inspect Slack alert session history by channel/thread/session ID
+- `references/slack-alert-session-history-slack-dm-target-resolution.md` — DM target resolution from Hermes archives when Slack group delivery fails
+- `references/slack-alert-session-history-ai-agent-token-budget-incidents.md` — AI-agent Slack alert streaming failure classification (finishReason: length, client disconnects, TokenLimiterProcessor)
+- `references/slack-alert-session-history-slack-session-artifact-extraction.md` — Slack permalink + session recovery with file artifact verification
+- `references/slack-alert-session-history-cross-profile-session-archive-inspection.md` — Cross-profile session archive inspection
+- `references/slack-alert-session-history-channel-term-frequency-analysis.md` — Channel-level wording/term-frequency analysis from session archives
+- `references/slack-alert-session-history-missing-session-file-recovery.md` — Missing session transcript file recovery via session_search and Slack cache
+
 ## References
 
 Official docs:

@@ -3,7 +3,7 @@
 **Alarm**: `/aws/ecs/notifly-services-prod/web-console console error`
 **Metric filter**: `%ERROR|Exception%`
 
-Five Kakao BizMessage validation patterns currently trigger this alarm:
+Six Kakao BizMessage validation patterns currently trigger this alarm:
 
 1. **`[FailedToUploadImageException(유효하지 않은 URL입니다. : <url>)]`** — image upload URL invalid or unreachable
 2. **`[InvalidImageFormatException(<filename>)]`** — image format unsupported
@@ -18,7 +18,7 @@ The first three originate from Kakao SDK/wrapper validation during BizMessage te
 
 The fifth (`Unacceptable characters in title and body.`) appears as a Kakao provider response during `POST /api/projects/{projectId}/test_send/kakao_brand_message`. Sentry payloads for this pattern include `tags.handled: "yes"`, confirming the error is caught and handled. Stack-trace frames typically show `KakaoBrandMessageTransformer.inline` (`services/server/web-console/.next/server/chunks/71260.js`) and `g.failoverTextMessage` / `T.inline`.
 
-All five are handled business rejections; the web-console continues operating normally after logging the rejection.
+All six are handled business rejections; the web-console continues operating normally after logging the rejection.
 
 For the template-variable and link-validation patterns, the code path is typically `POST /api/projects/{projectId}/test_send/kakao_brand_message`. The external-provider patterns (1–3 above) can also appear during user journey node editing:
 
@@ -46,7 +46,7 @@ Combined 30-day total for the first three patterns is typically 30–60 events. 
 
 ## Triage
 
-When the helper returns `can_answer_root_cause: false` and manual follow-up shows any of the four Kakao patterns in current trigger contexts:
+When the helper returns `can_answer_root_cause: false` and manual follow-up shows any of the six Kakao patterns in current trigger contexts:
 
 ```sql
 fields @timestamp, @message

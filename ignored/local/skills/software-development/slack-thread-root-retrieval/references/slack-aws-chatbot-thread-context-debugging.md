@@ -1,14 +1,3 @@
----
-name: slack-aws-chatbot-thread-context-debugging
-description: Diagnose why Hermes cannot read Slack thread root messages from AWS Chatbot / Amazon Q alerts, and determine whether config changes or code changes are required.
-version: 1.1.0
-author: Hermes Agent
-license: MIT
-metadata:
-  hermes:
-    tags: [slack, hermes, aws-chatbot, amazon-q, cloudwatch, thread-context, gateway, debugging]
----
-
 # Slack AWS Chatbot Thread Context Debugging
 
 Use this when Hermes is invoked in a Slack thread whose root message was posted by AWS Chatbot / Amazon Q Developer (for example CloudWatch alerts), and Hermes cannot see the actual alert/error content.

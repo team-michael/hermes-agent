@@ -4,22 +4,24 @@ Notifly project: project_id→DDB `project` product_id/name; product created_at 
 §
 project_statistics stores billing input metrics as independent rows (`session_starts`, `events`, `user_property_updates`), not `data_point`; billing composition is later/plan-specific. Usage granularity: event-log row; params not separate; billing UTC/KST09.
 §
-Notifly docs: docs=`notifly-event/docs` Mintlify; web=`notifly-web`; Product KB=`notifly-product-knowledge`. Push-law docs: `mkt_push_agreed` example only; flow user-prop→default true; SDK note under unsubscribe/checklist.
+Notifly docs: docs=`notifly-event/docs`; web=`notifly-web`; Product KB=`notifly-product-knowledge`. KR docs use ‘노티플라이’.
 §
 Slack links: ignore no-API note; use SLACK_BOT_TOKEN conversations.replies/history first; url_private images→vision.
 §
 Git commit identity used in prior Notifly agent work: `Andrej Karpathy <team@greyboxhq.com>`.
 §
-Cloudflare: never print tokens. Notifly Redis proxy: ECS `cache-proxy`, host `cache-proxy-prod-internal.notifly.tech`; tunnel edit needs Cloudflare One Connector: cloudflared Edit, fallback Argo Tunnel Legacy Edit.
+Cloudflare: never print tokens. Redis proxy: ECS `cache-proxy`, host `cache-proxy-prod-internal.notifly.tech`; tunnel edit uses Cloudflare One Connector, fallback Legacy Edit.
 §
 Remote/workflow ops: local Hermes isn't target; verify host; env/VPN/secrets tests use workflow_dispatch.
 §
 Notifly ECS SC: check `deployments[].serviceConnectConfiguration` (top-level may be null). Slack #engineering 2026-01-09: SC imposes 15s request timeout.
 §
-Notifly console: `NOTIFLY_AUTH` login; Michael slug `michael`. List delivery: avoid delaying old 종료 rows; use derived status, not status override.
+Notifly console: `NOTIFLY_AUTH`; Michael slug `michael`; delivery list uses derived/Redis status; monitor completion Redis-only, no PG recovery unless reopened.
 §
 Hermes `tarantino`: profile `/home/ubuntu/.hermes/profiles/tarantino`; related to `just-went-viral.com`; dashboard host `dashboard.just-went-viral.com`.
 §
 Notifly MCP OAuth façade uses existing api/web Cognito user pool/client policy; do not introduce a separate COGNITO_MCP_* user pool.
 §
 CRM SDK Tracker shadow paths: code `~/.hermes/workspace/crm-sdk-tracker`; runtime `~/.hermes/profiles/andrej/crm-sdk-tracker`.
+§
+Notifly Alimtalk direct types mirror Brand Message SQS: recipient rendered vars only; legacy NHN path is `sender_platform: 'notifly'`.

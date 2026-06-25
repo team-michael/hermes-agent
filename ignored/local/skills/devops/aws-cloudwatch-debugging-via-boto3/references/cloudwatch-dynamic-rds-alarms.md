@@ -1,14 +1,3 @@
----
-name: cloudwatch-dynamic-rds-alarms
-description: Design CloudWatch alarms for Aurora/RDS fleets where instance names and roles change over time. Covers Metrics Insights multi-time-series alarms, contributor lookup, and why tags are required for cluster-scoped dynamic per-instance alerting.
-version: 1.0.0
-author: Hermes Agent
-license: MIT
-metadata:
-  hermes:
-    tags: [cloudwatch, rds, aurora, alarms, metrics-insights, dynamic-alerting, tags]
----
-
 # CloudWatch Dynamic RDS/Aurora Alarms
 
 Use this when the user wants alerts that keep working even if:
@@ -56,7 +45,7 @@ then the robust solution is to use **resource tags** and filter by tag.
 
 ## Recommended architecture
 
-For Aurora Optimized Reads cache-hit alarms specifically, see `references/aurora-optimized-reads-cache-hit-ratio.md`. Key lesson: treat `AuroraOptimizedReadsCacheHitRatio` as a warning/diagnostic signal, require persistence for noisy boundary flaps, and keep existing Terraform alarm names/`for_each` keys when tuning so the plan remains in-place under `prevent_destroy`.
+For Aurora Optimized Reads cache-hit alarms specifically, see `references/cloudwatch-dynamic-rds-alarms-aurora-optimized-reads-cache-hit-ratio.md`. Key lesson: treat `AuroraOptimizedReadsCacheHitRatio` as a warning/diagnostic signal, require persistence for noisy boundary flaps, and keep existing Terraform alarm names/`for_each` keys when tuning so the plan remains in-place under `prevent_destroy`.
 
 ### Step 1: tag cluster instances with a stable cluster key
 Good tag name:

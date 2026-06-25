@@ -442,6 +442,29 @@ When the user asks for alarms that adapt automatically to instance churn or fail
    - Use EventBridge/Lambda or IaC automation to discover current cluster members and create/update per-instance alarms.
    - This is more reliable than trying to force CloudWatch metric math to emulate dynamic membership.
 
+## Absorbed skills: CloudWatch alarm design and ECS on-call triage
+
+The following reference files were absorbed from formerly standalone skills. They cover specific aspects of the same class-level problem: designing and triaging CloudWatch alarms for AWS infrastructure.
+
+### Dynamic RDS/Aurora alarm design
+- `references/cloudwatch-dynamic-rds-alarms.md` — Designing CloudWatch alarms for Aurora/RDS fleets where instance names and roles change over time; Metrics Insights multi-time-series alarms, `DescribeAlarmContributors`, tag-based dynamic alerting, Terraform implementation notes, legacy alarm decommissioning
+- `references/cloudwatch-dynamic-rds-alarms-aurora-optimized-reads-cache-hit-ratio.md` — Aurora Optimized Reads cache-hit ratio alarm tuning after broad PostgreSQL index backfills
+
+### On-call CloudWatch console-error triage
+- `references/oncall-cloudwatch-alert-triage.md` — Triage CloudWatch console-error alerts for ECS services using CLI-based log search and frequency analysis; 7d/30d historical baseline, 5xx impact check, judgment framework (spike/recurring/needs_fix/urgent)
+
+## Absorbed skills: Lambda timeout diagnosis and ECR provenance lookup
+
+The following reference files extend this skill's AWS debugging coverage with two specialized investigation techniques.
+
+### Lambda timeout pattern diagnosis
+- `references/lambda-timeout-patterns.md` — Diagnoses Lambda function timeouts: SQS batch timeout → DLQ amplification (maxReceiveCount=1), S3 multipart upload bottlenecks, early DynamoDB/dependency lookup failures, and database read/write timeouts (Aurora replica recovery conflicts, statement_timeout). Includes classification rubric (no_action vs needs_fix) and Terraform remediation snippets.
+- `references/lambda-timeout-patterns-check-skill-helper-answerability-gate-pitfall.md` — `check` skill answerability gate pitfall when diagnosing lambda timeouts
+- `references/lambda-timeout-patterns-user-csv-mailer-early-ddb-lookup-failure.md` — user-csv-mailer early DDB lookup failure reference implementation
+
+### ECR image source repo via provenance
+- `references/ecr-image-source-repo-via-provenance.md` — Recover source GitHub repository and workflow metadata from AWS ECR images via OCI attestation/provenance manifests using boto3. Useful when source repo is private or not on disk and only AWS read access is available.
+
 ## Pitfalls
 
 - Do not rely on `execute_code` for AWS API calls if credentials are only present in shell env.

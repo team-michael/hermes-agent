@@ -234,6 +234,67 @@ When the triggering Sentry issue URL is `/console/products/<productId>/user-jour
 - productId=`tourlive` → project_id=`c73ff97bb627533785f06fa56345690d` (dev=false)
 - `user_journeys_c73ff97bb627533785f06fa56345690d` → id=`Zq3Jac`, name=`테스트 여정`, status=1
 
+## Helper `table_refs` as scope source when Sentry payload is truncated
+
+The helper's `current_trigger_contexts[].trigger` and `current_error_details[].likely_error` fields truncate the Sentry JSON at ~200 characters with `...`. When `request.url` falls outside the truncated window, the normal scope recovery path (extract `productId` or `project_id` from the URL) is not available from the helper output alone. However, the helper's `table_refs` array in the same context object extracts sharded table references from the full (untruncated) log line and carries the `project_id` directly:
+
+```json
+"table_refs": [
+  {
+    "table_family": "delivery_result",
+    "project_id": "91a042a79e4c5c4fa3af7c3d3b5aaf53",
+    "table_pattern": "delivery_result_<project_id>"
+  }
+]
+```
+
+Use `table_refs[0].project_id` to query DynamoDB `project` table by `id` (not GSI) when the Sentry payload URL is truncated. This avoids needing a separate `get_log_events` call just to read the full `request.url`.
+
+## Logs Insights direct JSON field access (preferred over `parse`)
+
+CloudWatch Logs Insights auto-extracts nested JSON fields using dot notation. For the Sentry pipeline log group, fields like `sentryAlert.issue.id`, `sentryAlert.issue.title`, `sentryAlert.issue.transaction`, and `sentryAlert.status` are directly available in queries without any `parse` clause. This is simpler and more reliable than glob `parse` or regex `parse` for nested fields.
+
+**7-day issue distribution query** (preferred for frequency analysis):
+
+```sql
+fields @timestamp, sentryAlert.issue.id, sentryAlert.issue.title, sentryAlert.issue.transaction, sentryAlert.status
+| filter @message like "Received Sentry email alert"
+| stats count() by sentryAlert.issue.id, sentryAlert.issue.title, sentryAlert.issue.transaction
+| sort count desc
+| limit 20
+```
+
+This returns one row per distinct Sentry issue with its occurrence count in the window. Use it to quickly assess whether the current trigger is a recurring issue or a new one, and whether multiple distinct issues are firing on the same day.
+
+**30-day daily count query** (for baseline establishment):
+
+```sql
+fields @timestamp
+| filter @message like "Received Sentry email alert"
+| stats count() by bin(1d)
+| sort @timestamp asc
+| limit 31
+```
+
+Use the daily counts to compute the 30-day average and compare the current day count against the baseline. This is a Logs Insights alternative to `get_metric_statistics` with `Period=86400` and works directly on log events rather than metric datapoints.
+
+The earlier `parse`-based queries (glob and regex) below remain valid but are no longer the preferred approach. Prefer direct dot-notation field access when the log payload is structured JSON.
+
+## Logs Insights regex `parse` for nested JSON field aggregation (legacy)
+
+The earlier Logs Insights template uses `"*"` glob parse syntax (`parse @message '"title":"*"' as issue_title`), which works for top-level JSON keys that Logs Insights auto-extracts. For nested fields like `sentryAlert.issue.id` (inside `issue: {...}`), glob parse may not reliably extract values. Use regex-delimited `parse` with named captures instead:
+
+```sql
+fields @timestamp, @message
+| filter @message like /"title":"([^"]+)"/
+| parse @message /"id":"(?<issue_id>[^"]+)","title":"(?<issue_title>[^"]+)"/
+| stats count() as cnt by issue_id, issue_title
+| sort cnt desc
+| limit 50
+```
+
+This successfully aggregates all distinct Sentry issues by ID and title across a 7-day window for the `빈도` field frequency distribution.
+
 ## `get_log_events` on stream as fallback for empty `filter-log-events`
 
 When `filter-log-events` returns empty results for the alarm window (even without a filter pattern), retrieve the stream name from `describe_log_streams` ordered by `lastIngestionTime` desc, then use `get_log_events` on that stream directly:

@@ -4,8 +4,9 @@
 
 - Metric: `AWS/RDS` → `VolumeReadIOPs`
 - Dimension: `DBClusterIdentifier` (e.g., `notifly-db-prod-cluster`)
-- Typical threshold: `Average >= 12.5M` over `Period=900` with `EvaluationPeriods=1`
+- Typical threshold: `Average >= 15M` (previously 12.5M; raised to reduce daily noise) over `Period=900` with `EvaluationPeriods=2`, `DatapointsToAlarm=2` (2 consecutive 15-min datapoints must breach)
 - Alarm name may be bare (e.g., `High VolumeReadIOPs`) and **not** contain the cluster identifier.
+- The 15M threshold sits close to the daily batch peak (observed breach: 15.36M, ~2.4% margin), so the alarm fires on most batch days when read IOPS is slightly elevated. This is expected — the batch workload itself is benign, not the alarm sensitivity.
 
 ## Why this alarm fires
 
@@ -59,12 +60,30 @@ for inst in ['notifly-db-prod-a', ..., 'notifly-db-prod-i']:
 
 ## Historical baseline
 
-At Notifly prod, daily peak `VolumeReadIOPs` ranges 10M–20M. Threshold set at 12.5M catches the scheduled batch every day. The batch typically:
-- Starts within a consistent ~30-minute daily window
+At Notifly prod, daily peak `VolumeReadIOPs` ranges 10M–20M. Threshold was originally 12.5M (caught the batch every day), later raised to 15M to reduce noise. Even at 15M, the batch peak still breaches on most days (observed 15.36M vs 15M threshold). The batch typically:
+- Starts within a consistent ~30-minute daily window (most alarms fire KST 20:00–21:00)
 - Lasts 25–35 minutes
 - Recovers cleanly to `OK` without manual intervention
 
 When the daily fire time shifts by hours (e.g., from ~20:50 KST to ~15:00 KST), check whether campaign schedules or segment-publisher trigger times were adjusted.
+
+## Performance Insights when available
+
+When PI is authorized (not `NotAuthorizedException`), the top SQL by `db.load.avg` during a VolumeReadIOPs batch window shows:
+
+**Writer (notifly-db-prod-c):**
+- `DEALLOCATE ALL` — prepared-statement cleanup, **not a business query**. Frequently appears as the #1 writer load (focus_max observed: 27.97). It is a PgBouncer / connection-pool lifecycle statement fired when connections are recycled. Do not attribute the VolumeReadIOPs spike to it or investigate it as a root cause.
+- `INSERT INTO event_intermediate_counts_<project_id> AS EIC ... ON CONFLICT` — EIC upsert from `kds-consumer` / batch processing. This is the dominant **business** writer load. The `<project_id>` suffix maps to the project with the highest event ingestion volume during the window (observed: stepup focus_avg=1.71, playio=0.53, regather=0.28).
+
+**Readers (notifly-db-prod-a/b/d):**
+- `select * from "users_<project_id>" where "notifly_user_id" = $?` — point lookup per user resolution
+- `select "notifly_user_id", exit_time IS NULL AS is_active, COUNT(*) ... from "user_journey_sessions_<project_id>"` — user journey session count
+- `SELECT device_table.notifly_device_id, ... FROM device_<project_id> ...` — device resolution join
+- `SELECT user_table.notifly_user_id, ... FROM users_<project_id>` (Athena/Spark subquery form)
+
+All reader queries are parameterized point lookups or small aggregates — no full scans. The ReadIOPS spike comes from the **volume** of these lookups across all readers simultaneously, not from any single expensive query.
+
+**Key takeaway**: When PI shows `DEALLOCATE ALL` as top writer load during a VolumeReadIOPs alarm, classify it as `current_unattributed_top_sql` (no table refs) and focus the root-cause narrative on the `event_intermediate_counts_*` INSERT family and the reader-side `users_*` / `user_journey_sessions_*` / `device_*` lookups instead.
 
 ## Companion-alarm shortcut
 
@@ -85,5 +104,7 @@ This alarm is **infra-wide** at the cluster level. Segment-publisher logs can ti
 ## Known gotchas
 
 - **Alarm name ≠ resource name**: The alarm may be named `High VolumeReadIOPs` with no cluster identifier embedded. Do not fabricate an alarm name by prepending the cluster ID.
+- **`DEALLOCATE ALL` is not a root cause**: When PI is available, `DEALLOCATE ALL` frequently appears as the #1 writer load (focus_max up to ~28). It is a connection-pool prepared-statement cleanup, not a business query. Attribute the spike to the `event_intermediate_counts_*` INSERT family and reader-side lookups instead. See "Performance Insights when available" above.
 - **Performance Insights unauthorized**: `pi:DescribeDimensionKeys` may return `NotAuthorizedException`. Do not block the triage on PI; fall back to CloudWatch metrics + ECS logs.
 - **Per-instance `VolumeReadIOPs` does not exist**: Use `ReadIOPS` at `DBInstanceIdentifier` dimension for instance-level breakdown.
+- **Threshold may have been raised**: The alarm threshold was 12.5M and later raised to 15M. Always read the actual `Threshold` and `EvaluationPeriods` from `describe-alarms` rather than assuming a fixed value.

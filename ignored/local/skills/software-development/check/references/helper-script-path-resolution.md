@@ -27,3 +27,21 @@ If the `scripts/` directory does not exist under the skill directory (not a path
 3. State in the final answer that live verification was not possible due to missing helper script, but the reference pattern match is sufficient for classification.
 4. Do not retry the helper or attempt to reconstruct it — use direct AWS CLI via `terminal` if credentials are available, or proceed with reference-based classification.
 5. Do not block the final answer on environment issues when the alarm pattern is unambiguous and the reference contains sufficient classification guidance.
+
+## Pitfall — `search_files` returns false negatives for helper script
+
+`search_files` (ripgrep-backed) can return 0 results for `collect_notifly_alert_context.py` even when the file exists on disk. This was confirmed in a 2026-06-24 session: `skill_view(name="check", file_path="scripts/collect_notifly_alert_context.py")` successfully read the file, but `search_files(pattern="collect_notifly_alert_context.py", target="files", path="/home/ubuntu/.hermes/profiles/hashimoto/skills")` returned `total_count: 0`. Do **not** use `search_files` to determine whether the helper script exists. Use `skill_view` with the `file_path` parameter, or try the absolute path from the `[Skill directory]` annotation directly in `terminal`.
+
+## Pitfall — helper script requires PYTHONPATH for local package import
+
+The entry point `scripts/collect_notifly_alert_context.py` imports `from notifly_alert_context.cli import main`. The `notifly_alert_context/` package lives in the same `scripts/` directory. Running the script with a bare `python /absolute/path/to/collect_notifly_alert_context.py` may fail with `ModuleNotFoundError: No module named 'notifly_alert_context'` if the `scripts/` directory is not on `PYTHONPATH`.
+
+**Fix**: set `PYTHONPATH` to the scripts directory, or `cd` into it before running:
+
+```bash
+SKILL_DIR="/home/ubuntu/.hermes/profiles/hashimoto/skills/software-development/check"
+PYTHONPATH="$SKILL_DIR/scripts" python "$SKILL_DIR/scripts/collect_notifly_alert_context.py" \
+  --text '...' --alarm-name '...' --region ap-northeast-2
+```
+
+Always derive `SKILL_DIR` from the `[Skill directory]` annotation at the bottom of the loaded SKILL.md, not from `HERMES_HOME` or `$HOME/.hermes`.

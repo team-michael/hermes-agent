@@ -307,6 +307,8 @@ Use these rules:
 ### Case 4: Deploy step fails before health check
 **Diagnosis:** inspect credentials, wrangler config, or Cloudflare API errors first.
 
+If the failure is immediately after `wrangler deploy` reports `Uploaded ...` and the API error is `The requested Worker version could not be found ... [code: 100146]`, treat it as a Cloudflare Worker version propagation race rather than an app/container failure. Confirm by querying the Worker deployments API: the failed version id can already appear as a 100% automatic deployment a few seconds later. The durable workflow fix is a bounded retry around `wrangler deploy` only for `Worker version could not be found|code: 100146`, then let the existing `/health` SHA check prove the deployed revision.
+
 ## Pitfalls
 
 - `curl -s ... || true` hides the real error. An empty response in logs may actually be DNS failure.

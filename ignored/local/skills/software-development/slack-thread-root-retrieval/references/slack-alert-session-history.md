@@ -1,14 +1,3 @@
----
-name: slack-alert-session-history
-description: Recover Slack alert root details and prior thread context from Hermes session history with a single script call when live Slack history or root-message retrieval is unavailable.
-version: 1.0.0
-author: Hermes Agent
-license: MIT
-metadata:
-  hermes:
-    tags: [slack, sessions, alerts, cloudwatch, amazon-q, thread-context, debugging]
----
-
 # Slack Alert Session History
 
 Use this when a user asks:
@@ -20,11 +9,11 @@ This skill is for **Hermes session archive inspection**, not live Slack history.
 
 Important boundary: when the user gives a Slack permalink/thread URL and asks to inspect the actual thread history, do **not** default to Hermes archives. First use the live Slack Web API workflow from `slack-thread-root-retrieval`: parse `channel`/`thread_ts`, load `SLACK_BOT_TOKEN` from the active profile `.env` if needed, and call `conversations.replies` / `conversations.history`. Use this archive skill only after the live API is unavailable, fails with an API-level error, or the user specifically asks for Hermes-visible prior sessions.
 
-It also covers routing recovery when Slack group/channel delivery fails (for example `not_in_channel`) and you need to resolve a named person's DM target from Hermes archives. See `references/slack-dm-target-resolution.md`.
+It also covers routing recovery when Slack group/channel delivery fails (for example `not_in_channel`) and you need to resolve a named person's DM target from Hermes archives. See `references/slack-alert-session-history-slack-dm-target-resolution.md`.
 
-For Notifly AI-agent Slack alerts involving streaming failures, `finishReason: length`, client disconnects, or `TokenLimiterProcessor`, do not judge the PR from the diff alone. Classify output-side length vs transport close/abort vs input-side context budget, then correlate the Slack root with prod `internal-api-service` tool/processor logs. See `references/ai-agent-token-budget-incidents.md`.
+For Notifly AI-agent Slack alerts involving streaming failures, `finishReason: length`, client disconnects, or `TokenLimiterProcessor`, do not judge the PR from the diff alone. Classify output-side length vs transport close/abort vs input-side context budget, then correlate the Slack root with prod `internal-api-service` tool/processor logs. See `references/slack-alert-session-history-ai-agent-token-budget-incidents.md`.
 
-When the user gives a Slack permalink and asks to 확인/복원/요약 a prior session, combine live Slack API retrieval with Hermes session recovery. If the Slack thread ended with a generated CSV/table/file, inspect the `files[]` artifact via `url_private_download` and verify row/line counts before summarizing. If the archive script maps the thread but says `Session file not found`, recover via `session_search(session_id=...)` instead of stopping. See `references/slack-session-artifact-extraction.md`.
+When the user gives a Slack permalink and asks to 확인/복원/요약 a prior session, combine live Slack API retrieval with Hermes session recovery. If the Slack thread ended with a generated CSV/table/file, inspect the `files[]` artifact via `url_private_download` and verify row/line counts before summarizing. If the archive script maps the thread but says `Session file not found`, recover via `session_search(session_id=...)` instead of stopping. See `references/slack-alert-session-history-slack-session-artifact-extraction.md`.
 
 ## Core idea
 
@@ -51,14 +40,14 @@ So the fastest path is:
 Run one command:
 
 ```bash
-python ~/.hermes/skills/software-development/slack-alert-session-history/scripts/inspect_slack_alert_session_history.py \
+python ~/.hermes/skills/software-development/slack-alert-session-history/scripts/slack-alert-session-history-inspect_slack_alert_session_history.py \
   --session-id 20260421_095149_7e990f80
 ```
 
 ### 2) If you know `channel_id` and `thread_ts`
 
 ```bash
-python ~/.hermes/skills/software-development/slack-alert-session-history/scripts/inspect_slack_alert_session_history.py \
+python ~/.hermes/skills/software-development/slack-alert-session-history/scripts/slack-alert-session-history-inspect_slack_alert_session_history.py \
   --channel-id C04KT7EH5RQ \
   --thread-ts 1776764135.019959
 ```
@@ -68,7 +57,7 @@ python ~/.hermes/skills/software-development/slack-alert-session-history/scripts
 First list candidate sessions:
 
 ```bash
-python ~/.hermes/skills/software-development/slack-alert-session-history/scripts/inspect_slack_alert_session_history.py \
+python ~/.hermes/skills/software-development/slack-alert-session-history/scripts/slack-alert-session-history-inspect_slack_alert_session_history.py \
   --channel-id C04KT7EH5RQ
 ```
 
@@ -80,7 +69,7 @@ When the user asks “기존에 고민해 본 적 있는지 Slack 같은 곳에�
 
 ## Channel-level wording / term-frequency analysis
 
-When the user asks which terms customers use more often in a Slack channel, prefer existing per-channel exports or curated CS datasets over Hermes session archives. Count customer/root-thread text separately from assistant replies, and report exact phrase, synonym, and broad semantic buckets separately. See `references/channel-term-frequency-analysis.md` for the reusable workflow and regex/counting pattern.
+When the user asks which terms customers use more often in a Slack channel, prefer existing per-channel exports or curated CS datasets over Hermes session archives. Count customer/root-thread text separately from assistant replies, and report exact phrase, synonym, and broad semantic buckets separately. See `references/slack-alert-session-history-channel-term-frequency-analysis.md` for the reusable workflow and regex/counting pattern.
 
 Use a small script under `~/.hermes` or `execute_code`; avoid writing outside `~/.hermes`. Search only `user`/`assistant` messages and skip tool dumps / context compaction blocks, because they create many false positives.
 
@@ -115,7 +104,7 @@ In the final answer, distinguish:
 If a session drifted into other topics, filter findings by keyword:
 
 ```bash
-python ~/.hermes/skills/software-development/slack-alert-session-history/scripts/inspect_slack_alert_session_history.py \
+python ~/.hermes/skills/software-development/slack-alert-session-history/scripts/slack-alert-session-history-inspect_slack_alert_session_history.py \
   --channel-id C04KT7EH5RQ \
   --thread-ts 1776764135.019959 \
   --query CPUUtilization
@@ -159,7 +148,7 @@ session_search(session_id="20260616_071223_b58951", role_filter="user,assistant,
 
 In current Hermes profiles, the JSON archive can be missing while `state.db` / `session_search` still has the transcript. If `session_search` returns a very large persisted result, parse that saved JSON result and extract the first user request, final assistant summary, and any follow-up answer instead of trying to read the whole transcript into the chat context. For Slack permalink lookups, parse `/archives/<channel>/p<digits>` into `channel_id=<channel>` and `thread_ts=<first 10 digits>.<remaining 6 digits>` (for example `p1781173562290559` → `1781173562.290559`) before using the archive script. If the session has a `parent_session_id`, inspect that too; Slack thread roots often live in the parent while the active continuation holds the compacted context.
 
-If the DB lookup is absent or incomplete, inspect Slack cache files (`slack_api_cache/thread_<channel>_<thread_ts>.json` and `_summary.json`), then search session archives by durable alert identifiers such as Sentry issue id, error class, CloudWatch alarm name, or Slack permalink timestamp. The useful discussion may live in a later PR-review / CloudWatch-investigation session rather than the registry session. See `references/missing-session-file-recovery.md`.
+If the DB lookup is absent or incomplete, inspect Slack cache files (`slack_api_cache/thread_<channel>_<thread_ts>.json` and `_summary.json`), then search session archives by durable alert identifiers such as Sentry issue id, error class, CloudWatch alarm name, or Slack permalink timestamp. The useful discussion may live in a later PR-review / CloudWatch-investigation session rather than the registry session. See `references/slack-alert-session-history-missing-session-file-recovery.md`.
 
 ## Caveats
 
@@ -168,7 +157,7 @@ If the DB lookup is absent or incomplete, inspect Slack cache files (`slack_api_
 - A registry mapping can exist even when the transcript file is missing; recover via Slack cache + keyword `session_search` before saying there is no conversation history.
 - If the root message never entered Hermes, use the live Slack/AWS debugging skills instead.
 - A single session may contain multiple subtopics; use `--query` to isolate the alert-related parts.
-- If `session_search` or the script finds nothing, check whether another Hermes profile handled the thread. For cross-profile archive inspection, see `references/cross-profile-session-archive-inspection.md`.
+- If `session_search` or the script finds nothing, check whether another Hermes profile handled the thread. For cross-profile archive inspection, see `references/slack-alert-session-history-cross-profile-session-archive-inspection.md`.
 
 ## Good workflow in practice
 

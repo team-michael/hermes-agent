@@ -1,12 +1,3 @@
----
-name: oncall-cloudwatch-alert-triage
-description: Triage CloudWatch console-error alerts for ECS services using CLI-based log search and frequency analysis.
-triggers:
-  - CloudWatch alarm for /aws/ecs/* console error
-  - Slack alert from Amazon Q or CloudWatch about ERROR spikes
-  - Need to determine if an error pattern is recurring, new, or benign
----
-
 # OnCall: CloudWatch Console Error Alert Triage
 
 ## Goal

@@ -137,6 +137,54 @@ Recommended response:
 2. Notify affected projects of the key rotation and ask them to update templates.
 3. Consider adding a pre-flight validation in the campaign editor UI to test `connected_content` URLs at save time, so customers catch invalid keys before campaigns send.
 
+## Variant: Liquid Playground external API 400 (no abort, rendering succeeds)
+
+The same Supabase personalization endpoint can return 400 when invoked from the **Liquid Playground** testing tool (`/console/products/<productId>/utils/liquid-playground`), not just from a campaign/user-journey send.
+
+Key differences from the abort variant:
+- **No `RenderError` / `AbortError`**: The template rendering **does not abort**. The external API's 400 response body is logged directly, but rendering continues.
+- **`POST /api/liquid/template` returns 200**: The Liquid rendering itself succeeds. The personalization fetch failure is a non-critical side effect.
+- **Trigger log shape**: Only the HTTP response lines appear — `<url> responded with 400:` + `{"error": "..."}` — with no LiquidJS stack trace.
+- **User-initiated, sporadic**: Triggered by a console user testing templates in the Playground, not by automated batch delivery. Frequency is low (<= 5 per day) and sporadic.
+
+### Helper URL masking limitation
+
+The helper sanitizes URLs to `<url>` in `surrounding_lines`, so `current_trigger_contexts[].surrounding_lines` shows:
+```
+"<url> responded with 400:"
+"{"
+"\"error\": \"user_id is required and must be a number\""
+"}"
+```
+
+When the trigger context shows `<url> responded with <status>:`, the actual URL is critical to determine whether the error is from an internal Notifly endpoint or an external API. Use `get_log_events` on the trigger stream with `startTime`/`endTime` bounded to the alarm datapoint window to read the full unmasked context:
+
+```python
+resp = logs.get_log_events(
+    logGroupName="/aws/ecs/notifly-services-prod/web-console",
+    logStreamName=trigger_stream,
+    startTime=start_ms,  # alarm window start in epoch ms
+    endTime=end_ms,
+    startFromHead=True,
+    limit=50
+)
+```
+
+The full URL (e.g., `https://htcxkbijmiptoubmkhkm.supabase.co/functions/v1/personalization?user_id=`) immediately identifies this as an external Supabase Edge Function call, not an internal service error.
+
+### Scope attribution for Liquid Playground
+
+The trigger log itself does not contain `project_id`. Recover scope from the access log line immediately following the error in the same stream:
+- `POST /api/liquid/template HTTP/1.1` -> 200 with Referer `https://console.notifly.tech/ko/console/products/<productId>/utils/liquid-playground`
+- Map `<productId>` via DynamoDB `project` table GSI `product_id-project_id-index` (prefer `dev=false` for production scope).
+
+### Frequency pattern
+
+- 7d count of `"user_id is required and must be a number"`: typically <= 6 (sporadic, user-initiated)
+- Previous spike observed on 2026-06-17 (15 events) -- likely a single user testing multiple templates
+- Classification: **`no_action`** -- handled external API validation error, rendering succeeds, no customer-facing impact
+
 ## Related references
 
-- `references/web-console-liquidjs-abort-message-false-positive.md` — broader class of LiquidJS abort patterns.
+- `references/web-console-liquidjs-abort-message-false-positive.md` -- broader class of LiquidJS abort patterns.
+- `references/web-console-scope-attribution-via-access-logs.md` -- Referer-based scope recovery for web-console alerts.

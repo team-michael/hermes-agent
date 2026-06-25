@@ -1,14 +1,3 @@
----
-name: hermes-slack-thread-context-debugging
-description: Diagnose why Hermes cannot read Slack thread root messages, especially AWS Chatbot / Amazon Q / CloudWatch alert roots delivered as bot_message attachments or blocks.
-version: 1.0.0
-author: Hermes Agent
-license: MIT
-metadata:
-  hermes:
-    tags: [hermes, slack, gateway, debugging, aws-chatbot, amazon-q, cloudwatch, attachments, thread-context]
----
-
 # Hermes Slack Thread Context Debugging
 
 Use this when Hermes is invoked inside a Slack thread but seems unable to see or reason over the thread root message.
@@ -263,7 +252,7 @@ Recommended fix shape for multi-profile mute bugs:
 - when `is_thread_muted(channel_id, thread_ts)` is true, allow only plain `/unmute` in trusted command contexts or `<@this_bot> /unmute`; block `<@other_bot> /unmute`, `<@other_bot> /mute`, and normal replies;
 - consider ignoring non-target `<@other_bot> /mute|/unmute` even when `has_session` would normally make the thread auto-trigger.
 
-Session-specific reference: `references/slack-mute-unmute-multiple-profiles.md`.
+Session-specific reference: `references/hermes-slack-thread-context-debugging-slack-mute-unmute-multiple-profiles.md`.
 
 ### Existing thread sessions can mask the fix
 

@@ -1,14 +1,3 @@
----
-name: ecr-image-source-repo-via-provenance
-description: Recover the source GitHub repository and workflow metadata for an AWS ECR image by reading OCI attestation/provenance manifests via boto3 when the source repo is not otherwise obvious.
-version: 1.0.0
-author: Hermes Agent
-license: MIT
-metadata:
-  hermes:
-    tags: [aws, ecr, provenance, slsa, github, containers, debugging]
----
-
 # ECR Image Source Repo via Provenance
 
 Use this when:
