@@ -36,6 +36,8 @@ Reference for ECS log-derived `ErrorCount` alarms caused by malformed/empty JSON
 Reference for Notifly Redis/ElastiCache cluster-mode ↔ Lambda investigations, including how to separate residual Redis warnings from actual Lambda timeout/SQS impact: `references/notifly-redis-lambda-cloudwatch-probes.md`.
 Reference for Notifly delivery queue DLQ alarms that occur near Redis warnings, including SQS/Lambda/Redis causality separation and partial-batch-response pitfalls: `references/notifly-sqs-dlq-vs-redis-warn-triage.md`.
 Reference for Notifly event-proxy project blocklist/unblock verification after deploy, including ECS env, `event_proxy.dropped.count`, and Athena `notifly_event_logs`: `references/notifly-event-proxy-unblock-verification.md`.
+Reference for Notifly `rendering_failure` investigations where successful events are in Kinesis/Athena rather than CloudWatch app logs, including Kakao Alimtalk sender-platform compatibility checks: `references/notifly-rendering-failure-athena-vs-cloudwatch.md`.
+Reference for live `api.notifly.tech` customer active-user estimates from CloudWatch app logs + Cloudflare edge analytics + ALB verification: `references/notifly-api-active-user-analysis.md`.e successful events are in Kinesis/Athena rather than CloudWatch app logs, including Kakao Alimtalk sender-platform compatibility checks: `references/notifly-rendering-failure-athena-vs-cloudwatch.md`.
 Reference for live `api.notifly.tech` customer active-user estimates from CloudWatch app logs + Cloudflare edge analytics + ALB verification: `references/notifly-api-active-user-analysis.md`.
 
 1. **Check environment first**

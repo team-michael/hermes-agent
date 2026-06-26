@@ -80,6 +80,14 @@ Therefore scope attribution via DynamoDB is usually impossible for this alarm. W
 
 **Quick check**: `aws dynamodb get-item --table-name cafe24_integration --key '{"mall_id":{"S":"<mall_id>"}}'` — if `project_id` is absent from the response, scope is unknown.
 
+## IAM access limitation
+
+The monitoring IAM role does NOT have dynamodb:Scan or dynamodb:GetItem permission on cafe24_integration. Do not attempt DynamoDB lookups for this alarm — AccessDeniedException will be returned. Scope is always service-wide / Cafe24 infra-wide unless a project_id appears directly in the Lambda log payload (rare).
+
+## Rapid-cycling pattern
+
+When Cafe24 API has a sustained connectivity issue (e.g., 60+ minutes of ConnectTimeoutError for the same mall_id), the alarm cycles INSUFFICIENT_DATA to ALARM and back every ~10 minutes because the Lambda runs on a ~10-minute EventBridge schedule and each invocation hits the same timeout. The helper rapid_recurrence.status will be rapid with alarm_count_within_10m: 2. This is expected for sustained Cafe24 API outages and does NOT change the no_action classification — each invocation completes normally (Duration ~10.9s, Errors=0), the old token remains valid, and no data is lost. Only escalate to needs_fix if the rapid cycling persists across multiple days or Errors metric becomes non-zero.
+
 ## Frequency pattern
 
 This is **not** a daily periodic alarm. Historical `ConsoleErrors` daily sums are typically `0` with isolated spikes:

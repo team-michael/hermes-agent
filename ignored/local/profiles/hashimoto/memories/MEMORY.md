@@ -4,7 +4,7 @@ Hashimoto Slack alert replies use a compact Korean five-field shape: 원인, 범
 §
 Projects with names starting with `notifly-` (e.g., notifly-gamelog, notifly-test, notifly-internal, etc.) and project slug `michael` or URLs under `console-stage.notifly.tech` are Notifly internal testing/demo scopes. Alerts or errors tied to these indicate synthetic/test data or internal tooling gaps, not customer-facing production issues. When scoping alerts, explicitly flag them as internal to avoid misrepresenting customer impact.
 §
-`user-csv-mailer` failure modes: (1) S3 multipart timeout >50K CSV rows; (2) DynamoDB throttling (RCU=1, fix: `infra/terraform/prod/ap-northeast-2/dynamodb/tables.tf` RCU 1→5-10); (3) SQS DLQ maxReceiveCount=1. See `check` skill references for full details.
+`user-csv-mailer` failure modes: (1) S3 multipart timeout >50K CSV rows; (2) DynamoDB throttling (RCU=1); (3) SQS DLQ maxReceiveCount=1; (4) "No such project" — missing `user_property_fields` DDB item (`lib/ddb.ts:17`, ~80ms, Errors>0). See `check` references for all.
 §
 `check` skill SKILL.md >101KB — new pitfalls → references/ only. `execute_code`/`terminal` don't auto-load `.env`; parse `~/.hermes/profiles/hashimoto/.env` explicitly before boto3 calls or EC2 instance metadata fallback causes AccessDenied (see `references/execute-code-env-credential-loading.md`). Sentry proxy false-positives → `no_action`; `MODULE_NOT_FOUND` → `needs_fix`. segment-publisher `Custom/segment-publisher` namespace REMOVED 2026-06.
 §

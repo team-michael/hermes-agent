@@ -71,6 +71,34 @@ done
 
 The alarm itself is infra-wide (cluster-level). Lambda logs may contain `project_id`/`campaign_id` for scope, but EMF metric emission lines in `scheduled-batch-delivery` do NOT carry project/campaign IDs. Use `kds-consumer` or `segment-publisher` logs for project scope instead, or accept infra-wide scope.
 
+## Data retention limits when investigating old alarms
+
+- **Performance Insights**: PI data is retained for only 7 days. When the alarm fired more than 7 days ago, `pi describe-dimension-keys` returns `InvalidArgumentException: Specify a start time that's within 7 days of the current date and time.` Fall back immediately to Lambda batch correlation.
+- **CloudWatch 1-minute metrics**: Retained for 15 days. For alarms older than 15 days, `get-metric-statistics` with `--period 60` returns empty. Use `--period 300` (5-minute, retained 63 days) instead. The 5-minute Maximum is a conservative proxy — the actual 1-minute peak may have been higher.
+- **CloudWatch alarm history**: Retained for 90 days. Use `describe-alarm-history` with `--history-item-type StateUpdate` and parse `HistoryData` JSON for `oldState.stateValue` / `newState.stateValue` when `StateValue` is null.
+
+## Borderline threshold classification
+
+The alarm threshold (`> 70%` for 5 consecutive 1-minute periods) is borderline for the daily batch peak. Observed daily writer CPU maxima at 01:00 UTC (10:00 KST):
+
+| Date | 5-min Max CPU | Alarm fired? |
+|------|---------------|--------------|
+| 2026-06-03 | 73.6% | No |
+| 2026-06-04 | 71.9% | No |
+| 2026-06-05 | 75.5% | **Yes** (only day with 5 consecutive 1-min points > 70%) |
+| 2026-06-06 | 72.5% | No |
+| 2026-06-07 | 73.5% | No |
+| 2026-06-10 | 74.6% | No |
+| 2026-06-15 | 70.3% | No |
+| 2026-06-20 | 71.9% | No |
+| 2026-06-24 | 72.2% | No |
+
+Only 1 ALARM transition in 90 days. The alarm fires when the daily spike happens to sustain > 70% for 5 consecutive 1-minute points — most days the spike peaks at 70-74% but dips below 70% within 2-3 minutes. Classify as `no_action` when:
+- The alarm auto-recovers within 60 seconds
+- Lambda `Errors = 0` during the window
+- Only 1 ALARM transition in the 30-day window
+- The spike occurs at the expected daily batch time (~01:00 UTC / 10:00 KST)
+
 ## Known gotchas
 
 - **EMF metric lines lack project scope**: `scheduled-batch-delivery` Lambda stdout emits CloudWatch EMF metrics at INFO level. These tab-delimited lines contain only `_aws`, `channel`, `outcome`, etc., not `projectId` or `campaignId`. Logs Insights `parse` on these lines for project scope will fail.

@@ -19,7 +19,8 @@ Aurora PostgreSQL reports cluster-level read I/O ops that aggregate all instance
 3. **Metric pattern around the breach** — cluster `VolumeReadIOPs` 5-min datapoints.
 4. **Per-instance ReadIOPS** — fetch `AWS/RDS` `ReadIOPS` per `DBInstanceIdentifier` during the window.
    - Uniform spikes across all readers → distributed batch query (expected scheduled workload).
-   - Isolated spike on one instance → investigate that specific instance.
+   - **Uneven but multi-reader spikes** (one reader 4–6× higher than others, but all readers elevated above baseline) → still a distributed batch query; segment-publisher route queries are not perfectly round-robined. Do not classify as "isolated instance" unless only one reader is elevated while the rest stay at baseline.
+   - Truly isolated spike on one instance (others at baseline) → investigate that specific instance.
 5. **ReadLatency** — cluster-level `ReadLatency` should stay under ~5 ms.
    - If ReadLatency stays low, the spike is throughput, not contention.
 6. **CPUUtilization** — per-instance CPU during the window.
@@ -72,8 +73,8 @@ When the daily fire time shifts by hours (e.g., from ~20:50 KST to ~15:00 KST), 
 When PI is authorized (not `NotAuthorizedException`), the top SQL by `db.load.avg` during a VolumeReadIOPs batch window shows:
 
 **Writer (notifly-db-prod-c):**
-- `DEALLOCATE ALL` — prepared-statement cleanup, **not a business query**. Frequently appears as the #1 writer load (focus_max observed: 27.97). It is a PgBouncer / connection-pool lifecycle statement fired when connections are recycled. Do not attribute the VolumeReadIOPs spike to it or investigate it as a root cause.
-- `INSERT INTO event_intermediate_counts_<project_id> AS EIC ... ON CONFLICT` — EIC upsert from `kds-consumer` / batch processing. This is the dominant **business** writer load. The `<project_id>` suffix maps to the project with the highest event ingestion volume during the window (observed: stepup focus_avg=1.71, playio=0.53, regather=0.28).
+- `DEALLOCATE ALL` — prepared-statement cleanup, **not a business query**. Frequently appears as the #1 writer load (focus_max observed: 27.97–66.95; increasing trend). It is a PgBouncer / connection-pool lifecycle statement fired when connections are recycled. Do not attribute the VolumeReadIOPs spike to it or investigate it as a root cause.
+- `INSERT INTO event_intermediate_counts_<project_id> AS EIC ... ON CONFLICT` — EIC upsert from `kds-consumer` / batch processing. This is the dominant **business** writer load. The `<project_id>` suffix maps to the project with the highest event ingestion volume during the window (observed: stepup focus_avg 1.71–3.93, playio 0.53–1.24, regather 0.28–0.68; load increasing over time).
 
 **Readers (notifly-db-prod-a/b/d):**
 - `select * from "users_<project_id>" where "notifly_user_id" = $?` — point lookup per user resolution
@@ -104,7 +105,8 @@ This alarm is **infra-wide** at the cluster level. Segment-publisher logs can ti
 ## Known gotchas
 
 - **Alarm name ≠ resource name**: The alarm may be named `High VolumeReadIOPs` with no cluster identifier embedded. Do not fabricate an alarm name by prepending the cluster ID.
-- **`DEALLOCATE ALL` is not a root cause**: When PI is available, `DEALLOCATE ALL` frequently appears as the #1 writer load (focus_max up to ~28). It is a connection-pool prepared-statement cleanup, not a business query. Attribute the spike to the `event_intermediate_counts_*` INSERT family and reader-side lookups instead. See "Performance Insights when available" above.
+- **`DEALLOCATE ALL` is not a root cause**: When PI is available, `DEALLOCATE ALL` frequently appears as the #1 writer load (focus_max up to ~67). It is a connection-pool prepared-statement cleanup, not a business query. Attribute the spike to the `event_intermediate_counts_*` INSERT family and reader-side lookups instead. See "Performance Insights when available" above.
+- **Reader distribution is not always uniform**: Even in a benign batch workload, one reader may spike 4–6× higher than others (observed: prod-d 1.13M ReadIOPS vs prod-a 171K, prod-b 280K in the same 15-min window). This is expected — segment-publisher route queries are not perfectly balanced across readers. Only treat as "isolated instance" when other readers remain at baseline.
 - **Performance Insights unauthorized**: `pi:DescribeDimensionKeys` may return `NotAuthorizedException`. Do not block the triage on PI; fall back to CloudWatch metrics + ECS logs.
 - **Per-instance `VolumeReadIOPs` does not exist**: Use `ReadIOPS` at `DBInstanceIdentifier` dimension for instance-level breakdown.
 - **Threshold may have been raised**: The alarm threshold was 12.5M and later raised to 15M. Always read the actual `Threshold` and `EvaluationPeriods` from `describe-alarms` rather than assuming a fixed value.

@@ -24,4 +24,4 @@ Notifly MCP OAuth façade uses existing api/web Cognito user pool/client policy;
 §
 CRM SDK Tracker shadow paths: code `~/.hermes/workspace/crm-sdk-tracker`; runtime `~/.hermes/profiles/andrej/crm-sdk-tracker`.
 §
-Notifly Alimtalk direct types mirror Brand Message SQS: recipient rendered vars only; legacy NHN path is `sender_platform: 'notifly'`.
+Notifly Alimtalk: @notifly/common builder inside segment-publisher; schedulers env=prod, so stage console may run segment-publisher-prod.
