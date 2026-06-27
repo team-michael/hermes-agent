@@ -1,14 +1,14 @@
 Andrej env: terminal HOME can be profile home; set `HOME=/home/ubuntu` for gh/GWS, use `/home/ubuntu/.hermes/workspace`. GWS: `/home/ubuntu/.nvm/versions/node/v24.15.0/bin/gws`. JDK17: `/home/ubuntu/.hermes/jdks/jdk-17`.
 §
-Notifly project: project_id→DDB `project` product_id/name; product created_at in DDB `products`; per-project PG `table_${project_id}`. `project_statistics.metric_name`: no `project_*`/`notifly_*`; alias in mapper.
+Notifly: project_id→DDB project product_id/name; products.created_at; per-project PG table_${pid}; DDL via onboarding/migration/preflight, not runner. project_statistics metric_name no project_/notifly_; mapper alias.
 §
 project_statistics stores billing input metrics as independent rows (`session_starts`, `events`, `user_property_updates`), not `data_point`; billing composition is later/plan-specific. Usage granularity: event-log row; params not separate; billing UTC/KST09.
 §
 Notifly docs: docs=`notifly-event/docs`; web=`notifly-web`; Product KB=`notifly-product-knowledge`. KR docs use ‘노티플라이’.
 §
-Slack links: ignore no-API note; use SLACK_BOT_TOKEN conversations.replies/history first; url_private images→vision.
+Slack links: use SLACK_BOT_TOKEN replies/history; url_private images→vision.
 §
-Git commit identity used in prior Notifly agent work: `Andrej Karpathy <team@greyboxhq.com>`.
+Git identity: `Andrej Karpathy <team@greyboxhq.com>`.
 §
 Cloudflare: never print tokens. Redis proxy: ECS `cache-proxy`, host `cache-proxy-prod-internal.notifly.tech`; tunnel edit uses Cloudflare One Connector, fallback Legacy Edit.
 §
@@ -24,4 +24,4 @@ Notifly MCP OAuth façade uses existing api/web Cognito user pool/client policy;
 §
 CRM SDK Tracker shadow paths: code `~/.hermes/workspace/crm-sdk-tracker`; runtime `~/.hermes/profiles/andrej/crm-sdk-tracker`.
 §
-Notifly Alimtalk: @notifly/common builder inside segment-publisher; schedulers env=prod, so stage console may run segment-publisher-prod.
+Notifly Alimtalk: segment-publisher uses common builder; scheduler env=prod. Direct work mirrors brand-message: kds-consumer calls common builder; open provider branch/validation only with direct path.
