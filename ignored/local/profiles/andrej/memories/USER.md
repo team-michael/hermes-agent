@@ -6,9 +6,9 @@ Notifly RCA/debug: terse KR, asked-only, evidence first; classify existing/struc
 §
 In DMs, user wants infra explanations tailored to Mobile/iOS+SDK Eng background: use analogies only when mechanisms match; flag SDK implications for contracts/retries/offline/telemetry/DX.
 §
-Slack/Notifly: terse KR, asked-only, no tables/fences/jargon; bullets. Backend/Kakao: mechanism-first; compare paths/contracts/failure; justify/remove new API fields; use data for risk.
+Slack/Notifly: terse KR, asked-only, no tables/fences/jargon; bullets. Backend/Kakao: mechanism-first; compare contracts/failure; data for risk.
 §
-MSP: no internal refs; cause-only, minimal.
+Vendor/MSP tickets: no internal refs; cause-only/minimal; paste-ready plain text, no code fences.
 §
 CS eval Sheets: source-only, tool-use not answer-quality, preserve visual formatting/colors; MCP discovery; keep prompt/API/benchmarks separate.
 §
