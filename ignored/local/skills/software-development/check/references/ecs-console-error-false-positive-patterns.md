@@ -54,6 +54,23 @@ If this returns zero results, the alarm is a false positive caused by the metric
 
 ## Generalisation
 
+## Concrete root-cause reporting rule
+
+When a later manual log lookup reveals the actual trigger line, prefer that concrete evidence in the final answer over the alarm name or a broad service-level label. The root-cause line should name the exact failure signature, the surrounding request/job context, and the code path or SQL/table reference when visible.
+
+Make this a hard default:
+- `원인:` must start with the exact trigger signature when one exists.
+- Follow with the immediate mechanism in plain language.
+- Then include the emitting code path, SQL fingerprint, table name, or external provider only if visible.
+- Do not lead with the alarm name, metric namespace, or a generic service description when a concrete log signature is available.
+
+Examples:
+- PostgreSQL deadlock: report the `ERROR: deadlock detected` line plus the locked relation and repository method.
+- External-provider rejection: report the exact provider error string and the route that emitted it.
+- Handled business rejection: report the exact validation/error message that triggered the metric filter.
+
+This keeps alert triage anchored on the real failure mechanism instead of a generic metric-filter explanation.
+
 Any ECS service whose log group contains mixed application logs + HTTP access logs is vulnerable to this class of false positive when the metric filter uses broad substrings such as `ERROR` or `Exception`. Additional benign patterns to watch for:
 - `error` in static asset paths (`/error.html`, `/404-error.svg`)
 - `exception` in marketing or analytics query parameters
