@@ -1,8 +1,8 @@
 Andrej env: terminal HOME can be profile home; set `HOME=/home/ubuntu` for gh/GWS, use `/home/ubuntu/.hermes/workspace`. GWS: `/home/ubuntu/.nvm/versions/node/v24.15.0/bin/gws`. JDK17: `/home/ubuntu/.hermes/jdks/jdk-17`.
 §
-Notifly: project_id→DDB project product_id/name; products.created_at; per-project PG table_${pid}; DDL via onboarding/migration/preflight, not runner. project_statistics metric_name no project_/notifly_; mapper alias.
+Notifly: project_id→DDB product_id/name; per-project PG table_${pid}; DDL via onboarding/preflight. project_statistics: unprefixed metric_name, mapper aliases, simple long-form fact table.
 §
-project_statistics stores billing input metrics as independent rows (`session_starts`, `events`, `user_property_updates`), not `data_point`; billing composition is later/plan-specific. Usage granularity: event-log row; params not separate; billing UTC/KST09.
+project_statistics: billing rows independent (`session_starts`,`events`,`user_property_updates`), no `data_point`; event-log granularity; no param separate; billing UTC/KST09. Avoid value_$type/measure_kind/window_days; use count/value, dimensions, window predicates+indexes.
 §
 Notifly docs: docs=`notifly-event/docs`; web=`notifly-web`; Product KB=`notifly-product-knowledge`. KR docs use ‘노티플라이’.
 §
@@ -24,4 +24,4 @@ Notifly MCP OAuth façade uses existing api/web Cognito user pool/client policy;
 §
 CRM SDK Tracker shadow paths: code `~/.hermes/workspace/crm-sdk-tracker`; runtime `~/.hermes/profiles/andrej/crm-sdk-tracker`.
 §
-Notifly Alimtalk: segment-publisher uses common builder; scheduler env=prod. Direct work mirrors brand-message: kds-consumer calls common builder; open provider branch/validation only with direct path.
+Notifly Alimtalk: seg-publisher/KDS common builder; scheduler env=prod. Match brand-message: public payload alias union(no Any*); NHN paths narrow NhnCloud*; provider branch only direct builder.
