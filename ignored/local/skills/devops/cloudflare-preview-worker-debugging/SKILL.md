@@ -248,22 +248,35 @@ If the same request later returns `200`, treat this as **transient readiness del
 
 For the Notifly `web-console` container, startup is not instantaneous because `entrypoint.sh` first launches multiple `cloudflared access tcp` processes, waits briefly, and only then starts `node server.js`.
 
-## 9. Notifly web-console Cloudflare domain derivation
+## 9. Notifly web-console Cloudflare preview workflow explanation
 
-When answering “after web-console build + cloudflare-deploy, which CF domain is deployed?”, derive it from workflow code before guessing from environment names.
+When the user asks what the GitHub Action `[Cloudflare] Preview Worker Deploy changed:<branch>` / `detect-changes` / `deploy-web-console` is, explain it as a **PR preview deployment**, not production deploy.
 
 In `team-michael/notifly-event`:
-- `.github/workflows/ecs_build.yml` sets `branch_name` from `github.head_ref || github.ref_name`, sanitized with `sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]'`.
-- `cloudflare-deploy` then calls `.github/workflows/cf_deploy.yml` with that `branch_name` and `revision: github.sha`.
-- `cf_deploy.yml` sets:
-  - deployment URL: `https://<sanitized-branch>-console.notifly.tech/auth/login`
-  - health URL: `https://<sanitized-branch>-console.notifly.tech/health`
-  - worker name: `notifly-web-console-<sanitized-branch>`
-  - route/custom domain: `<sanitized-branch>-console.notifly.tech`
+- `.github/workflows/cf_preview.yml` runs on PR `opened`, `synchronize`, `reopened`, and `ready_for_review` targeting `main` when non-test `services/server/web-console/**` paths change.
+- `detect-changes` checks the PR base/head diff via `.github/scripts/cf-deploy-plan.js preview` and emits booleans for:
+  - `api_service`
+  - `internal_api_service`
+  - `web_console`
+- `deploy-api-service`, `deploy-internal-api-service`, and `deploy-web-console` are conditional jobs. Skipped jobs are normal when that service did not need a preview.
+- Those deploy jobs call `.github/workflows/ecs_build.yml` with `deploy: false` and `cf_deploy: true`, so the path is: build/push Docker image to ECR → call `.github/workflows/cf_deploy.yml` → deploy Cloudflare Worker/Container → health-check `/health` for the expected SHA → upsert a PR comment with the preview URL.
+- This is not an ECS stage/prod deploy, even though `environment: stage` is passed for preview runtime/build configuration.
+
+Service chaining rule from `.github/scripts/cf-deploy-plan.js`:
+- if `api-service` and `web-console` both need preview, force `internal-api-service` preview too, so web-console can point to the matching preview internal API.
+- Workflow or shared container-entrypoint changes deploy all preview services.
+
+Domain derivation:
+- branch name comes from `github.head_ref || github.ref_name`, sanitized with `s/[^a-zA-Z0-9-]/-/g` and lowercased.
+- `api-service`: `https://<sanitized-branch>-api.notifly.tech`
+- `internal-api-service`: `https://<sanitized-branch>-internal-api.notifly.tech`
+- `web-console`: `https://<sanitized-branch>-console.notifly.tech/auth/login`
+- health URL: same host plus `/health`
+- worker name: `notifly-<service>-<sanitized-branch>`
 
 Important pitfall: for this workflow, `environment` (`stage`/`prod`) affects build/runtime env and image tag prefix, but **does not appear in the Cloudflare custom domain**. For example, branch `feat/ai-agent-ui-migration` deploys to `https://feat-ai-agent-ui-migration-console.notifly.tech/auth/login`; branch `main` deploys to `https://main-console.notifly.tech/auth/login`.
 
-If the user asks about a currently running deployment, optionally query the GitHub run/job to confirm the actual `head_branch` and whether the `cloudflare-deploy` job has started; but the domain formula is still branch-derived.
+If the user asks about a currently running deployment, optionally query the GitHub run/job to confirm the actual `head_branch` and whether the `cloudflare-deploy` job has started; but the domain formula is still branch-derived. For a high-level explanation, keep it terse: “PR 브랜치용 Cloudflare preview 환경을 띄우는 액션; ECS 배포 아님.”
 
 ## 10. Chained Notifly Cloudflare previews
 

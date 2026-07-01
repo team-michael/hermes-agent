@@ -6,16 +6,6 @@ providers:
   openai-codex:
     request_timeout_seconds: 900
     stale_timeout_seconds: 900
-  openai:
-    name: OpenAI
-    base_url: https://api.openai.com/v1
-    key_env: OPENAI_API_KEY
-    default_model: gpt-5.5
-    transport: codex_responses
-fallback_providers:
-- provider: openai
-  model: gpt-5.5
-  context_length: 1050000
 compression:
   enabled: true
   threshold: 0.75

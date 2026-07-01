@@ -9,3 +9,5 @@ User expects rigorous evidence chains for DLQ alarm conclusions. When classifyin
 Slack 채널로 메시지를 전달할 때, 마크다운(Markdown) 테이블 대신 `slack_table` (Native Block Kit Table block) 렌더링 방식을 항상 사용함.
 §
 User expects existing codebase conventions to be searched first before proposing new implementations or fixes. For example, when asked about batch-insert sizing or chunking patterns, search the repo for `lodash/chunk`, `divideList`, and `batchInsert` usage and report them as precedent.
+§
+User prefers implementation plans that satisfy operational requirements with the smallest safe code and infrastructure changes, avoiding broad redesign when a targeted fix is sufficient.

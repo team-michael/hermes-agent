@@ -30,6 +30,102 @@ reCAPTCHA, Google `/sorry/` interstitial, etc.):
 - Offer 2Captcha/NopeCHA/CapSolver API integration only for bulk/recurring jobs where
   manual solving isn't scalable.
 
+### Login-wall handoff (no session cookie → /login redirect, NOT a captcha)
+
+Distinct from the CAPTCHA case: when the profile has **no valid session cookie**
+for a gated dashboard (TikTok Studio analytics, any logged-in-only surface),
+the target URL silently **redirects to a login page** — there is no captcha, no
+`/sorry/`, no rotation puzzle. The same VNC handoff applies, but detection and
+the handoff message differ.
+
+**Detection signature (verified 2026-07-01, TikTok Studio):**
+- Navigate to e.g. `https://www.tiktok.com/tiktokstudio/analytics/overview`
+- `driver.current_url` becomes `https://www.tiktok.com/login?redirect_url=...&enter_from=tiktokstudio`
+- `driver.title` is a login title (e.g. `로그인 | TikTok`)
+- **No captcha markers** (`captcha_slide` / `verify to continue` / `__captcha` all absent)
+- The `redirect_url` query param echoes back the page you asked for — that's the tell
+
+```python
+def is_login_wall(driver, expected_path_fragment: str) -> bool:
+    url = (driver.current_url or "").lower()
+    # redirected AWAY from the gated page TO a /login or /signup surface
+    return ("/login" in url or "/signup" in url) and expected_path_fragment.lower() not in url
+```
+
+**Handling (interactive Slack context):**
+1. Confirm it's a login wall, not a captcha (check for absence of captcha markers).
+2. Promote the login Chrome window to the VNC viewport (same xdotool
+   enumerate-then-promote recipe as the CAPTCHA path — match the window whose
+   title contains the login string, e.g. `로그인 | TikTok`).
+3. **Leave the driver alive** (`time.sleep(86400)` park) — do NOT `driver.quit()`.
+4. Ask the user to log in **once** via noVNC (port 6080, `DISPLAY=:1`). Prefer
+   **QR-code login** — it's fastest and dodges the email/password 2FA+CAPTCHA
+   chain that a credentialed login can trigger. The session cookie persists in
+   the Tarantino `--user-data-dir`, so subsequent runs reuse it with no re-login.
+5. After the user replies "로그인 완료" / "logged in", verify by re-navigating to
+   the gated URL and confirming `current_url` now stays on the target path
+   (no redirect) before scraping.
+
+**Do NOT** hammer reloads hoping the wall clears — a login wall never clears
+without a human logging in. One detection → one handoff → wait.
+
+#### VNC login can ITSELF fail — "max attempts reached" / IP-reputation lock (verified 2026-07-01)
+
+The login-wall handoff assumes the user *can* log in over VNC. On TikTok that
+assumption breaks: this box is an **AWS datacenter IP**, which TikTok flags as
+suspicious traffic from the first login attempt. After a couple of QR/password
+attempts the user hits **"최대 시도 횟수에 도달" / "max attempts reached"** — the
+login is blocked even with correct credentials. This is NOT solvable in VNC:
+
+- It's an IP-reputation rate-limit on the *login endpoint*, not a captcha you can
+  solve or a QR you can refresh. Refreshing the QR and retrying just burns
+  attempts and risks a longer account lock.
+- **Do NOT loop retries** (matches jace's standing rule: on repeated blocks,
+  stop and ask, don't hammer). One or two attempts fail → escalate, don't grind.
+
+**The durable fix is session-cookie import, which SKIPS login entirely.** Instead
+of logging in *on this box*, the user exports their already-authenticated
+`tiktok.com` cookies from a **trusted personal device/IP** (phone or laptop where
+they're already logged in) and hands them over. You inject them into the parked
+Chrome session — no login on the flagged IP ever happens, so the rate-limit is
+moot.
+
+What to ask the user for (priority order):
+| Cookie | Role | Necessity |
+|---|---|---|
+| `sessionid` | The real auth token — reproduces the logged-in session | **required** |
+| `tt-target-idc` | Datacenter routing; wrong/missing → analytics calls 404 or return empty | strongly recommended |
+| `msToken`, `tt_csrf_token` | Request signing/validation on some endpoints | nice to have |
+
+Cleanest ask: **export the full `tiktok.com` cookie set** (Chrome/Edge extension
+"Get cookies.txt LOCALLY" → JSON or Netscape file) so routing cookies aren't
+dropped. Manual fallback: DevTools → Application → Cookies → copy `sessionid` +
+`tt-target-idc`.
+
+**Security handling (`sessionid` = full account access, no password needed):**
+- Do NOT echo/log/print the value or embed it in command text or the final answer.
+  Inject it into the profile only. Write it to a file under `~/.hermes` if needed,
+  never paste it back.
+- Tell the user to hit TikTok **"Log out of all devices"** when done — that
+  instantly invalidates the exported token.
+
+**Why the official API is NOT a shortcut:** TikTok Display/Content-Posting API
+doesn't expose analytics; Research API / Business API need app approval + a
+business-account switch + an OAuth flow (days of lead time). Session-cookie import
+is the only fast path to Studio's per-video / viewer analytics.
+
+**Injection recipe** (after the user provides cookies): navigate the driver to
+`https://www.tiktok.com` first (cookies must be set on the domain you're on), set
+each cookie via the reliable `document.cookie` / `set_persistent_cookie` path (see
+Cookie Persistence pitfalls — `add_cookie()` often makes non-persistent session
+cookies), then re-navigate to the gated Studio URL and confirm `current_url` stays
+on the target path (no `/login` redirect) before scraping.
+
+**Sequence to follow next time TikTok Studio (or any datacenter-IP-hostile
+dashboard) is requested:** try VNC login ONCE → if it hits "max attempts" / IP
+lock, immediately stop and pivot to cookie import. Don't offer VNC login as the
+primary path for TikTok — lead with cookie export, mention VNC as the fallback.
+
 ### Block detection
 
 ```python

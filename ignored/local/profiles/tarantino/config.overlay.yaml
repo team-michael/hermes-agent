@@ -3,11 +3,6 @@ model:
   provider: bedrock
   base_url: https://bedrock-runtime.us-east-1.amazonaws.com
   context_length: 1000000
-fallback_providers:
-- provider: custom
-  model: gpt-5.5
-  base_url: https://api.openai.com/v1
-  context_length: 1050000
 compression:
   enabled: true
   threshold: 0.50

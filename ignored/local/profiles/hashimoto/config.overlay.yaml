@@ -1,15 +1,7 @@
 model:
-  provider: openai
-  base_url: ''
-  default: gpt-5.4-mini
-  context_length: 400000
-providers:
-  openai:
-    name: OpenAI
-    base_url: https://api.openai.com/v1
-    key_env: OPENAI_API_KEY
-    default_model: gpt-5.4-mini
-    transport: codex_responses
+  default: '@cf/zai-org/glm-5.2'
+  provider: cloudflare
+  context_length: 262144
 agent:
   gateway_notify_interval: 0
   reasoning_effort: none

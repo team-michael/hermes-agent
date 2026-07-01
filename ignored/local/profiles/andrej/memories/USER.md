@@ -1,4 +1,4 @@
-Notifly GitHub: ConvCommits; clix-so-bot; no human reviewers unless named; codebase>bot; preserve PR goal. Deploy asks need runtime proof, not workflow-only.
+Notifly GitHub: ConvCommits; clix-so-bot; no human reviewers unless named; codebase>bot; preserve PR goal.
 §
 Remote/infra/pipeline: verify target/config/code/live metrics before causal/capacity/deploy-safety claims; separate quota vs bottleneck; concise probes/remediation; no destructive home-dir mutation.
 §
@@ -6,7 +6,7 @@ Notifly RCA/debug: terse KR, evidence first; pragmatic client fix. No signOut/de
 §
 In DMs, user wants infra explanations tailored to Mobile/iOS+SDK Eng background: use analogies only when mechanisms match; flag SDK implications for contracts/retries/offline/telemetry/DX.
 §
-Slack/Notifly: terse KR, asked-only, bullets; no tables/fences/jargon. Backend/Kakao: mechanism-first, contracts/failure/risk; PR plans need concrete titles+scope.
+Slack/Notifly: terse KR bullets, no tables/jargon. DDL DataGrip-safe: ASCII spaces, low alignment, attach .sql if long. Backend/Kakao: mechanism-first contracts/risk; PR plans concrete.
 §
 Vendor/MSP tickets: no internal refs; cause-only/minimal; paste-ready plain text, no code fences.
 §

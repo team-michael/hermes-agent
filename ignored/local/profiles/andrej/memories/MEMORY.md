@@ -1,8 +1,8 @@
 Andrej env: set `HOME=/home/ubuntu` for gh/GWS; workspace `/home/ubuntu/.hermes/workspace`; GWS node v24.15 path; JDK17 at `~/.hermes/jdks/jdk-17`.
 §
-Notifly: project_id→DDB product_id/name; per-project PG table_${pid}; DDL via onboarding/preflight. project_statistics simple long-form, unprefixed metric_name+mapper aliases.
+Notifly: project_id→DDB product_id/name; per-project PG table_${pid}; DDL via onboarding/preflight. Push RCA: FCM 404/UNREGISTERED can null device_token; test sends require native device_token IS NOT NULL. project_statistics long-form metrics.
 §
-project_statistics: billing rows independent (`session_starts`,`events`,`user_property_updates`), no `data_point`; event-log granularity; no param separate; billing UTC/KST09. Avoid value_$type/measure_kind/window_days; use count/value, dimensions, window predicates+indexes.
+project_statistics: billing rows independent (`session_starts`,`events`,`user_property_updates`), no `data_point`; event-log granularity; billing UTC/KST09; use count/value+dimensions/window predicates.
 §
 Notifly docs: docs=`notifly-event/docs`; web=`notifly-web`; Product KB=`notifly-product-knowledge`. KR docs use ‘노티플라이’.
 §
@@ -22,8 +22,10 @@ Hermes `tarantino`: profile `/home/ubuntu/.hermes/profiles/tarantino`; related t
 §
 Notifly MCP OAuth façade uses existing api/web Cognito user pool/client policy; do not introduce a separate COGNITO_MCP_* user pool.
 §
-CRM SDK Tracker shadow paths: code `~/.hermes/workspace/crm-sdk-tracker`; runtime `~/.hermes/profiles/andrej/crm-sdk-tracker`.
+SDK Tracker paths: `~/.hermes/workspace/crm-sdk-tracker`, `~/.hermes/profiles/andrej/crm-sdk-tracker`; Android migration: private customer setup skills from authorized code; start coexist/shadow.
 §
-Notifly Alimtalk: API NHN-like template_code+params; create/update resolves snapshot; builder renders, delivery/poller no lookup. Common builder seg-publisher/KDS; payload union(no Any*); NHN narrow; direct branch only.
+Notifly Alimtalk: snapshot create/update; direct branch only; no broad Any*. BZM PUBLIC not lookupable; send rendered msg/buttons.
 §
 Notifly CE: SDK-compatible clean-room self-host; AGPL; feeds Cloud Standard.
+§
+Kyungseo Jeong is male.

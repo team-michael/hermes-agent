@@ -33,6 +33,7 @@ Reference for noisy p95/p99/p99.9 alarm tuning: `references/noisy-percentile-ala
 Reference for Aurora/RDS reader fleet right-sizing and 3→2 reduction reviews: `references/rds-reader-rightsizing.md`.
 Reference for `AuroraOptimizedReadsCacheHitRatio` alarms after broad PostgreSQL index backfills: `references/aurora-optimized-reads-cache-ratio-after-index-backfill.md`.
 Reference for Notifly partner/security-audit checks about log integrity, S3 Versioning/Object Lock, CloudTrail validation, and Lambda-based automatic verification: `references/notifly-log-integrity-control-verification.md`.
+Reference for Notifly EMF metric dimension design, custom metric cost shape, and existing project_id-as-dimension vs property patterns in api-service/Kakao poller/webhook receiver: `references/notifly-emf-dimension-cost-and-usage.md`.
 Reference for ECS log-derived `ErrorCount` alarms caused by malformed/empty JSON request bodies, including Ktor/Jackson `No content to map due to end-of-input` cases: `references/ecs-log-derived-errorcount-malformed-request.md`.
 Reference for Notifly Redis/ElastiCache cluster-mode ↔ Lambda investigations, including how to separate residual Redis warnings from actual Lambda timeout/SQS impact: `references/notifly-redis-lambda-cloudwatch-probes.md`.
 Reference for Notifly delivery queue DLQ alarms that occur near Redis warnings, including SQS/Lambda/Redis causality separation and partial-batch-response pitfalls: `references/notifly-sqs-dlq-vs-redis-warn-triage.md`.
