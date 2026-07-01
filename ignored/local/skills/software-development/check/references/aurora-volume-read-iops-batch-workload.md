@@ -102,6 +102,8 @@ See `references/segment-publisher-slow-eic-query-noise.md` § "Cross-reference: 
 
 This alarm is **infra-wide** at the cluster level. Segment-publisher logs can tie the triggering batch to a specific `project_id`/`campaign_id` pair, but the alarm itself does not dimension by project. Report the dominant project/campaign from logs when available; otherwise state infra-wide scope.
 
+For scope recovery when the alert is clearly batch-workload noise but the final scope field is still incomplete, see `references/rds-volume-read-iops-scope-recovery-via-user-journey-aggregate.md`.
+
 ## Known gotchas
 
 - **Alarm name ≠ resource name**: The alarm may be named `High VolumeReadIOPs` with no cluster identifier embedded. Do not fabricate an alarm name by prepending the cluster ID.

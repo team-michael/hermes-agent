@@ -1,4 +1,4 @@
-**Slack ID→person (confirmed 2026-06-18 by Soomin): U07JCFJAQJ1 = 수민(Soomin), co-owner (the "Soomin Lee" DM user). U07KLU56XMG = 정우(Jungwoo), a SEPARATE person.** Do not swap these two names.
+**Slack ID→person (confirmed 2026-06-18 by Soomin): U07JCFJAQJ1 = 수민(Soomin), co-owner (the "Soomin Lee" DM user). U07KLU56XMG = 정우(Jungwoo), a SEPARATE person.** Do not swap. jace iteratively SIMPLIFIES drafts over passes — start minimal, add only if asked.
 §
 Always attach actual video URLs. **Video/UGC prefs (2026-06-29):** RAW phone-snapshot look (NO grading, max naturalness, handheld off-level candid, OBSERVER-POV not selfie-arm/wide-angle); short ~10-15s not 30s+; wants example STILLS for feedback BEFORE paying for video gen. Full LDR-couple-vlog recipe→zaispace-bestie-carousel skill.
 §

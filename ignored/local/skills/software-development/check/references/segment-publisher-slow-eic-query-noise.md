@@ -5,6 +5,8 @@ Alarm: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`
 
 ## What the alarm actually fires on
 
+Session note (2026-06-30): when the Slack alert text only exposed the log group path and the helper could not recover `alarm_name`, the exact alarm was found by a narrow CloudWatch scan over `describe_alarms --max-records 50` with `contains(AlarmName, \`segment-publisher\`) || contains(AlarmName, \`slow eic query\`)`. For this family, use the literal path-style alarm name once found: `/aws/ecs/notifly-services-prod/segment-publisher slow eic query`.
+
 The metric filter pattern is `took too long` (namespace `ConsoleErrors`, metric name `segment-publisher-prod slow eic query`). This broad substring match catches **two distinct log signatures** with different root causes, severity, and triage paths.
 
 ### Pattern A — Actual slow EIC query (alarm name accurate)

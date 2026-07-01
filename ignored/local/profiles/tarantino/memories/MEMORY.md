@@ -8,4 +8,4 @@ ops → tiktok-daily-account-report skill (yt-dlp in venv clix-growth = captcha-
 §
 Clix prompt-builder: github.com/clix-so/clix-prompt-builder → https://clix-prompt-builder.pages.dev (CF Pages auto-deploy on main). Vite+React SPA + Pages Functions + Sheets DB. Composers: src/lib/{image,video,naturalness,axes}.ts. Craft → image-prompt-engineering skill.
 §
-ZaiSpace couple-momo track (gf=원피스 momo / bf=후드 momo; jace: OUTFIT-lock contrast, momo SMALL + PARTICIPATING not held, bf shaky) → zaispace-bestie-carousel skill (LEFT-gf|RIGHT-bf diptych, cron KST07:00→#clix-app-growth-report). LDR day-in-life VIDEO: jace REQUIRES 9:16=two 16:9 panels stacked TOP=bf/BOTTOM=gf, NOT lone 9:16. App-UI reveal: Seedance2.0 i2v (Veo3.1 melts text); non-UI cuts first. Recipes→fal-video-generation skill.
+Recipes→fal-video-generation skill. ZaiSpace client weekly report (Joy Yuan's black-box feedback) → zaispace-weekly-client-report skill: FINAL 3-section format (🎯Takeaway + ① one flowing prose para + ② Net:X/3 + ③ 3 concepts), .md output, MEDIAN≥1000+save≥1%.

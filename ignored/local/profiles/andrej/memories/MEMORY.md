@@ -1,6 +1,6 @@
-Andrej env: terminal HOME can be profile home; set `HOME=/home/ubuntu` for gh/GWS, use `/home/ubuntu/.hermes/workspace`. GWS: `/home/ubuntu/.nvm/versions/node/v24.15.0/bin/gws`. JDK17: `/home/ubuntu/.hermes/jdks/jdk-17`.
+Andrej env: set `HOME=/home/ubuntu` for gh/GWS; workspace `/home/ubuntu/.hermes/workspace`; GWS node v24.15 path; JDK17 at `~/.hermes/jdks/jdk-17`.
 §
-Notifly: project_id→DDB product_id/name; per-project PG table_${pid}; DDL via onboarding/preflight. project_statistics: unprefixed metric_name, mapper aliases, simple long-form fact table.
+Notifly: project_id→DDB product_id/name; per-project PG table_${pid}; DDL via onboarding/preflight. project_statistics simple long-form, unprefixed metric_name+mapper aliases.
 §
 project_statistics: billing rows independent (`session_starts`,`events`,`user_property_updates`), no `data_point`; event-log granularity; no param separate; billing UTC/KST09. Avoid value_$type/measure_kind/window_days; use count/value, dimensions, window predicates+indexes.
 §
@@ -24,4 +24,6 @@ Notifly MCP OAuth façade uses existing api/web Cognito user pool/client policy;
 §
 CRM SDK Tracker shadow paths: code `~/.hermes/workspace/crm-sdk-tracker`; runtime `~/.hermes/profiles/andrej/crm-sdk-tracker`.
 §
-Notifly Alimtalk: seg-publisher/KDS common builder; scheduler env=prod. Match brand-message: public payload alias union(no Any*); NHN paths narrow NhnCloud*; provider branch only direct builder.
+Notifly Alimtalk: API NHN-like template_code+params; create/update resolves snapshot; builder renders, delivery/poller no lookup. Common builder seg-publisher/KDS; payload union(no Any*); NHN narrow; direct branch only.
+§
+Notifly CE: SDK-compatible clean-room self-host; AGPL; feeds Cloud Standard.
