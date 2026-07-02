@@ -1,7 +1,8 @@
 model:
-  default: '@cf/zai-org/glm-5.2'
-  provider: cloudflare
-  context_length: 262144
+  default: us.anthropic.claude-sonnet-5
+  provider: bedrock
+  base_url: https://bedrock-runtime.us-east-1.amazonaws.com
+  context_length: 1000000
 agent:
   gateway_notify_interval: 0
   reasoning_effort: none

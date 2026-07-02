@@ -184,6 +184,67 @@ The trigger log itself does not contain `project_id`. Recover scope from the acc
 - Previous spike observed on 2026-06-17 (15 events) -- likely a single user testing multiple templates
 - Classification: **`no_action`** -- handled external API validation error, rendering succeeds, no customer-facing impact
 
+## Variant: 401-only (no RenderError/AbortError in trigger context)
+
+Observed on 2026-07-01: the alarm fired with rapid recurrence (3 transitions in 10 minutes), but the trigger context contained **only** the raw HTTP response body — no `RenderError`, no `AbortError`, no LiquidJS stack trace:
+
+```
+<url> responded with 401:
+{
+  "error": "Unauthorized"
+}
+```
+
+The helper's `current_trigger_contexts` showed 4 repetitions of this pattern in a single 60-second alarm window (datapoint value 4.0), all with the same `user_id=13729`. This indicates the same template was rendered 4 times in one minute (batch test sends or campaign previews), each producing one `console.error` log line.
+
+### Distinguishing from the abort variant
+
+| Aspect | 401 + abort variant | 401-only variant (this session) |
+|--------|-------------------|-------------------------------|
+| Trigger log | `RenderError: message is aborted` + `From AbortError` | Only `"error": "Unauthorized"` from HTTP response body |
+| Stack trace | LiquidJS stack frame present | Absent |
+| Template behavior | Rendering aborts via `abort_message()` | Rendering may continue or error is logged before abort decision |
+| Frequency | Usually ≤ 5/day | Can spike to 39/hour with rapid recurrence |
+
+### URL recovery via `filter_log_events` with `filterPattern='401'`
+
+When the helper sanitizes URLs to `<url>`, use `filter_log_events` with a simple `401` filter pattern across the log group (not just `get_log_events` on a specific stream). This is simpler because it doesn't require knowing the stream name first:
+
+```python
+resp = logs.filter_log_events(
+    logGroupName='/aws/ecs/notifly-services-prod/web-console',
+    filterPattern='401',
+    startTime=start_ms,  # alarm window start in epoch ms
+    endTime=end_ms,
+    limit=15
+)
+```
+
+The full URL (e.g., `https://htcxkbijmiptoubmkhkm.supabase.co/functions/v1/personalization?user_id=13729&sections=categories&token=...`) immediately identifies this as an external Supabase Edge Function call.
+
+### 30d trend verification via Logs Insights
+
+To distinguish a new spike from baseline noise, run a daily-binned Logs Insights query:
+
+```
+fields @timestamp
+| filter @message like "supabase" and @message like "401"
+| stats count() by bin(1d)
+| sort @timestamp asc
+```
+
+Session data (2026-07-01):
+- 30d: only 1 previous occurrence on 2026-06-17 (1 event), then 39 events on 2026-07-01
+- The spike is clearly new, not baseline
+- Same Supabase project URL (`htcxkbijmiptoubmkhkm.supabase.co`) as the 2026-06-17 session — recurring customer configuration issue with expired/rotated token
+
+### Rapid recurrence classification
+
+When `rapid_recurrence.status == "rapid"` (3+ alarms in 10 minutes) for this pattern:
+- Check whether all trigger contexts share the same `user_id` or URL — if yes, it's the same template being rendered multiple times, not a systemic issue
+- Still classify as `no_action` if: Lambda/ECS is healthy, no customer delivery failure, and the root cause is external API auth failure
+- The rapid recurrence itself is caused by the `console.error` at `connectedContent.ts:136` being called once per render attempt, and the metric filter threshold is `Sum >= 1` with 60-second period — even 2 render attempts in the same minute will fire the alarm
+
 ## Related references
 
 - `references/web-console-liquidjs-abort-message-false-positive.md` -- broader class of LiquidJS abort patterns.

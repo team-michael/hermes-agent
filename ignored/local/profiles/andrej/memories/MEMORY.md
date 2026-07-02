@@ -24,7 +24,7 @@ Notifly MCP OAuth façade uses existing api/web Cognito user pool/client policy;
 §
 SDK Tracker paths: `~/.hermes/workspace/crm-sdk-tracker`, `~/.hermes/profiles/andrej/crm-sdk-tracker`; Android migration: private customer setup skills from authorized code; start coexist/shadow.
 §
-Notifly Alimtalk: snapshot create/update; direct branch only; no broad Any*. BZM PUBLIC not lookupable; send rendered msg/buttons.
+Notifly Alimtalk: direct branch only; public API immediate separate; avoid “PDF-style”; no broad Any*; BZM PUBLIC not lookupable.
 §
 Notifly CE: SDK-compatible clean-room self-host; AGPL; feeds Cloud Standard.
 §

@@ -1415,6 +1415,11 @@ def _is_bedrock_model_id(model: str) -> bool:
     return False
 
 
+def _is_bedrock_endpoint(base_url: str | None) -> bool:
+    """Return True for AWS Bedrock Runtime Anthropic SDK endpoints."""
+    return "bedrock-runtime." in str(base_url or "").lower()
+
+
 def normalize_model_name(model: str, preserve_dots: bool = False) -> str:
     """Normalize a model name for the Anthropic API.
 
@@ -2306,7 +2311,10 @@ def build_anthropic_kwargs(
     # 4.6 behavior and preserving the activity-feed UX during long tool runs.
     _is_kimi_coding = _is_kimi_family_endpoint(base_url, model)
     if reasoning_config and isinstance(reasoning_config, dict) and not _is_kimi_coding:
-        if reasoning_config.get("enabled") is not False and "haiku" not in model.lower():
+        if reasoning_config.get("enabled") is False:
+            if _is_bedrock_endpoint(base_url):
+                kwargs["thinking"] = {"type": "disabled"}
+        elif "haiku" not in model.lower():
             effort = str(reasoning_config.get("effort", "medium")).lower()
             budget = THINKING_BUDGET.get(effort, 8000)
             if _supports_adaptive_thinking(model):

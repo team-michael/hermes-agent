@@ -6,7 +6,7 @@ Notifly RCA/debug: terse KR, evidence first; pragmatic client fix. No signOut/de
 §
 In DMs, user wants infra explanations tailored to Mobile/iOS+SDK Eng background: use analogies only when mechanisms match; flag SDK implications for contracts/retries/offline/telemetry/DX.
 §
-Slack/Notifly: terse KR bullets, no tables/jargon. DDL DataGrip-safe: ASCII spaces, low alignment, attach .sql if long. Backend/Kakao: mechanism-first contracts/risk; PR plans concrete.
+Slack/Notifly: terse KR bullets, no tables/jargon. DDL DataGrip-safe ASCII/low-align/attach if long. Backend/Kakao: mechanism-first contracts/risk; PR concrete; Alimtalk wants product-code E2E/live + exact sender/channel.
 §
 Vendor/MSP tickets: no internal refs; cause-only/minimal; paste-ready plain text, no code fences.
 §

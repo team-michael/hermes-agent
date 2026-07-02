@@ -1319,6 +1319,30 @@ class TestBuildAnthropicKwargs:
         )
         assert "thinking" not in kwargs
 
+    def test_reasoning_disabled_maps_to_thinking_disabled_for_bedrock(self):
+        kwargs = build_anthropic_kwargs(
+            model="us.anthropic.claude-sonnet-5",
+            messages=[{"role": "user", "content": "quick"}],
+            tools=None,
+            max_tokens=4096,
+            reasoning_config={"enabled": False},
+            base_url="https://bedrock-runtime.us-east-1.amazonaws.com",
+        )
+        assert kwargs["thinking"] == {"type": "disabled"}
+        assert "output_config" not in kwargs
+
+    def test_bedrock_xhigh_preserves_adaptive_effort(self):
+        kwargs = build_anthropic_kwargs(
+            model="us.anthropic.claude-opus-4-8",
+            messages=[{"role": "user", "content": "think hard"}],
+            tools=None,
+            max_tokens=4096,
+            reasoning_config={"enabled": True, "effort": "xhigh"},
+            base_url="https://bedrock-runtime.us-east-1.amazonaws.com",
+        )
+        assert kwargs["thinking"] == {"type": "adaptive", "display": "summarized"}
+        assert kwargs["output_config"] == {"effort": "xhigh"}
+
     def test_default_max_tokens_uses_model_output_limit(self):
         """When max_tokens is None, use the model's native output limit."""
         kwargs = build_anthropic_kwargs(

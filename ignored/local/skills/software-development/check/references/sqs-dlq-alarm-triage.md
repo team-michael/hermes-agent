@@ -56,6 +56,16 @@ When a CloudWatch alarm fires on a dead-letter queue (`ApproximateNumberOfMessag
    Near-parity over the alarm window means the consumer is keeping up on average; the DLQ entries are from isolated failures, not sustained overload.
    (See `references/sqs-lambda-throughput-bottleneck.md` for the exact CLI pattern.)
 
+5b. **Track DLQ redrive timing via `NumberOfMessagesReceived`**
+   SQS redrive (main→DLQ) shows as `Received` on the DLQ side, not `Sent` (which is for producer-sent messages). Use this metric to identify when batches of messages were redrived and whether the burst has stopped:
+   ```python
+   cw.get_metric_statistics(
+     Namespace='AWS/SQS', MetricName='NumberOfMessagesReceived',
+     Dimensions=[{'Name':'QueueName','Value':'<dlq-queue-name>'}],
+     StartTime=..., EndTime=..., Period=300, Statistics=['Sum'])
+   ```
+   If `Received` drops to 0 and DLQ depth is flat for 30+ minutes, the burst has passed.
+
 6. **Scope attribution**
    - Shared pipeline queues (e.g., `kinesis-record-dispatcher-queue`) carry aggregate records from all projects.
    - Lambda logs typically contain only `START/END/REPORT`.
@@ -205,6 +215,25 @@ When all of the following hold, classify the DLQ as **transient infrastructure f
 
 **What this means:** The message was received at least once by SQS, but the Lambda function either was never invoked, or the invocation completed without logging and the subsequent `DeleteMessage` failed. Because `maxReceiveCount=1`, there was no retry. The root cause is structural (retry policy) and/or transient AWS internals, not application code.
 
+## DLQ redrive: preferred method
+
+When the investigation confirms the DLQ messages are safe to replay (external dependency recovered, Lambda healthy, main queue draining), use `sqs.start_message_move_task` for redrive:
+
+```python
+sqs.start_message_move_task(
+    SourceArn="arn:aws:sqs:<region>:<account>:<dlq-name>",
+    DestinationArn="arn:aws:sqs:<region>:<account>:<main-queue-name>"
+)
+```
+
+This is a server-side move — no `receive_message` needed, no visibility changes, single API call. The DLQ's `RedriveAllowPolicy` must permit the source queue (check via `get_queue_attributes` on the DLQ).
+
+**Pre-redrive safety checks**: main queue depth=0, DLQ depth stable (not growing), Lambda Errors=0, no active error logs for the affected entity.
+
+**Post-redrive verification**: DLQ→0, main queue `NumberOfMessagesSent` spike matches redrive count, `NumberOfMessagesDeleted` ≈ `Sent` (parity = successful consumption), DLQ stays at 0 for 10+ minutes.
+
+**When NOT to use `start_message_move_task`**: DLQ contains mixed entities (e.g., different `mall_id`s) and some are still rate-limited. Use manual selective receive/delete for safe cohorts instead. See `references/cafe24-worker-dlq-selective-redrive.md` for the full selective redrive recipe.
+
 ## Pitfalls
 
 - Do not treat DLQ presence as proof of a Lambda bug. Always check Lambda `Errors` first.
@@ -212,3 +241,5 @@ When all of the following hold, classify the DLQ as **transient infrastructure f
 - Do not search Lambda logs for project IDs when the queue is a shared pipeline.
 - Never omit the `maxReceiveCount` value from the final answer when it is 1; it is the dominant structural cause.
 - Do not claim certainty about "AWS transient network/SQS error" unless you can show the above zero-log-match + healthy-Lambda pattern. Without that pattern, the root cause is unverified.
+- **SQS `get_queue_attributes` attribute name pitfall**: `ApproximateNumberOfMessagesVisible` is a valid CloudWatch metric name but NOT a valid SQS attribute name for `get_queue_attributes`. Use `ApproximateNumberOfMessages` (without `Visible`) for the SQS API, or use `--attribute-names All` with the CLI. The CloudWatch metric and SQS attribute names differ for this field.
+- **DLQ depth is a lagging indicator**: A DLQ creation alarm (`<queue>-dlq has been created`, threshold >= 1) fires on the first message and stays in ALARM as long as any message remains. Check `NumberOfMessagesReceived` on the DLQ to determine if messages are still accumulating or the burst has stopped. A stable DLQ count with zero new `Received` means the incident is over but the alarm will not auto-resolve until the DLQ is drained or purged.

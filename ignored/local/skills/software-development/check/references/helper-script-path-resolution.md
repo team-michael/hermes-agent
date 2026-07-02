@@ -45,3 +45,13 @@ PYTHONPATH="$SKILL_DIR/scripts" python "$SKILL_DIR/scripts/collect_notifly_alert
 ```
 
 Always derive `SKILL_DIR` from the `[Skill directory]` annotation at the bottom of the loaded SKILL.md, not from `HERMES_HOME` or `$HOME/.hermes`.
+
+## Pitfall — large helper JSON output gets truncated/corrupted when captured through `execute_code`'s `terminal()`
+
+The helper's full JSON output routinely exceeds 20KB. When you call `hermes_tools.terminal(...)` from inside `execute_code` and try to `json.loads(r['output'])` directly, the captured stdout string is truncated at roughly 20,000 characters, so `json.loads` fails with `JSONDecodeError: Expecting property name enclosed in double quotes` partway through. This is a capture-buffer limit, not a bug in the helper.
+
+**Fix**: never try to `json.loads()` the in-memory captured stdout for a large helper run. Instead:
+1. Run the helper once via the top-level `terminal` tool (not `execute_code`) with a shell redirect to a file under the profile dir, e.g. `... > /home/ubuntu/.hermes/profiles/<profile>/scratch_alert.json`.
+2. In a follow-up `execute_code` call, load that file directly with `json.load(open(path))` — this reads the full file from disk and is not subject to the stdout capture cap.
+3. Do not double-`json.loads()` the result — if you redirected raw stdout to the file, the file already contains the helper's top-level JSON object (`can_answer_root_cause`, `detected`, `alarm`, `history`, `logs`, ...). Wrapping it in an extra `outer = json.loads(raw); inner = json.loads(outer['output'])` step is wrong and raises `KeyError: 'output'`.
+4. This lets you pull specific nested fields (`logs.current_top_signatures`, `logs.current_error_details`, `history.daily_alarm_counts`, etc.) without re-running the helper or scrolling through truncated terminal output.

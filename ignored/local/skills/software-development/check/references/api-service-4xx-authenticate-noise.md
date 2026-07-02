@@ -81,6 +81,21 @@ Characteristics:
 
 This is a client-side retry or misconfiguration, not a service regression. The `api-service` is correctly rejecting the request. Cross-check `AWS/ApplicationELB` or `AWS/ApiGateway` 5xx metrics to confirm no server-side failure is present.
 
+## Variant C — User journey batch-enter validation rejection (`POST /projects/{pid}/user-journeys/{journeyId}/enter`)
+
+On some alarm windows the current-trigger-context sample (not the 7d/30d top signature) is dominated by repeated `400` responses on `POST /projects/{pid}/user-journeys/{journeyId}/enter`, even while the historical top signature for the alarm is still `/authenticate`. Treat the *current window's* dominant repeated line as the actual trigger for that specific ALARM transition; do not assume `/authenticate` fired every time just because it's the historical baseline.
+
+Characteristics:
+- **Response**: `{"code":400,"success":false,...}`, `level: "warn"`, `duration: 11–16ms` (fast — no DB round trip, rejected in early input validation before `getUserJourney()` is called)
+- **Code path**: `services/server/api-service/lib/api/user-journeys.js` → `enterUserJourney(token, projectId, userJourneyId, body)`. The relevant early-return validation branches (lines ~30-59) are, in order:
+  - `!projectId` → `400 Invalid project ID`
+  - `!userJourneyId` → `400 Invalid user journey ID`
+  - `!body?.users` → `` 400 `users` field is required` ``
+  - `body.users.length > maxUsers` → `` 400 Maximum of ${maxUsers} users can be entered at once `` (default cap 1000; project `031b18009978590188e49e6777447fc2` / munice has an extended cap of 3000 via `EXTENDED_MAX_ENTER_USERS_PROJECT_ID`)
+  - A ~15ms duration with no DB call rules out `getUserJourney()` returning null (`404 User journey not found`, which is a different code path/status) — it's one of the four cheap pre-DB checks above, most likely the batch-size cap given repeated identical calls from the same caller.
+- **Scope**: fully attributable — `projectId` and `userJourneyId` (e.g. `user-journeys/ab711m/enter`) both appear directly in the structured log line, so this is not a "campaign/user journey unknown" case.
+- **Classification**: `no_action` — handled input-validation rejection from a caller sending oversized/malformed batches to the user-journey enter API; server behavior is correct and no data loss occurs (caller can retry with a valid batch).
+
 ## Fast classifier — `level` field
 
 All known false-positive patterns for this alarm emit structured logs with `"level":"warn"`. A single Logs Insights query can separate handled rejection noise from real errors:
@@ -227,6 +242,10 @@ The `api-service` log group receives very high traffic. During a spike, CloudWat
 ## Pitfall — Logs Insights auto-extracted field collision
 
 CloudWatch Logs Insights auto-extracts top-level JSON keys as query fields. If a log line contains `"status":400`, then `status` is already available without parsing. Adding `parse @message '"status":*' as status` in the same query raises `MalformedQueryException: Ephemeral field is already defined: status`. Remove redundant `parse` clauses for fields already present as top-level JSON keys, or rename the alias (e.g., `as parsed_status`).
+
+## Pitfall — `logs.current_error_details` may sample a minor signature, not the dominant one
+
+The helper's `logs.current_error_details` list is built from a fixed small sample of trigger-centered log lines and can end up entirely populated with a low-count secondary signature (e.g., 3 samples of `POST /projects/{pid}/user-journeys/.../enter` 400) even when `logs.current_top_signatures` shows a completely different pattern dominating the alarm window by volume (e.g., `POST /authenticate` 400 at 293/300 lines, ~98%). Do not let `current_error_details` alone decide the root cause for this alarm family. Always cross-check `logs.current_top_signatures[].count_in_current_alarm_window`: the signature with the highest count in the current window is the actual trigger, and `/authenticate` at ≥90% is the known noise pattern regardless of what `current_error_details` happened to sample.
 
 ## Classification guidance
 
