@@ -15,23 +15,26 @@ import time
 from email.utils import formatdate
 
 from agent.redact import redact_sensitive_text
-from agent.secret_scope import get_secret
 
 logger = logging.getLogger(__name__)
 
 _TELEGRAM_TOPIC_TARGET_RE = re.compile(r"^\s*(-?\d+)(?::(\d+))?\s*$")
 _FEISHU_TARGET_RE = re.compile(r"^\s*((?:oc|ou|on|chat|open)_[-A-Za-z0-9]+)(?::([-A-Za-z0-9_]+))?\s*$")
 # Slack conversation IDs: C (public channel), G (private/group channel), D (DM).
-# Must be uppercase alphanumeric, 9+ chars. User IDs (U...) are parsed as
-# explicit user targets (``user:U...``) and are converted to D... conversations
-# via conversations.open before chat.postMessage — posting directly to a U/W
-# ID fails because the API requires a conversation ID. ``@handle`` targets are
-# resolved through users.list first (``user_name:...``).
-_SLACK_TARGET_RE = re.compile(r"^\s*([CGD][A-Z0-9]{8,})\s*$")
-_SLACK_USER_ID_RE = re.compile(r"^\s*(U[A-Z0-9]{8,})\s*$")
-_SLACK_USER_NAME_RE = re.compile(r"^\s*@([A-Za-z0-9._-]{1,80})\s*$")
-_SLACK_MENTION_RE = re.compile(r"^\s*<@(U[A-Z0-9]{8,})(?:\|[^>]+)?>\s*$")
-# Session-derived Slack thread targets use "<conversation_id>:<thread_ts>".
+# Must be uppercase alphanumeric, 9+ chars. User IDs (U...) and workspace IDs
+# (W...) are NOT valid chat.postMessage channel values — posting to them fails
+# because the API requires a conversation ID. To DM a user you must first call
+# conversations.open to obtain a D... ID. Without this gate, Slack IDs fall
+# through to channel-name resolution, which only matches by name and fails.
+#
+# An optional `:thread_ts` suffix routes the post into an existing thread.
+# `thread_ts` is Slack's float-as-string timestamp (e.g. "1778610929.846749"),
+# captured from any earlier message in the thread (the parent's `ts` or any
+# reply's `thread_ts`). When present, `chat.postMessage` returns a reply rather
+# than a top-level channel message.
+_SLACK_TARGET_RE = re.compile(r"^\s*([CGDU][A-Z0-9]{8,})(?::([^\s:]+))?\s*$")
+# Slack threaded target: slack:C1234567890:1778626719.373509
+# The second component is the thread root `ts` value passed as `thread_ts`.
 _SLACK_THREAD_TARGET_RE = re.compile(r"^\s*([CGD][A-Z0-9]{8,}):([^\s:]+)\s*$")
 _WEIXIN_TARGET_RE = re.compile(r"^\s*((?:wxid|gh|v\d+|wm|wb)_[A-Za-z0-9_-]+|[A-Za-z0-9._-]+@chatroom|filehelper)\s*$")
 _YUANBAO_TARGET_RE = re.compile(r"^\s*((?:group|direct):[^:]+)\s*$")
@@ -198,44 +201,315 @@ async def _send_telegram_message_with_retry(bot, *, attempts: int = 3, **kwargs)
             await asyncio.sleep(delay)
 
 
-SEND_MESSAGE_SCHEMA = {
-    "name": "send_message",
-    "description": (
-        "Send a message to a connected messaging platform, or list available targets.\n\n"
-        "IMPORTANT: When the user asks to send to a specific channel or person "
-        "(not just a bare platform name), call send_message(action='list') FIRST to see "
-        "available targets, then send to the correct one.\n"
-        "If the user just says a platform name like 'send to telegram', send directly "
-        "to the home channel without listing first."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "action": {
-                "type": "string",
-                "enum": ["send", "list", "react", "unreact"],
-                "description": "Action to perform. 'send' (default) sends a message. 'list' returns all available channels/contacts across connected platforms. 'react' attaches an emoji reaction to a message (platforms that support it, e.g. photon/iMessage tapbacks). 'unreact' retracts a previously-added reaction."
-            },
-            "target": {
-                "type": "string",
-                "description": "Delivery target. Format: 'platform' (uses home channel), 'platform:#channel-name', 'platform:chat_id', or 'platform:chat_id:thread_id' for Telegram topics and Discord threads. Examples: 'telegram', 'telegram:-1001234567890:17585', 'discord:999888777:555444333', 'discord:#bot-home', 'slack:#engineering', 'signal:+155****4567', 'matrix:!roomid:server.org', 'matrix:@user:server.org', 'ntfy:alerts-channel' (explicit ntfy topic), 'yuanbao:direct:<account_id>' (DM), 'yuanbao:group:<group_code>' (group chat)"
-            },
-            "message": {
-                "type": "string",
-                "description": "The message text to send. To send an image or file, include MEDIA:<local_path> (e.g. 'MEDIA:/tmp/report.pdf') in the message — the platform will deliver it as a native media attachment."
-            },
-            "emoji": {
-                "type": "string",
-                "description": "For action='react': the emoji to react with (e.g. '❤️'). On iMessage, ❤️👍👎😂‼️❓ render as native tapbacks; other emoji use custom-emoji reactions."
-            },
-            "message_id": {
-                "type": "string",
-                "description": "For action='react'/'unreact': id of the message to react to. Omit to target the most recent message received in that chat (usually the one being replied to)."
-            }
+# ---------------------------------------------------------------------------
+# Slack Block Kit `table` block — profile-gated feature
+# ---------------------------------------------------------------------------
+#
+# Slack added a native Block Kit `table` block on 2025-08-14. Rendering genuine
+# tabular data (3+ cols × 3+ rows) as a native table is vastly nicer than the
+# fake ASCII / bullet workarounds, but:
+#
+#   1. The option is Slack-only. Other adapters have no analogue.
+#   2. LLMs tend to misuse tables for anything that could be bullets, which is
+#      catastrophic on mobile.
+#   3. The code base is shared across multiple profiles, so the blast radius of
+#      a bad default is large.
+#
+# The mitigation is an allow-list of profiles that *explicitly opt in*. When
+# the current profile is not in the allow-list:
+#   - the `slack_table` parameter is omitted from the tool schema entirely,
+#     so the model never sees it and therefore cannot attempt to use it;
+#   - even if a caller sneaks `slack_table` into args (e.g. via programmatic
+#     invocation), the runtime gate silently ignores it and falls through to
+#     the plain-text path.
+#
+# Add a profile to the allow-list only after validating the feature in that
+# profile's Slack home channel.
+SLACK_TABLE_ENABLED_PROFILES = frozenset({
+    "andrej",
+    "andrew",
+    "boris",
+    "csm",
+    "hashimoto",
+    "hermes-soomin",
+    "jeff",
+    "linus",
+    "mokoko",
+    "nico_robin",
+    "notifly-sentinel",
+    "sdr",
+    "tarantino",
+    "waddle_dee",
+})
+
+
+def _is_slack_table_enabled_for_current_profile() -> bool:
+    """Return True iff the active Hermes profile is allowed to use `slack_table`.
+
+    Resolution order (first non-empty wins):
+      1. ``HERMES_PROFILE`` environment variable (set by gateway subprocess
+         spawner and kanban_db) — authoritative when present.
+      2. ``hermes_cli.profiles.get_active_profile_name()`` which resolves via
+         ``HERMES_HOME`` → profile folder mapping.
+
+    Profile resolution failures fall back to ``False`` so the feature stays
+    off-by-default for every profile that hasn't opted in.
+    """
+    try:
+        env_profile = os.environ.get("HERMES_PROFILE") or os.environ.get("HERMES_PROFILE_NAME")
+        if env_profile:
+            return env_profile.strip() in SLACK_TABLE_ENABLED_PROFILES
+        try:
+            from hermes_cli.profiles import get_active_profile_name
+            return get_active_profile_name() in SLACK_TABLE_ENABLED_PROFILES
+        except Exception:
+            return False
+    except Exception:
+        return False
+
+
+def _build_send_message_schema() -> dict:
+    """Build the send_message tool schema, gating Slack-only extras by profile."""
+    properties = {
+        "action": {
+            "type": "string",
+            "enum": ["send", "list", "react", "unreact"],
+            "description": "Action to perform. 'send' (default) sends a message. 'list' returns all available channels/contacts across connected platforms. 'react' attaches an emoji reaction to a message (platforms that support it, e.g. photon/iMessage tapbacks). 'unreact' retracts a previously-added reaction."
         },
-        "required": []
+        "target": {
+            "type": "string",
+            "description": "Delivery target. Format: 'platform' (uses home channel), 'platform:#channel-name', 'platform:chat_id', or 'platform:chat_id:thread_id' for Telegram topics and Discord threads. Examples: 'telegram', 'telegram:-1001234567890:17585', 'discord:999888777:555444333', 'discord:#bot-home', 'slack:#engineering', 'signal:+155****4567', 'matrix:!roomid:server.org', 'matrix:@user:server.org', 'yuanbao:direct:<account_id>' (DM), 'yuanbao:group:<group_code>' (group chat)"
+        },
+        "message": {
+            "type": "string",
+            "description": "The message text to send. To send an image or file, include MEDIA:<local_path> for a file under a Hermes media cache or HERMES_MEDIA_ALLOW_DIRS — the platform will deliver it as a native media attachment."
+        },
+        "emoji": {
+            "type": "string",
+            "description": "For action='react': the emoji to react with (e.g. '❤️'). On iMessage, ❤️👍👎😂‼️❓ render as native tapbacks; other emoji use custom-emoji reactions."
+        },
+        "message_id": {
+            "type": "string",
+            "description": "For action='react'/'unreact': id of the message to react to. Omit to target the most recent message received in that chat (usually the one being replied to)."
+        }
     }
-}
+
+    if _is_slack_table_enabled_for_current_profile():
+        properties["slack_table"] = {
+            "type": "object",
+            "description": (
+                "SLACK ONLY, RARELY USED. Render a native Slack Block Kit table block. "
+                "Use ONLY when the data is genuinely tabular AND meaningfully benefits from "
+                "column alignment — minimum 3 columns × 3 rows (header + 2+ data rows) of "
+                "parallel structured data that a reader will want to scan column-by-column. "
+                "DO NOT use for: 2-column key/value lists, bulletable comparisons, short "
+                "lists, or anything that reads naturally as '- **Key** — value' bullets. "
+                "Bullets render better on mobile and in thread previews. "
+                "The `message` field is still required — it becomes the fallback text for "
+                "mobile push notifications, search indexing, and collapsed thread previews, "
+                "so make it a real one-line summary of what the table contains. "
+                "Cells are `raw_text` (plain text only — markdown like **bold** renders as "
+                "literal asterisks in Slack). Max 100 rows, 20 columns per row. One table "
+                "per message. Non-Slack targets ignore this field."
+            ),
+            "properties": {
+                "headers": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Column headers (row 0). Must be non-empty and match the column count of every row in `rows`."
+                },
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {"type": "string"}
+                    },
+                    "description": "Body rows. Each row is an array of plain-text cell strings with the same length as `headers`."
+                },
+                "column_settings": {
+                    "type": "array",
+                    "description": "Optional per-column settings. Each entry: {is_wrapped?: bool, align?: 'left'|'center'|'right'}. Use `null` to leave a column at defaults.",
+                    "items": {
+                        "type": ["object", "null"],
+                        "properties": {
+                            "is_wrapped": {"type": "boolean"},
+                            "align": {"type": "string", "enum": ["left", "center", "right"]}
+                        }
+                    }
+                }
+            },
+            "required": ["headers", "rows"]
+        }
+
+    return {
+        "name": "send_message",
+        "description": (
+            "Send a message to a connected messaging platform, or list available targets.\n\n"
+            "IMPORTANT: When the user asks to send to a specific channel or person "
+            "(not just a bare platform name), call send_message(action='list') FIRST to see "
+            "available targets, then send to the correct one.\n"
+            "If the user just says a platform name like 'send to telegram', send directly "
+            "to the home channel without listing first."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": properties,
+            "required": []
+        }
+    }
+
+
+SEND_MESSAGE_SCHEMA = _build_send_message_schema()
+
+
+# Slack Block Kit table block hard limits (docs.slack.dev/reference/block-kit/blocks/table-block)
+_SLACK_TABLE_MAX_ROWS = 100
+_SLACK_TABLE_MAX_COLS = 20
+_SLACK_TABLE_MIN_COLS = 3
+_SLACK_TABLE_MIN_BODY_ROWS = 2  # header + body, so total rows >= 3
+
+
+def _validate_slack_table(table: dict) -> tuple[bool, str]:
+    """Validate a slack_table payload. Returns (ok, error_message).
+
+    Intentionally strict on minimums: below the minimum size, the table is
+    objectively worse than a bullet list in Slack (especially on mobile), so we
+    reject with an instructive error message that shows the bullet alternative.
+    """
+    if not isinstance(table, dict):
+        return False, "slack_table must be an object with headers/rows."
+
+    headers = table.get("headers")
+    rows = table.get("rows")
+
+    if not isinstance(headers, list) or not headers:
+        return False, "slack_table.headers must be a non-empty array of strings."
+    if not isinstance(rows, list):
+        return False, "slack_table.rows must be an array of row arrays."
+
+    col_count = len(headers)
+    if col_count < _SLACK_TABLE_MIN_COLS:
+        return False, (
+            f"slack_table requires at least {_SLACK_TABLE_MIN_COLS} columns "
+            f"(got {col_count}). For 2-column data, use a bullet list in the "
+            f"`message` field instead, e.g.:\n"
+            f"- **Key A** — value A\n- **Key B** — value B"
+        )
+    if col_count > _SLACK_TABLE_MAX_COLS:
+        return False, (
+            f"slack_table columns exceed Slack limit of {_SLACK_TABLE_MAX_COLS} "
+            f"(got {col_count}). Reduce columns or split into multiple messages."
+        )
+    if len(rows) < _SLACK_TABLE_MIN_BODY_ROWS:
+        return False, (
+            f"slack_table requires at least {_SLACK_TABLE_MIN_BODY_ROWS} data "
+            f"rows (plus headers; got {len(rows)} data rows). For short lists, "
+            f"use a bullet list in the `message` field."
+        )
+    total_rows = len(rows) + 1  # +1 for header row in the rendered block
+    if total_rows > _SLACK_TABLE_MAX_ROWS:
+        return False, (
+            f"slack_table total rows (header + body = {total_rows}) exceeds "
+            f"Slack limit of {_SLACK_TABLE_MAX_ROWS}. Split into multiple messages."
+        )
+
+    for idx, row in enumerate(rows):
+        if not isinstance(row, list):
+            return False, f"slack_table.rows[{idx}] must be an array."
+        if len(row) != col_count:
+            return False, (
+                f"slack_table.rows[{idx}] has {len(row)} cells but headers has "
+                f"{col_count}. Every row must have the same number of cells as headers."
+            )
+        for cidx, cell in enumerate(row):
+            if not isinstance(cell, str):
+                return False, (
+                    f"slack_table.rows[{idx}][{cidx}] must be a string. "
+                    f"Cells are plain text (Slack `raw_text`)."
+                )
+
+    col_settings = table.get("column_settings")
+    if col_settings is not None:
+        if not isinstance(col_settings, list):
+            return False, "slack_table.column_settings must be an array or null."
+        if len(col_settings) > _SLACK_TABLE_MAX_COLS:
+            return False, (
+                f"slack_table.column_settings exceeds {_SLACK_TABLE_MAX_COLS} entries."
+            )
+        for i, s in enumerate(col_settings):
+            if s is None:
+                continue
+            if not isinstance(s, dict):
+                return False, f"slack_table.column_settings[{i}] must be an object or null."
+            align = s.get("align")
+            if align is not None and align not in ("left", "center", "right"):
+                return False, (
+                    f"slack_table.column_settings[{i}].align must be one of "
+                    f"'left', 'center', 'right' (got {align!r})."
+                )
+            is_wrapped = s.get("is_wrapped")
+            if is_wrapped is not None and not isinstance(is_wrapped, bool):
+                return False, (
+                    f"slack_table.column_settings[{i}].is_wrapped must be a boolean."
+                )
+
+    return True, ""
+
+
+def _build_slack_table_block(table: dict) -> dict:
+    """Convert a validated slack_table dict into a Slack Block Kit `table` block."""
+    headers = table["headers"]
+    rows = table["rows"]
+
+    rendered_rows = [
+        [{"type": "raw_text", "text": str(h)} for h in headers]
+    ]
+    for row in rows:
+        rendered_rows.append([{"type": "raw_text", "text": str(cell)} for cell in row])
+
+    block = {"type": "table", "rows": rendered_rows}
+
+    col_settings = table.get("column_settings")
+    if col_settings:
+        cleaned = []
+        for s in col_settings:
+            if s is None:
+                cleaned.append({})  # Slack treats {} as "default column"
+            else:
+                entry = {}
+                if "is_wrapped" in s:
+                    entry["is_wrapped"] = bool(s["is_wrapped"])
+                if "align" in s:
+                    entry["align"] = s["align"]
+                cleaned.append(entry)
+        block["column_settings"] = cleaned
+
+    return block
+
+
+def _rasterize_slack_table_for_mirror(table: dict) -> str:
+    """Render a slack_table into a plain-text grid for session mirror / logs.
+
+    The live Slack message uses the native Block Kit table, but the gateway
+    mirror (`gateway.mirror.mirror_to_session`) stores text. Without this
+    rasterization the session row is effectively empty, which breaks
+    cross-turn context for the LLM.
+    """
+    headers = [str(h) for h in table["headers"]]
+    rows = [[str(c) for c in row] for row in table["rows"]]
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i, cell in enumerate(row):
+            if i < len(widths):
+                widths[i] = max(widths[i], len(cell))
+
+    def _fmt(row):
+        return " | ".join(cell.ljust(widths[i]) for i, cell in enumerate(row))
+
+    lines = [_fmt(headers), "-+-".join("-" * w for w in widths)]
+    for row in rows:
+        lines.append(_fmt(row))
+    return "\n".join(lines)
 
 
 def send_message_tool(args, **kw):
@@ -359,6 +633,15 @@ def _handle_send(args):
     """Send a message to a platform target."""
     target = args.get("target", "")
     message = args.get("message", "")
+    slack_table = args.get("slack_table")
+
+    # Runtime gate: silently drop slack_table for profiles that haven't opted in.
+    # The schema already hides the parameter from the model, but a programmatic
+    # caller or a cached tool definition from a multi-profile client could still
+    # include it. Dropping (rather than erroring) preserves backward-compat.
+    if slack_table is not None and not _is_slack_table_enabled_for_current_profile():
+        slack_table = None
+
     if not target or not message:
         return tool_error("Both 'target' and 'message' are required when action='send'")
 
@@ -372,6 +655,35 @@ def _handle_send(args):
         chat_id, thread_id, is_explicit = _parse_target_ref(platform_name, target_ref)
     else:
         is_explicit = False
+
+    # Auto-inherit the current Slack thread when the model didn't pin one.
+    # If we're answering inside a Slack thread (gateway sets HERMES_SESSION_*),
+    # and the caller is targeting the same chat_id (or just the bare platform),
+    # default thread_ts to that thread so tabular replies land inside the
+    # conversation instead of as a fresh top-level message. The model can
+    # always pin an explicit `:thread_ts` to override or escape the thread.
+    if platform_name == "slack" and not thread_id:
+        try:
+            from gateway.session_context import get_session_env
+            if get_session_env("HERMES_SESSION_PLATFORM", "") == "slack":
+                session_chat = get_session_env("HERMES_SESSION_CHAT_ID", "")
+                session_thread = get_session_env("HERMES_SESSION_THREAD_ID", "")
+                # Resolve home channel once so a bare `slack` target also matches
+                # the current session's chat_id.
+                effective_chat = chat_id
+                if not effective_chat:
+                    try:
+                        from gateway.config import load_gateway_config, Platform as _Platform
+                        _cfg = load_gateway_config()
+                        _home = _cfg.get_home_channel(_Platform.SLACK)
+                        if _home:
+                            effective_chat = _home.chat_id
+                    except Exception:
+                        pass
+                if session_thread and session_chat and effective_chat == session_chat:
+                    thread_id = session_thread
+        except Exception:
+            logger.debug("Slack thread auto-inherit failed", exc_info=True)
 
     # Resolve human-friendly channel names to numeric IDs
     if target_ref and not is_explicit:
@@ -413,8 +725,8 @@ def _handle_send(args):
         # Weixin can be configured purely via .env; synthesize a pconfig so
         # send_message and cron delivery work without a gateway.yaml entry.
         if platform_name == "weixin":
-            wx_token = get_secret("WEIXIN_TOKEN", "").strip()
-            wx_account = get_secret("WEIXIN_ACCOUNT_ID", "").strip()
+            wx_token = os.getenv("WEIXIN_TOKEN", "").strip()
+            wx_account = os.getenv("WEIXIN_ACCOUNT_ID", "").strip()
             if wx_token and wx_account:
                 from gateway.config import PlatformConfig
                 pconfig = PlatformConfig(
@@ -422,8 +734,8 @@ def _handle_send(args):
                     token=wx_token,
                     extra={
                         "account_id": wx_account,
-                        "base_url": get_secret("WEIXIN_BASE_URL", "").strip(),
-                        "cdn_base_url": get_secret("WEIXIN_CDN_BASE_URL", "").strip(),
+                        "base_url": os.getenv("WEIXIN_BASE_URL", "").strip(),
+                        "cdn_base_url": os.getenv("WEIXIN_CDN_BASE_URL", "").strip(),
                     },
                 )
             else:
@@ -468,22 +780,83 @@ def _handle_send(args):
     if duplicate_skip:
         return json.dumps(duplicate_skip)
 
-    # Slack: resolve user targets to DM channel IDs before sending.
-    # _parse_target_ref emits internal ``user:U...`` / ``user_name:@handle``
-    # targets; a bare U... id can also arrive from session metadata or the
-    # home-channel config. All are opened via conversations.open (fixes #19236).
-    if platform_name == "slack" and chat_id:
-        _slack_dm_target = chat_id
-        if _slack_dm_target.startswith("U") and _SLACK_USER_ID_RE.fullmatch(_slack_dm_target):
-            _slack_dm_target = f"user:{_slack_dm_target}"
-        if _slack_dm_target.startswith(("user:", "user_name:")):
+    # Slack: resolve user IDs (U...) to DM channel IDs via conversations.open
+    if platform_name == "slack" and chat_id and chat_id.startswith("U"):
+        try:
+            import aiohttp
+
+            async def _open_slack_dm(token, user_id):
+                url = "https://slack.com/api/conversations.open"
+                headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+                    async with session.post(url, headers=headers, json={"users": [user_id]}) as resp:
+                        data = await resp.json()
+                        if data.get("ok"):
+                            return data["channel"]["id"]
+                        return None
             from model_tools import _run_async
-            _resolved, _resolve_err = _run_async(
-                _resolve_slack_user_target(pconfig.token, _slack_dm_target)
+            dm_channel = _run_async(_open_slack_dm(pconfig.token, chat_id))
+            if dm_channel:
+                chat_id = dm_channel
+            else:
+                return json.dumps({"error": f"Could not open DM with Slack user {chat_id}. Check bot permissions (im:write)."})
+        except Exception as e:
+            return json.dumps({"error": f"Failed to open Slack DM: {e}"})
+
+    # Slack Block Kit table block path — slack_table is profile-gated and
+    # applies ONLY when the target platform is slack. For any other platform,
+    # fall through to the regular text path and ignore the field.
+    if slack_table is not None and platform_name == "slack":
+        ok, err = _validate_slack_table(slack_table)
+        if not ok:
+            return tool_error(f"slack_table invalid: {err}")
+        try:
+            table_block = _build_slack_table_block(slack_table)
+        except Exception as e:
+            return tool_error(f"slack_table build failed: {e}")
+        slack_token = pconfig.token or os.getenv("SLACK_BOT_TOKEN", "").strip()
+        if not slack_token:
+            return tool_error("Slack token unavailable for slack_table send.")
+        try:
+            from model_tools import _run_async
+            result = _run_async(
+                _send_slack_with_blocks(
+                    slack_token,
+                    chat_id,
+                    cleaned_message,
+                    [table_block],
+                    thread_id=thread_id,
+                )
             )
-            if _resolve_err:
-                return json.dumps(_resolve_err)
-            chat_id = _resolved
+        except Exception as e:
+            return json.dumps(_error(f"Send failed: {e}"))
+        if used_home_channel and isinstance(result, dict) and result.get("success"):
+            result["note"] = f"Sent to {platform_name} home channel (chat_id: {chat_id})"
+
+        # Mirror: render the table as a plain-text grid so session history has
+        # real content (the Block Kit payload doesn't survive into the session DB).
+        if isinstance(result, dict) and result.get("success"):
+            try:
+                from gateway.mirror import mirror_to_session
+                from gateway.session_context import get_session_env
+                rasterized = _rasterize_slack_table_for_mirror(slack_table)
+                mirror_body = f"{mirror_text}\n\n{rasterized}" if mirror_text else rasterized
+                source_label = get_session_env("HERMES_SESSION_PLATFORM", "cli")
+                user_id = get_session_env("HERMES_SESSION_USER_ID", "") or None
+                if mirror_to_session(
+                    platform_name,
+                    chat_id,
+                    mirror_body,
+                    source_label=source_label,
+                    thread_id=thread_id,
+                    user_id=user_id,
+                ):
+                    result["mirrored"] = True
+            except Exception:
+                logger.debug("slack_table mirror failed", exc_info=True)
+        if isinstance(result, dict) and "error" in result:
+            result["error"] = _sanitize_error_text(result["error"])
+        return json.dumps(result)
 
     try:
         from model_tools import _run_async
@@ -554,13 +927,13 @@ def _parse_target_ref(platform_name: str, target_ref: str):
             return match.group(1), match.group(2), True
         match = _SLACK_TARGET_RE.fullmatch(target_ref)
         if match:
-            return match.group(1), None, True
-        match = _SLACK_USER_ID_RE.fullmatch(target_ref) or _SLACK_MENTION_RE.fullmatch(target_ref)
-        if match:
-            return f"user:{match.group(1)}", None, True
-        match = _SLACK_USER_NAME_RE.fullmatch(target_ref)
-        if match:
-            return f"user_name:{match.group(1)}", None, True
+            chat_id = match.group(1)
+            thread_id = match.group(2)
+            # Slack user IDs (U...) are accepted as explicit tool targets, but
+            # must be opened later via conversations.open to get a D...
+            # conversation ID before chat.postMessage.
+            is_explicit = True
+            return chat_id, thread_id, is_explicit
     if platform_name == "matrix":
         trimmed = target_ref.strip()
         split_idx = trimmed.rfind(":$")
@@ -979,48 +1352,6 @@ async def _send_to_platform(platform, pconfig, chat_id, message, thread_id=None,
             last_result = result
         return last_result
 
-    # --- Slack: native media via files_upload_v2 in the plugin's
-    # standalone_sender_fn (plugins/platforms/slack/adapter.py::_standalone_send).
-    # Gateway in-channel MEDIA: delivery already worked; send_message previously
-    # omitted Slack attachments and told the model media was unsupported.
-    if platform == Platform.SLACK and media_files:
-        from gateway.platform_registry import platform_registry as _pr_slack
-        from hermes_cli.plugins import discover_plugins as _dp_slack
-        _dp_slack()
-        _slack_entry = _pr_slack.get("slack")
-        if _slack_entry is None or _slack_entry.standalone_sender_fn is None:
-            return {"error": "Slack plugin not registered or missing standalone_sender_fn"}
-        _sl_caption, _ = _media_caption_split(
-            message, media_files,
-            max_caption_len=(max_len or _DEFAULT_CAPTION_LIMIT),
-        )
-        if _sl_caption is not None:
-            result = await _slack_entry.standalone_sender_fn(
-                pconfig,
-                chat_id,
-                "",
-                thread_id=thread_id,
-                media_files=media_files,
-                caption=_sl_caption,
-            )
-            if isinstance(result, dict) and result.get("error"):
-                return result
-            return result
-        last_result = None
-        for i, chunk in enumerate(chunks):
-            is_last = (i == len(chunks) - 1)
-            result = await _slack_entry.standalone_sender_fn(
-                pconfig,
-                chat_id,
-                chunk,
-                thread_id=thread_id,
-                media_files=media_files if is_last else [],
-            )
-            if isinstance(result, dict) and result.get("error"):
-                return result
-            last_result = result
-        return last_result
-
     # --- WhatsApp: native media attachment support via the registry's
     # standalone_sender_fn (plugins/platforms/whatsapp/adapter.py::_standalone_send).
     # The plugin uploads each file through the local Baileys bridge /send-media
@@ -1071,37 +1402,11 @@ async def _send_to_platform(platform, pconfig, chat_id, message, thread_id=None,
             last_result = result
         return last_result
 
-    # --- Slack: prefer the live gateway adapter, then the plugin's
-    # standalone sender.  The live adapter is multi-workspace aware (it maps
-    # channels to the workspace client that owns them) and honors adapter-side
-    # gates like ignored_channels; the standalone Web-API path may only have a
-    # comma-separated token list.  ``_send_via_adapter`` tries the in-process
-    # adapter first and falls back to the registry standalone sender for
-    # out-of-process cron runs, preserving MEDIA delivery on the fallback
-    # (media-bearing sends were already intercepted by the branch above).
-    if platform == Platform.SLACK:
-        last_result = None
-        for i, chunk in enumerate(chunks):
-            is_last = i == len(chunks) - 1
-            result = await _send_via_adapter(
-                platform,
-                pconfig,
-                chat_id,
-                chunk,
-                thread_id=thread_id,
-                media_files=media_files if is_last else [],
-                force_document=force_document,
-            )
-            if isinstance(result, dict) and result.get("error"):
-                return result
-            last_result = result
-        return last_result
-
     # --- Non-media platforms ---
     if media_files and not message.strip():
         return {
             "error": (
-                f"send_message MEDIA delivery is currently only supported for telegram, discord, matrix, weixin, signal, yuanbao, feishu, whatsapp and slack; "
+                f"send_message MEDIA delivery is currently only supported for telegram, discord, matrix, weixin, signal, yuanbao, feishu and whatsapp; "
                 f"target {platform.value} had only media attachments"
             )
         }
@@ -1109,12 +1414,24 @@ async def _send_to_platform(platform, pconfig, chat_id, message, thread_id=None,
     if media_files:
         warning = (
             f"MEDIA attachments were omitted for {platform.value}; "
-            "native send_message media delivery is currently only supported for telegram, discord, matrix, weixin, signal, yuanbao, feishu, whatsapp and slack"
+            "native send_message media delivery is currently only supported for telegram, discord, matrix, weixin, signal, yuanbao, feishu and whatsapp"
         )
 
     last_result = None
     for chunk in chunks:
-        if platform == Platform.WHATSAPP:
+        if platform == Platform.SLACK:
+            # Slack migrated to a bundled plugin (#41112); delivery flows
+            # through the registry's standalone_sender_fn, which applies
+            # mrkdwn formatting and posts via the Slack Web API.
+            from gateway.platform_registry import platform_registry
+            _slack_entry = platform_registry.get("slack")
+            if _slack_entry is None or _slack_entry.standalone_sender_fn is None:
+                result = {"error": "Slack plugin not registered or missing standalone_sender_fn"}
+            else:
+                result = await _slack_entry.standalone_sender_fn(
+                    pconfig, chat_id, chunk, thread_id=thread_id
+                )
+        elif platform == Platform.WHATSAPP:
             result = await _registry_standalone_send("whatsapp", pconfig, chat_id, chunk, thread_id)
         elif platform == Platform.SIGNAL:
             result = await _send_signal(pconfig.extra, chat_id, chunk)
@@ -1368,14 +1685,6 @@ async def _send_telegram(token, chat_id, message, media_files=None, thread_id=No
                     if _tg_caption is not None and not (ext in _VOICE_EXTS and is_voice):
                         media_kwargs["caption"] = _tg_caption
                         media_kwargs["parse_mode"] = send_parse_mode
-                    if (ext in _VOICE_EXTS and is_voice) or ext in _TELEGRAM_SEND_AUDIO_EXTS:
-                        try:
-                            from plugins.platforms.telegram.adapter import _probe_voice_duration_seconds
-                            duration = await asyncio.to_thread(_probe_voice_duration_seconds, media_path)
-                            if duration is not None:
-                                media_kwargs["duration"] = duration
-                        except Exception:
-                            pass
                     try:
                         if ext in _IMAGE_EXTS and not force_document:
                             last_msg = await bot.send_photo(
@@ -1507,86 +1816,36 @@ async def _registry_standalone_send(platform_name, pconfig, chat_id, message, th
     return await entry.standalone_sender_fn(pconfig, chat_id, message, thread_id=thread_id)
 
 
+async def _send_slack_with_blocks(token, chat_id, message, blocks, thread_id=None):
+    """Send Slack Block Kit blocks through the Slack plugin sender."""
+    try:
+        from types import SimpleNamespace
+        from gateway.platform_registry import platform_registry
+        from hermes_cli.plugins import discover_plugins
+
+        discover_plugins()
+        entry = platform_registry.get("slack")
+        if entry is None or entry.standalone_sender_fn is None:
+            return {"error": "Slack plugin not registered or missing standalone_sender_fn"}
+        pconfig = SimpleNamespace(token=token, extra={})
+        result = await entry.standalone_sender_fn(
+            pconfig,
+            chat_id,
+            message,
+            thread_id=thread_id,
+            blocks=blocks,
+        )
+        if isinstance(result, dict) and result.get("success"):
+            result.setdefault("mode", "blocks")
+            if thread_id:
+                result.setdefault("thread_id", thread_id)
+        return result
+    except Exception as e:
+        return _error(f"Slack send failed: {e}")
+
+
 # _send_whatsapp moved to plugins/platforms/whatsapp/adapter.py::_standalone_send,
 # wired via standalone_sender_fn and reached through _registry_standalone_send. #41112.
-
-
-async def _resolve_slack_user_target(token, chat_id):
-    """Resolve a Slack user target to a D... DM conversation ID.
-
-    ``chat_id`` may be a Slack conversation ID (C/G/D...) — returned unchanged —
-    or an internal user target (``user:U...`` / ``user_name:<handle>``). User
-    targets are opened as DMs via conversations.open because Slack
-    chat.postMessage requires a conversation ID. ``user_name:`` targets are
-    first resolved to a user ID through users.list (stable handle match only).
-
-    Returns ``(chat_id, None)`` on success or ``(None, error_dict)`` on failure.
-    """
-    if not (chat_id.startswith("user:") or chat_id.startswith("user_name:")):
-        return chat_id, None
-    try:
-        import aiohttp
-    except ImportError:
-        return None, {"error": "aiohttp not installed. Run: pip install aiohttp"}
-    try:
-        from gateway.platforms.base import resolve_proxy_url, proxy_kwargs_for_aiohttp
-        _proxy = resolve_proxy_url()
-        _sess_kw, _req_kw = proxy_kwargs_for_aiohttp(_proxy)
-        base_url = "https://slack.com/api"
-        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-
-        async def post_api(session, method, payload):
-            async with session.post(f"{base_url}/{method}", headers=headers, json=payload, **_req_kw) as resp:
-                return await resp.json()
-
-        async def resolve_user_name(session, name):
-            query = name.strip().lstrip("@").lower()
-            matches = []
-            cursor = None
-            for _page in range(20):
-                payload = {"limit": 200}
-                if cursor:
-                    payload["cursor"] = cursor
-                data = await post_api(session, "users.list", payload)
-                if not data.get("ok"):
-                    return None, f"Slack users.list error: {data.get('error', 'unknown')}"
-                for member in data.get("members", []):
-                    if member.get("deleted") or member.get("is_bot"):
-                        continue
-                    # ``@name`` should match the stable Slack handle only. Display
-                    # and real names are mutable/non-unique enough that using them
-                    # could DM the wrong person with sensitive content.
-                    if str(member.get("name", "")).strip().lower() == query:
-                        matches.append(member)
-                cursor = (data.get("response_metadata") or {}).get("next_cursor")
-                if not cursor:
-                    break
-            if not matches:
-                return None, f"Could not resolve Slack user '@{name}'."
-            if len(matches) > 1:
-                return None, f"Slack user '@{name}' matched multiple Slack users. Use a Slack user ID instead."
-            return matches[0].get("id"), None
-
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30), **_sess_kw) as session:
-            if chat_id.startswith("user_name:"):
-                user_id, error = await resolve_user_name(session, chat_id[len("user_name:"):])
-                if error:
-                    return None, _error(error)
-                chat_id = f"user:{user_id}"
-
-            user_id = chat_id[len("user:"):]
-            opened = await post_api(session, "conversations.open", {"users": user_id})
-            if not opened.get("ok"):
-                return None, _error(
-                    f"Slack conversations.open error: {opened.get('error', 'unknown')}. "
-                    "Check bot permissions (im:write)."
-                )
-            dm_id = (opened.get("channel") or {}).get("id")
-            if not dm_id:
-                return None, _error("Slack conversations.open did not return a DM channel ID")
-            return dm_id, None
-    except Exception as e:
-        return None, _error(f"Slack DM resolution failed: {e}")
 
 
 async def _send_signal(extra, chat_id, message, media_files=None):

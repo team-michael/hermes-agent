@@ -235,6 +235,49 @@ async def test_backward_compat_no_admin_list_means_no_gate():
     assert "Tier: unrestricted" in result
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", ["approve", "deny", "yolo"])
+async def test_approval_admin_commands_are_owner_only_even_when_slash_gate_is_open(
+    command,
+):
+    runner = _make_runner(platform_extra={}, platform=Platform.SLACK)
+    source = _make_source(platform=Platform.SLACK, user_id="U_COWORKER")
+
+    with (
+        pytest.MonkeyPatch.context() as mp,
+    ):
+        mp.setattr(
+            "tools.approval.get_approval_approver_users",
+            lambda platform: frozenset({"U_OWNER"}) if platform == "slack" else frozenset(),
+        )
+        mp.setattr(
+            "tools.approval.can_user_resolve_approval",
+            lambda platform, user_id: platform == "slack" and user_id == "U_OWNER",
+        )
+        denial = runner._check_slash_access(source, command)
+
+    assert denial is not None
+    assert "approval administrator" in denial
+
+
+def test_approval_admin_command_allows_configured_owner():
+    runner = _make_runner(platform_extra={}, platform=Platform.SLACK)
+    source = _make_source(platform=Platform.SLACK, user_id="U_OWNER")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            "tools.approval.get_approval_approver_users",
+            lambda platform: frozenset({"U_OWNER"}) if platform == "slack" else frozenset(),
+        )
+        mp.setattr(
+            "tools.approval.can_user_resolve_approval",
+            lambda platform, user_id: platform == "slack" and user_id == "U_OWNER",
+        )
+        denial = runner._check_slash_access(source, "approve")
+
+    assert denial is None
+
+
 # ---------------------------------------------------------------------------
 # Scope isolation — DM vs group
 # ---------------------------------------------------------------------------

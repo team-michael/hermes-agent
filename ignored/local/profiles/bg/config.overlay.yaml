@@ -1,0 +1,139 @@
+model:
+  provider: openai-codex
+  default: gpt-5.6-sol
+  openai_runtime: auto
+providers:
+  openai-codex:
+    request_timeout_seconds: 900
+    stale_timeout_seconds: 900
+compression:
+  enabled: true
+  threshold: 0.85
+  target_ratio: 0.30
+  protect_last_n: 20
+  hygiene_hard_message_limit: 400
+agent:
+  reasoning_effort: high
+  gateway_notify_interval: 0
+thread_sessions_per_user: false
+slack:
+  require_mention: true
+  strict_mention: false
+terminal:
+  cwd: /home/ubuntu/.hermes/profiles/bg/workspace
+display:
+  busy_input_mode: queue
+  interim_assistant_messages: false
+  tool_progress: all
+  platforms:
+    slack:
+      streaming: false
+      tool_progress: "off"
+      live_status: verb
+approvals:
+  mode: manual
+  timeout: 300
+  cron_mode: deny
+  approver_users:
+    slack:
+      - U03TKRB6290
+  exempt_users:
+    slack:
+      - U03TKRB6290
+  require:
+    # Catch alternate GitHub API clients (curl, Python, etc.), not only `gh`.
+    - "*api.github.com*"
+    - "*git push*"
+    - "*git send-pack*"
+    - "*gh pr create*"
+    - "*gh pr merge*"
+    - "*gh pr close*"
+    - "*gh pr reopen*"
+    - "*gh issue create*"
+    - "*gh issue edit*"
+    - "*gh issue close*"
+    - "*gh issue reopen*"
+    - "*gh repo create*"
+    - "*gh repo delete*"
+    - "*gh repo archive*"
+    - "*gh repo rename*"
+    - "*gh repo fork*"
+    - "*gh release create*"
+    - "*gh release edit*"
+    - "*gh release delete*"
+    - "*gh workflow run*"
+    - "*gh workflow enable*"
+    - "*gh workflow disable*"
+    - "*gh run cancel*"
+    - "*gh run rerun*"
+    - "*gh run delete*"
+    - "*gh secret set*"
+    - "*gh secret delete*"
+    - "*gh variable set*"
+    - "*gh variable delete*"
+    - "*gh auth login*"
+    - "*gh auth logout*"
+    - "*gh auth refresh*"
+    - "*gh ssh-key add*"
+    - "*gh ssh-key delete*"
+    - "*gh gpg-key add*"
+    - "*gh gpg-key delete*"
+    - "*gh codespace create*"
+    - "*gh codespace delete*"
+    - "*gh api * -x post*"
+    - "*gh api * -x patch*"
+    - "*gh api * -x put*"
+    - "*gh api * -x delete*"
+    - "*gh api * --method post*"
+    - "*gh api * --method patch*"
+    - "*gh api * --method put*"
+    - "*gh api * --method delete*"
+    - "*gh api * -f *"
+    - "*gh api * --field *"
+    - "*gh api * --raw-field *"
+    - "*gh api * --input *"
+security:
+  redact_secrets: true
+session_reset:
+  mode: none
+platform_toolsets:
+  cli:
+    - browser
+    - clarify
+    - code_execution
+    - cronjob
+    - delegation
+    - file
+    - image_gen
+    - memory
+    - messaging
+    - session_search
+    - skills
+    - terminal
+    - todo
+    - tts
+    - vision
+    - web
+  slack:
+    - browser
+    - clarify
+    - code_execution
+    - cronjob
+    - delegation
+    - file
+    - image_gen
+    - memory
+    - messaging
+    - session_search
+    - skills
+    - terminal
+    - todo
+    - tts
+    - vision
+    - web
+update:
+  local_patch_branch: main
+skills:
+  external_dirs:
+    - /home/ubuntu/.hermes/hermes-agent/ignored/local/profiles/bg/skills
+    - /home/ubuntu/.hermes/hermes-agent/ignored/local/skills

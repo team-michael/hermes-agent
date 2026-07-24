@@ -812,13 +812,15 @@ class TeamsAdapter(BasePlatformAdapter):
         SSRF guard and follows redirects through the shared redirect guard,
         matching the cache_*_from_url helpers in gateway.platforms.base.
         """
-        from tools.url_safety import create_ssrf_safe_async_client, is_safe_url
+        from tools.url_safety import is_safe_url
         from gateway.platforms.base import _ssrf_redirect_guard
 
         if not is_safe_url(url):
             raise ValueError("Blocked unsafe attachment URL (SSRF protection)")
 
-        async with create_ssrf_safe_async_client(
+        import httpx
+
+        async with httpx.AsyncClient(
             timeout=timeout,
             follow_redirects=True,
             event_hooks={"response": [_ssrf_redirect_guard]},
@@ -1097,7 +1099,6 @@ class TeamsAdapter(BasePlatformAdapter):
         description: str = "dangerous command",
         metadata: Optional[Dict[str, Any]] = None,
         allow_permanent: bool = True,
-        allow_session: bool = True,
         smart_denied: bool = False,
     ) -> SendResult:
         """Send an Adaptive Card approval prompt with Allow/Deny buttons."""
@@ -1116,7 +1117,7 @@ class TeamsAdapter(BasePlatformAdapter):
             title="Allow Once", verb="hermes_approve",
             data={**btn_data_base, "hermes_action": "approve_once"}, style="positive",
         )]
-        if not smart_denied and allow_session:
+        if not smart_denied:
             actions.append(ExecuteAction(
                 title="Allow Session", verb="hermes_approve",
                 data={**btn_data_base, "hermes_action": "approve_session"},

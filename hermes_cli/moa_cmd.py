@@ -29,10 +29,7 @@ def _prompt_choice(title: str, rows: list[str], default: int = 0) -> int:
 def _model_options() -> list[dict[str, Any]]:
     payload = build_models_payload(
         load_picker_context(),
-        # Slot pickers must only offer providers the user can actually call.
-        # Including setup-only rows makes an unconfigured canonical provider
-        # (usually OpenRouter, due to catalog ordering) become the default.
-        include_unconfigured=False,
+        include_unconfigured=True,
         picker_hints=True,
         canonical_order=True,
         pricing=True,
@@ -40,13 +37,7 @@ def _model_options() -> list[dict[str, Any]]:
         max_models=200,
     )
     providers = payload.get("providers") or []
-    return [
-        p
-        for p in providers
-        if p.get("slug")
-        and str(p.get("slug")).strip().lower() != "moa"
-        and p.get("models")
-    ]
+    return [p for p in providers if p.get("slug") and p.get("models")]
 
 
 def _pick_slot(current: dict[str, str] | None = None) -> dict[str, str]:

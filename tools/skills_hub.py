@@ -291,18 +291,8 @@ def _resolve_lock_install_path(install_path: str, skill_name: str) -> Path:
     return target
 
 
-def _ssrf_safe_http_get(url: str, *, timeout: int = 20) -> httpx.Response:
-    """Fetch one URL with connect-time SSRF validation and no automatic redirects."""
-    from tools.url_safety import create_ssrf_safe_client
-
-    with create_ssrf_safe_client(timeout=timeout, follow_redirects=False) as client:
-        return client.get(url)
-
-
 def _guarded_http_get(url: str, *, timeout: int = 20) -> Optional[httpx.Response]:
     """Fetch a URL with SSRF and redirect-target validation."""
-    from tools.url_safety import SSRFConnectionBlocked
-
     current_url = url
 
     for _ in range(_MAX_SKILL_FETCH_REDIRECTS + 1):
@@ -320,8 +310,8 @@ def _guarded_http_get(url: str, *, timeout: int = 20) -> Optional[httpx.Response
             return None
 
         try:
-            resp = _ssrf_safe_http_get(current_url, timeout=timeout)
-        except (SSRFConnectionBlocked, httpx.HTTPError) as exc:
+            resp = httpx.get(current_url, timeout=timeout, follow_redirects=False)
+        except httpx.HTTPError as exc:
             logger.debug("Skills Hub fetch failed for %s: %s", current_url, exc)
             return None
 
@@ -1175,7 +1165,6 @@ class GitHubSource(SkillSource):
     @staticmethod
     def _parse_frontmatter_quick(content: str) -> dict:
         """Parse YAML frontmatter from SKILL.md content."""
-        content = content.lstrip("\ufeff")  # tolerate UTF-8 BOM (Windows editors)
         if not content.startswith("---"):
             return {}
         match = re.search(r'\n---\s*\n', content[3:])
@@ -3328,7 +3317,6 @@ class OptionalSkillSource(SkillSource):
     @staticmethod
     def _parse_frontmatter(content: str) -> dict:
         """Parse YAML frontmatter from SKILL.md content."""
-        content = content.lstrip("\ufeff")  # tolerate UTF-8 BOM (Windows editors)
         if not content.startswith("---"):
             return {}
         match = re.search(r'\n---\s*\n', content[3:])

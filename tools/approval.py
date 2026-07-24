@@ -363,10 +363,7 @@ _WRITE_TARGET_BOUNDARY = r'(?=[\s;&|<>"\']|$)'
 # after subshell openers ( `$(` or backtick ), optionally consuming
 # leading wrapper commands (sudo, env VAR=VAL, exec, nohup, setsid).
 _CMDPOS = (
-    # Real ;/&/| separators are converted to newlines by the quote-aware
-    # _mark_command_starts pass. Keeping them in this flat regex mistakes
-    # quoted regex/data (for example grep '(safe|rm -rf /)') for commands.
-    r'(?:^|[\n`]|\$\()'            # start position
+    r'(?:^|[;&|\n`]|\$\()'         # start position
     r'\s*'                          # optional whitespace
     r'(?:sudo\s+(?:-[^\s]+\s+)*)?'  # optional sudo with flags
     r'(?:env\s+(?:\w+=\S*\s+)*)?'   # optional env with VAR=VAL pairs
@@ -501,23 +498,15 @@ def _check_sudo_stdin_guard(command: str) -> tuple:
 
 
 def detect_hardline_command(command: str) -> tuple:
-    """Check if a command matches hardline blocklist patterns.
-
-    Hardline patterns are NEVER bypassable, even in YOLO mode.
+    """Check if a command matches the unconditional hardline blocklist.
 
     Returns:
         (is_hardline, description) or (False, None)
     """
-    if _command_parser_limit_exceeded(command):
-        return (True, _PARSER_LIMIT_DESCRIPTION)
-    normalized = _normalize_command_for_detection(command)
-    _, malformed_grep = _grep_safe_detection_variant(normalized)
-    if malformed_grep:
-        return (True, _MALFORMED_EXEC_DESCRIPTION)
     for command_variant in _command_detection_variants(command):
-        variant_lower = command_variant.lower()
+        normalized = command_variant.lower()
         for pattern_re, description in HARDLINE_PATTERNS_COMPILED:
-            if pattern_re.search(variant_lower):
+            if pattern_re.search(normalized):
                 return (True, description)
     return (False, None)
 
@@ -546,6 +535,25 @@ def _match_user_deny_rule(command: str) -> str | None:
              if isinstance(p, str) and p.strip()]
     if not globs:
         return None
+    for command_variant in _command_detection_variants(command):
+        candidate = command_variant.lower().strip()
+        for pattern in globs:
+            if fnmatch.fnmatchcase(candidate, pattern.lower()):
+                return pattern
+    return None
+
+
+def _match_user_require_rule(command: str) -> str | None:
+    """Return the matching recoverable ``approvals.require`` glob, or None."""
+    try:
+        require_patterns = _get_approval_config().get("require") or []
+    except Exception:
+        return None
+    globs = [
+        pattern.strip()
+        for pattern in require_patterns
+        if isinstance(pattern, str) and pattern.strip()
+    ]
     for command_variant in _command_detection_variants(command):
         candidate = command_variant.lower().strip()
         for pattern in globs:
@@ -643,9 +651,9 @@ DANGEROUS_PATTERNS = [
     (r'\bkillall\s+(-[^\s]*\s+)*-s\s+(KILL|SIGKILL|9)\b', "force kill processes (killall -s KILL)"),
     (r'\bkillall\s+(-[^\s]*\s+)*-r\b', "kill processes by regex (killall -r)"),
     (r':\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:', "fork bomb"),
-    # Shell -c is parsed structurally by _execution_flag_findings(). A regex
-    # that merely searched a dash-token for "c" also matched --norc,
-    # --rcfile, and --restricted.
+    # Any shell invocation via -c or combined flags like -lc, -ic, etc.
+    (r'\b(bash|sh|zsh|ksh)\s+-[^\s]*c(\s+|$)', "shell command via -c/-lc flag"),
+    (r'\b(python[23]?|perl|ruby|node)\s+-[ec]\s+', "script execution via -e/-c flag"),
     (r'\b(curl|wget)\b.*\|\s*(?:[/\w]*/)?(?:ba)?sh(?:\s|$|-c)', "pipe remote content to shell"),
     (r'\b(bash|sh|zsh|ksh)\s+<\s*<?\s*\(\s*(curl|wget)\b', "execute remote script via process substitution"),
     # Remote content executed via command substitution: eval/source/. $(curl ...)
@@ -752,8 +760,9 @@ DANGEROUS_PATTERNS = [
     # anywhere in the args, not just the first token — `perl -e '...'` (code
     # eval, no -i) does not trip because it has no `-...i` flag token.
     (rf'\b(?:perl|ruby)\b.*(?:^|\s)-[^\s]*i\b.*(?:{_HERMES_CONFIG_PATH}|{_HERMES_ENV_PATH})', "in-place edit of Hermes config/env (perl/ruby)"),
-    # Interpreter heredocs are handled by _execution_flag_findings() alongside
-    # inline-exec flags; keep only shell heredocs regex-based here.
+    # Script execution via heredoc — bypasses the -e/-c flag patterns above.
+    # `python3 << 'EOF'` feeds arbitrary code via stdin without -c/-e flags.
+    (r'\b(python[23]?|perl|ruby|node)\s+<<', "script execution via heredoc"),
     # Shell execution via heredoc — `bash <<'EOF' ... EOF` runs arbitrary
     # shell commands without triggering the `bash -c` pattern above. The
     # inner commands may not individually match any dangerous pattern (e.g.
@@ -834,19 +843,6 @@ for _pattern, _description in DANGEROUS_PATTERNS:
     _canonical_key = _description
     _PATTERN_KEY_ALIASES.setdefault(_canonical_key, set()).update({_canonical_key, _legacy_key})
     _PATTERN_KEY_ALIASES.setdefault(_legacy_key, set()).update({_legacy_key, _canonical_key})
-
-# Preserve approvals stored under the removed interpreter regex rules.
-_REMOVED_PATTERN_KEY_ALIASES = {
-    "script execution via -e/-c flag": "(python[23]?|perl|ruby|node)\\s+-[ec]\\s+",
-    "script execution via heredoc": "(python[23]?|perl|ruby|node)\\s+<<",
-}
-for _canonical_key, _legacy_key in _REMOVED_PATTERN_KEY_ALIASES.items():
-    _PATTERN_KEY_ALIASES.setdefault(_canonical_key, set()).update(
-        {_canonical_key, _legacy_key}
-    )
-    _PATTERN_KEY_ALIASES.setdefault(_legacy_key, set()).update(
-        {_legacy_key, _canonical_key}
-    )
 
 
 def _approval_key_aliases(pattern_key: str) -> set[str]:
@@ -1053,490 +1049,6 @@ _SUDO_OPTIONS_WITH_ARG = {
     "-p", "--prompt",
     "-u", "--user",
 }
-
-_INTERPRETER_EXEC_FLAGS = {
-    "python": {"-c"},
-    "node": {"-e", "--eval", "-p", "--print"},
-    "perl": {"-e", "--eval"},
-    "ruby": {"-e"},
-    "php": {"-r"},
-    "powershell": {"-command", "-c", "-file", "-f"},
-}
-_INTERPRETER_WITH_ARG = {
-    "python": {"-W", "-X", "--check-hash-based-pycs"},
-    "node": {"-C", "--conditions", "--cpu-prof-dir", "--diagnostic-dir", "--icu-data-dir", "--import", "--loader", "--openssl-config", "--require", "--title"},
-    "perl": {"-0", "-F", "-I", "-M", "-m", "-x"},
-    "ruby": {"-C", "-E", "-F", "-I", "-K", "-r"},
-    "php": {"-c", "-d", "-z"},
-    "powershell": {"-configurationname", "-custompipename", "-executionpolicy", "-inputformat", "-outputformat", "-settingsfile", "-version", "-windowstyle", "-workingdirectory"},
-}
-_READ_TOOL_EXEC_FLAGS = {
-    "sort": {"--compress-program"},
-    "rg": {"--pre", "--hostname-bin"},
-    "ag": {"--pager"},
-    "man": {"--pager", "--html", "-P", "-H"},
-}
-# Required-argument options are ownership boundaries: an option-looking next
-# token is data, not another option. These sets mirror the invocation grammar
-# of the supported binaries (ripgrep 14, GNU sort, man-db, and ag 2.2).
-_READ_TOOL_LONG_OPTIONS_WITH_ARG = {
-    "rg": {
-        "--after-context", "--before-context", "--color", "--colors",
-        "--context", "--context-separator", "--dfa-size-limit", "--encoding",
-        "--engine", "--field-context-separator", "--field-match-separator",
-        "--file", "--generate", "--glob", "--hostname-bin",
-        "--hyperlink-format", "--iglob", "--ignore-file", "--max-columns",
-        "--max-count", "--max-depth", "--max-filesize", "--path-separator",
-        "--pre", "--pre-glob", "--regex-size-limit", "--regexp", "--replace",
-        "--sort", "--sortr", "--threads", "--type", "--type-add",
-        "--type-clear", "--type-not",
-    },
-    "sort": {
-        "--batch-size", "--buffer-size", "--compress-program",
-        "--field-separator", "--files0-from", "--key", "--output",
-        "--parallel", "--random-source", "--sort", "--temporary-directory",
-    },
-    "man": {
-        "--config-file", "--encoding", "--extension", "--locale",
-        "--manpath", "--pager", "--preprocessor", "--prompt", "--recode",
-        "--sections", "--systems",
-    },
-    "ag": {
-        "--ackmate-dir-filter", "--color-line-number", "--color-match",
-        "--color-path", "--depth", "--filename-pattern", "--file-search-regex",
-        "--ignore", "--ignore-dir", "--max-count", "--pager",
-        "--path-to-ignore", "--width", "--workers",
-    },
-}
-_READ_TOOL_SHORT_OPTIONS_WITH_ARG = {
-    "rg": frozenset("efEmjgdtTABCMr"),
-    "sort": frozenset("koStT"),
-    "man": frozenset("CRLmMSserEPp"),
-    "ag": frozenset("gGmpW"),
-}
-_SHELL_PUNCTUATION = {";", "&", "&&", "|", "||", "(", ")", "{", "}"}
-_MAX_DETECTION_COMMAND_CHARS = 128_000
-_MAX_SEPARATOR_FREE_COMMAND_CHARS = 4_096
-_MAX_DETECTION_SEGMENTS = 25_000
-_PARSER_LIMIT_DESCRIPTION = "command parser limit exceeded"
-_MALFORMED_EXEC_DESCRIPTION = "command parser limit or malformed executable payload"
-
-
-
-def _command_parser_limit_exceeded(command: str) -> bool:
-    """Bound all parser work before normalization/tokenization.
-
-    Counting separator characters is deliberately conservative: quoted
-    separators can over-count, but crossing this very high ceiling fails
-    closed rather than allowing an uninspected suffix to execute.
-    """
-    if len(command) > _MAX_DETECTION_COMMAND_CHARS:
-        return True
-    # Long separator-free input has no compound-command utility and otherwise
-    # makes every legacy regex inspect one giant token. Reject it before any
-    # normalization, tokenization, or regex work.
-    if (
-        len(command) > _MAX_SEPARATOR_FREE_COMMAND_CHARS
-        and not any(char in command for char in ";&|\n")
-    ):
-        return True
-    separators = 0
-    for char in command:
-        if char in ";&|\n":
-            separators += 1
-            if separators >= _MAX_DETECTION_SEGMENTS:
-                return True
-    return False
-
-
-def _shell_tokens_with_spans(segment: str, start: int):
-    """Return shell words as ``(value, start, end, quoted)`` or ``None``.
-
-    This deliberately small lexer never expands shell syntax.  It exists to
-    preserve source spans, which ``shlex`` does not expose, while deciding
-    which *quoted* grep operand is data rather than another command.
-    """
-    tokens = []
-    i = start
-    while i < len(segment):
-        while i < len(segment) and segment[i].isspace():
-            i += 1
-        if i >= len(segment):
-            break
-        token_start = i
-        value = []
-        quote = None
-        while i < len(segment) and (quote or not segment[i].isspace()):
-            char = segment[i]
-            if quote:
-                if char == quote:
-                    quote = None
-                    i += 1
-                elif char == "\\" and quote == '"' and i + 1 < len(segment):
-                    value.append(segment[i + 1])
-                    i += 2
-                else:
-                    value.append(char)
-                    i += 1
-            elif char in {"'", '"'}:
-                quote = char
-                i += 1
-            elif char == "\\":
-                if i + 1 >= len(segment):
-                    return None
-                value.append(segment[i + 1])
-                i += 2
-            else:
-                value.append(char)
-                i += 1
-        if quote:
-            return None
-        raw = segment[token_start:i]
-        # Only a wholly single-quoted operand is inert shell data. Double
-        # quotes still execute $() and backticks; unquoted substitutions do too.
-        inert_single_quoted = (
-            (raw.startswith("'") and raw.endswith("'"))
-            or ("='" in raw and raw.endswith("'"))
-        )
-        tokens.append(("".join(value), token_start, i, inert_single_quoted))
-    return tokens
-
-
-_GREP_OPTIONS_WITH_ARG = {
-    "--after-context", "--before-context", "--binary-files", "--context",
-    "--directories", "--devices", "--exclude", "--exclude-dir",
-    "--exclude-from", "--include", "--label", "--max-count",
-    "--regexp", "--file",
-}
-_GREP_SHORT_OPTIONS_WITH_ARG = {"A", "B", "C", "D", "d", "e", "f", "m"}
-
-
-def _quoted_grep_pattern_spans(command: str) -> tuple[list[tuple[int, int]], bool]:
-    """Structurally locate quoted grep PCRE operands.
-
-    The returned boolean means the grep parse was ambiguous or malformed.  In
-    that case callers fail closed and, critically, use the original command:
-    no text is hidden on an uncertain parse.
-    """
-    spans: list[tuple[int, int]] = []
-    offset = 0
-    for segment in _iter_top_level_shell_segments(command):
-        segment_at = command.find(segment, offset)
-        offset = segment_at + len(segment)
-        for start, _, word in _iter_shell_command_word_spans(segment):
-            if os.path.basename(_deobfuscate_shell_word_for_detection(word)).lower() not in {
-                "grep", "egrep",
-            }:
-                continue
-            tokens = _shell_tokens_with_spans(segment, start)
-            if tokens is None:
-                return [], True
-            args = tokens[1:]
-            pcre = False
-            explicit_patterns = False
-            pattern_indexes: list[int] = []
-            operand_index = None
-            i = 0
-            options = True
-            while i < len(args):
-                token = args[i][0]
-                if options and token == "--":
-                    options = False
-                    i += 1
-                    continue
-                if options and token.startswith("--"):
-                    option, equals, _ = token.partition("=")
-                    if option == "--perl-regexp":
-                        pcre = True
-                    if option in {"--regexp", "--file"}:
-                        explicit_patterns = True
-                    if option in _GREP_OPTIONS_WITH_ARG and not equals:
-                        if i + 1 >= len(args):
-                            return [], True
-                        if option == "--regexp":
-                            pattern_indexes.append(i + 1)
-                        i += 2
-                        continue
-                    if option == "--regexp" and equals:
-                        pattern_indexes.append(i)
-                    i += 1
-                    continue
-                if options and token.startswith("-") and token != "-":
-                    chars = token[1:]
-                    j = 0
-                    while j < len(chars):
-                        char = chars[j]
-                        if char == "P":
-                            pcre = True
-                        if char in {"e", "f"}:
-                            explicit_patterns = True
-                        if char in _GREP_SHORT_OPTIONS_WITH_ARG:
-                            if j + 1 < len(chars):
-                                if char == "e":
-                                    pattern_indexes.append(i)
-                            else:
-                                if i + 1 >= len(args):
-                                    return [], True
-                                if char == "e":
-                                    pattern_indexes.append(i + 1)
-                                i += 1
-                            break
-                        j += 1
-                    i += 1
-                    continue
-                if operand_index is None:
-                    operand_index = i
-                i += 1
-            if not explicit_patterns:
-                if operand_index is None:
-                    return [], bool(pcre)
-                pattern_indexes.append(operand_index)
-            if pcre:
-                for index in pattern_indexes:
-                    _, token_start, token_end, quoted = args[index]
-                    if quoted:
-                        spans.append((segment_at + token_start, segment_at + token_end))
-    return spans, False
-
-
-def _grep_safe_detection_variant(command: str) -> tuple[str, bool]:
-    spans, malformed = _quoted_grep_pattern_spans(command)
-    if malformed or not spans:
-        return command, malformed
-    parts = []
-    previous = 0
-    for start, end in spans:
-        parts.extend((command[previous:start], " " * (end - start)))
-        previous = end
-    parts.append(command[previous:])
-    return "".join(parts), False
-
-
-def _interpreter_family(executable: str) -> str | None:
-    name = os.path.basename(executable).lower()
-    if re.fullmatch(r"py(?:\.exe)?|python[23]?(?:\.\d+)*(?:\.exe)?", name):
-        return "python"
-    if re.fullmatch(r"node(?:js)?(?:\.exe)?", name):
-        return "node"
-    if re.fullmatch(r"perl[0-9]*(?:\.\d+)*(?:\.exe)?", name):
-        return "perl"
-    if re.fullmatch(r"ruby[0-9.]*(?:\.exe)?", name):
-        return "ruby"
-    if re.fullmatch(r"php(?:\.exe)?", name):
-        return "php"
-    if re.fullmatch(r"powershell(?:\.exe)?|pwsh(?:\.exe)?", name):
-        return "powershell"
-    return None
-
-
-def _shell_segment_tokens(segment: str, start: int) -> list[str] | None:
-    """Tokenize an already-bounded command segment.
-
-    ``None`` distinguishes malformed quoting from an empty segment so callers
-    can fail closed for a program-bearing option rather than silently skip it.
-    """
-    try:
-        lexer = shlex.shlex(segment[start:], posix=True, punctuation_chars="<>")
-        lexer.whitespace_split = True
-        lexer.commenters = ""
-        return list(lexer)
-    except ValueError:
-        return None
-
-
-def _iter_top_level_shell_segments(command: str):
-    """Yield top-level command segments in one left-to-right pass."""
-    start = 0
-    quote: str | None = None
-    escaped = False
-    index = 0
-    while index < len(command):
-        char = command[index]
-        if escaped:
-            escaped = False
-        elif char == "\\" and quote != "'":
-            escaped = True
-        elif quote:
-            if char == quote:
-                quote = None
-        elif char in {"'", '"'}:
-            quote = char
-        elif char in ";&|\n":
-            if start < index:
-                yield command[start:index]
-            # Consume a doubled && / || separator as one boundary.
-            if char in "&|" and index + 1 < len(command) and command[index + 1] == char:
-                index += 1
-            start = index + 1
-        index += 1
-    if start < len(command):
-        yield command[start:]
-
-
-def _split_option(token: str) -> tuple[str, str | None]:
-    if "=" in token:
-        option, value = token.split("=", 1)
-        return option, value
-    return token, None
-
-
-def _interpreter_exec_flag(family: str, args: list[str]) -> str | None:
-    """Return an execution-bearing interpreter option, if present."""
-    flags = _INTERPRETER_EXEC_FLAGS[family]
-    skip_value = False
-    for token in args:
-        if skip_value:
-            skip_value = False
-            continue
-        if token == "--":
-            break
-        if family != "powershell" and not token.startswith("-"):
-            break
-        option, attached = _split_option(token)
-        comparable = option.lower() if family == "powershell" else option
-        if comparable in flags:
-            return comparable
-        with_arg = _INTERPRETER_WITH_ARG[family]
-        # `-Wonce` and `ruby -rjson` attach an option value; they are not
-        # short-option bundles containing an execution flag. PowerShell's
-        # normal long options also use one dash, so bundle parsing never
-        # applies to that family.
-        has_attached_option_value = any(
-            option.startswith(short) and len(option) > len(short)
-            for short in with_arg
-            if short.startswith("-") and not short.startswith("--")
-        )
-        if (
-            family != "powershell"
-            and not option.startswith("--")
-            and len(option) > 2
-            and not has_attached_option_value
-        ):
-            for char in option[1:]:
-                short = f"-{char}"
-                if short in flags:
-                    return short
-        if comparable in with_arg and attached is None:
-            skip_value = True
-    return None
-
-
-_BASH_OPTIONS_WITH_ARG = {"-O", "+O", "-o", "+o", "--init-file", "--rcfile"}
-_BASH_SHORT_OPTION_LETTERS = frozenset("ilrsDcabefhkmnptuvxBCEHPTOo")
-
-
-def _bash_exec_payload(args: list[str]) -> tuple[bool, str | None]:
-    """Return whether Bash ``-c`` occurs and the command string it owns.
-
-    Bash's O/o invocation options consume the following argument even when
-    they precede a later ``-c`` or occur in the same short-option bundle.
-    Likewise, the two startup-file long options own their next token. Parsing
-    those operands first prevents both missed payloads and false ``-c`` hits.
-    """
-    index = 0
-    while index < len(args):
-        token = args[index]
-        if token == "--" or not token.startswith(("-", "+")):
-            break
-        if token in _BASH_OPTIONS_WITH_ARG:
-            index += 2
-            continue
-        if token.startswith("--"):
-            index += 1
-            continue
-
-        chars = token[1:]
-        # Bash option letters are case-sensitive. Restricting this to its
-        # documented alphabet preserves invalid controls such as `-Wc`.
-        if not set(chars) <= _BASH_SHORT_OPTION_LETTERS:
-            index += 1
-            continue
-        consumed_option_arg = "O" in chars or "o" in chars
-        if "c" not in chars:
-            index += 1 + int(consumed_option_arg)
-            continue
-        payload_index = index + 1 + int(consumed_option_arg)
-        payload = args[payload_index] if payload_index < len(args) else None
-        return True, payload
-    return False, None
-
-
-def _read_tool_exec_flag(tool: str, args: list[str]) -> tuple[str, str] | None:
-    """Return (option, program) for a read-only tool's program-running flag."""
-    flags = _READ_TOOL_EXEC_FLAGS[tool]
-    index = 0
-    while index < len(args):
-        token = args[index]
-        if token == "--":
-            break
-        option, payload = _split_option(token)
-        matched = option if option in flags else None
-        if tool == "man" and token.startswith(("-P", "-H")) and len(token) > 2:
-            matched, payload = token[:2], token[2:]
-        if matched:
-            if payload is None and index + 1 < len(args):
-                payload = args[index + 1]
-            # This option owns its program argument regardless of spelling.
-            # The real binaries execute a payload beginning with '-' rather
-            # than reparsing it as one of the tool's later options.
-            if payload:
-                return matched, payload
-            index += 2 if payload is not None and "=" not in token else 1
-            continue
-
-        if option in _READ_TOOL_LONG_OPTIONS_WITH_ARG[tool] and payload is None:
-            index += 2
-            continue
-
-        # In a short bundle, the first argument-taking option owns the rest of
-        # the token, or the following token when it occurs last.
-        if token.startswith("-") and not token.startswith("--") and len(token) > 1:
-            for short_index, char in enumerate(token[1:], start=1):
-                if char in _READ_TOOL_SHORT_OPTIONS_WITH_ARG[tool]:
-                    index += 2 if short_index == len(token) - 1 else 1
-                    break
-            else:
-                index += 1
-            continue
-        index += 1
-    return None
-
-
-def _execution_flag_findings(command: str):
-    """Yield scoped execution mechanisms and any executable payloads."""
-    for segment in _iter_top_level_shell_segments(command):
-        for start, _, word in _iter_shell_command_word_spans(segment):
-            executable = _deobfuscate_shell_word_for_detection(word)
-            tokens = _shell_segment_tokens(segment, start)
-            executable_name = os.path.basename(executable).lower()
-            family = _interpreter_family(executable)
-            is_program_bearing = (
-                family is not None or executable_name in _READ_TOOL_EXEC_FLAGS
-            )
-            if tokens is None:
-                if is_program_bearing:
-                    yield (_MALFORMED_EXEC_DESCRIPTION, None)
-                continue
-            if not tokens:
-                continue
-            if family:
-                flag = _interpreter_exec_flag(family, tokens[1:])
-                if flag:
-                    yield ("script execution via -e/-c flag", None)
-                    continue
-                if any(token.startswith("<<") for token in tokens[1:]):
-                    yield ("script execution via heredoc", None)
-                    continue
-            if executable_name in {"bash", "sh", "zsh", "ksh"}:
-                found, payload = _bash_exec_payload(tokens[1:])
-                if found:
-                    yield ("shell command via -c/-lc flag", payload)
-            tool = executable_name
-            if tool in _READ_TOOL_EXEC_FLAGS:
-                finding = _read_tool_exec_flag(tool, tokens[1:])
-                if finding:
-                    option, payload = finding
-                    yield (f"arbitrary program execution via {tool} {option}", payload)
 
 
 def _skip_shell_whitespace(command: str, pos: int) -> int:
@@ -1857,15 +1369,10 @@ def _mark_command_starts(command: str) -> str:
     offsets = sorted(o for o in _iter_shell_command_starts(command) if o > 0)
     if not offsets:
         return command
-    # Build once instead of repeatedly slicing and copying the full command for
-    # every segment (quadratic at 10k+ compound-command segments).
-    parts: list[str] = []
-    previous = 0
-    for offset in offsets:
-        parts.extend((command[previous:offset], "\n"))
-        previous = offset
-    parts.append(command[previous:])
-    return "".join(parts)
+    out = command
+    for offset in reversed(offsets):
+        out = out[:offset] + "\n" + out[offset:]
+    return out
 
 
 def _iter_shell_command_word_spans(command: str):
@@ -1912,29 +1419,8 @@ def _iter_shell_command_word_spans(command: str):
 
 def _command_detection_variants(command: str):
     normalized = _normalize_command_for_detection(command)
-    # Quote-aware grep parsing hides only structurally identified pattern
-    # operands. Malformed/ambiguous input remains byte-for-byte intact.
-    grep_safe, _ = _grep_safe_detection_variant(normalized)
-    seen = {grep_safe}
-    yield grep_safe
-    # Program-bearing options are parsed in their owning command's context.
-    # Surfacing only their payload lets the hardline floor inspect the command
-    # that will actually run without promoting similar flags or quoted prose.
-    pending = [normalized]
-    while pending:
-        variant = pending.pop()
-        for _, payload in _execution_flag_findings(variant):
-            if payload and payload not in seen:
-                seen.add(payload)
-                yield payload
-                # A payload can begin with an option-looking program and then
-                # invoke a hardline command after a separator. Mark its real
-                # command starts just as we do for the outer command.
-                marked_payload = _mark_command_starts(payload)
-                if marked_payload != payload and marked_payload not in seen:
-                    seen.add(marked_payload)
-                    yield marked_payload
-                pending.append(payload)
+    seen = {normalized}
+    yield normalized
     # Subshell `(cmd)` and brace-group `{ cmd; }` openers put `cmd` at a real
     # command position, but the flat `_CMDPOS`-anchored patterns can't see it:
     # their start-position class deliberately omits `(`/`{` because a bare
@@ -1946,8 +1432,8 @@ def _command_detection_variants(command: str):
     # untouched, while `(reboot)` / `{ shutdown -h now; }` now anchor. This
     # covers every `_CMDPOS` rule (shutdown/reboot/init/systemctl/telinit and
     # the rm root/home/system floor) in one place.
-    marked = _mark_command_starts(grep_safe)
-    if marked != grep_safe and marked not in seen:
+    marked = _mark_command_starts(normalized)
+    if marked != normalized and marked not in seen:
         seen.add(marked)
         yield marked
     # Shell quoting/escaping can spell a dangerous executable name in pieces
@@ -1991,8 +1477,6 @@ def detect_dangerous_command(command: str) -> tuple:
     Returns:
         (is_dangerous, pattern_key, description) or (False, None, None)
     """
-    if _command_parser_limit_exceeded(command):
-        return (True, _PARSER_LIMIT_DESCRIPTION, _PARSER_LIMIT_DESCRIPTION)
     if _is_verification_artifact_cleanup(command):
         return (False, None, None)
 
@@ -2002,9 +1486,14 @@ def detect_dangerous_command(command: str) -> tuple:
             if pattern_re.search(command_lower):
                 pattern_key = description
                 return (True, pattern_key, description)
-    normalized = _normalize_command_for_detection(command)
-    for description, _ in _execution_flag_findings(normalized):
-        return (True, description, description)
+    require_pattern = _match_user_require_rule(command)
+    if require_pattern is not None:
+        return (
+            True,
+            f"configured:{require_pattern}",
+            f"configured sensitive command matching approvals.require rule "
+            f"'{require_pattern}'",
+        )
     return (False, None, None)
 
 
@@ -2463,6 +1952,66 @@ def _get_approval_config() -> dict:
         return {}
 
 
+def _coerce_platform_user_ids(value) -> frozenset[str]:
+    """Normalize a configured user-id scalar/list into a stable set."""
+    if value is None:
+        return frozenset()
+    if isinstance(value, str):
+        values = value.split(",")
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        values = value
+    else:
+        values = [value]
+    return frozenset(str(item).strip() for item in values if str(item).strip())
+
+
+def _platform_policy_users(config_key: str, platform: str) -> frozenset[str]:
+    configured = _get_approval_config().get(config_key) or {}
+    if not isinstance(configured, dict):
+        return frozenset()
+    return _coerce_platform_user_ids(configured.get(str(platform or "").lower()))
+
+
+def get_approval_exempt_users(platform: str) -> frozenset[str]:
+    """Return requester IDs exempt from recoverable approvals on a platform."""
+    return _platform_policy_users("exempt_users", platform)
+
+
+def get_approval_approver_users(platform: str) -> frozenset[str]:
+    """Return user IDs allowed to resolve approvals on a platform."""
+    return _platform_policy_users("approver_users", platform)
+
+
+def _get_session_user_id() -> str:
+    try:
+        from gateway.session_context import get_session_env
+
+        return get_session_env("HERMES_SESSION_USER_ID", "") or ""
+    except Exception:
+        return os.getenv("HERMES_SESSION_USER_ID", "") or ""
+
+
+def is_current_requester_approval_exempt() -> bool:
+    """Whether the current requester may skip recoverable approval prompts."""
+    platform = _get_session_platform().lower()
+    user_id = _get_session_user_id()
+    return bool(platform and user_id and user_id in get_approval_exempt_users(platform))
+
+
+def can_user_resolve_approval(platform: str, user_id: str) -> bool:
+    """Allow legacy behavior unless an explicit approver list is configured."""
+    approvers = get_approval_approver_users(platform)
+    return not approvers or str(user_id or "").strip() in approvers
+
+
+def _current_request_has_dedicated_approver() -> bool:
+    """True when this requester must receive one-operation owner approval."""
+    platform = _get_session_platform().lower()
+    if not platform or not get_approval_approver_users(platform):
+        return False
+    return not is_current_requester_approval_exempt()
+
+
 def _get_approval_mode() -> str:
     """Read the approval mode from config. Returns 'manual', 'smart', or 'off'."""
     mode = _get_approval_config().get("mode", "manual")
@@ -2491,17 +2040,11 @@ def is_approval_bypass_active() -> bool:
 
 
 def _get_approval_timeout() -> int:
-    """Read the approval timeout from config. Defaults to 300 seconds.
-
-    The default matches DEFAULT_CONFIG["approvals"]["timeout"]. Gateway
-    approvals arrive as push notifications the user may not see for a couple
-    of minutes; 60s proved too tight in practice (Telegram taps landed after
-    the wait had already failed closed).
-    """
+    """Read the approval timeout from config. Defaults to 60 seconds."""
     try:
-        return int(_get_approval_config().get("timeout", 300))
+        return int(_get_approval_config().get("timeout", 60))
     except (ValueError, TypeError):
-        return 300
+        return 60
 
 
 def _get_cron_approval_mode() -> str:
@@ -2692,14 +2235,21 @@ def _run_approval_gate(
         ``{"approved": bool, "message": str|None, ...}`` — shape shared with
         ``check_dangerous_command`` so all callers handle it uniformly.
     """
+    if is_current_requester_approval_exempt():
+        return {"approved": True, "message": None, "requester_exempt": True}
+
+    requester_scoped = _current_request_has_dedicated_approver()
+
     # --yolo bypasses all approval prompts (session- or process-scoped).
     # Hardline blocks are handled by the caller BEFORE this gate, so yolo
     # here only skips the recoverable approval layer.
-    if _YOLO_MODE_FROZEN or is_current_session_yolo_enabled():
+    if _YOLO_MODE_FROZEN or (
+        is_current_session_yolo_enabled() and not requester_scoped
+    ):
         return {"approved": True, "message": None}
 
     session_key = get_current_session_key()
-    if is_approved(session_key, pattern_key):
+    if not requester_scoped and is_approved(session_key, pattern_key):
         return {"approved": True, "message": None}
 
     if approval_callback is None:
@@ -2768,8 +2318,8 @@ def _run_approval_gate(
                 "pattern_key": pattern_key,
                 "pattern_keys": [pattern_key],
                 "description": redact_sensitive_text(description),
-                "allow_permanent": True,
-                "allow_session": True,
+                "allow_session": not requester_scoped,
+                "allow_permanent": not requester_scoped,
             }
             decision = _await_gateway_decision(
                 session_key, notify_cb, approval_data, surface="gateway"
@@ -2808,9 +2358,9 @@ def _run_approval_gate(
                     "user_consent": False,
                 }
 
-            if choice == "session":
+            if not requester_scoped and choice == "session":
                 approve_session(session_key, pattern_key)
-            elif choice == "always":
+            elif not requester_scoped and choice == "always":
                 approve_session(session_key, pattern_key)
                 approve_permanent(pattern_key)
                 save_permanent_allowlist(_permanent_approved)
@@ -2818,17 +2368,22 @@ def _run_approval_gate(
 
         # No notify callback (e.g. API server without an attached chat):
         # queue for /approve /deny review, agent sees approval_required.
-        submit_pending(session_key, {
+        pending_data = {
             "command": display_target,
             "pattern_key": pattern_key,
             "description": description,
-        })
+            "allow_session": not requester_scoped,
+            "allow_permanent": not requester_scoped,
+        }
+        submit_pending(session_key, pending_data)
         return {
             "approved": False,
             "pattern_key": pattern_key,
             "status": "approval_required",
             "command": display_target,
             "description": description,
+            "allow_session": not requester_scoped,
+            "allow_permanent": not requester_scoped,
             "message": (
                 f"⚠️ This action is potentially dangerous ({description}). "
                 f"Asking the user for approval.\n\n**Target:**\n```\n{display_target}\n```"
@@ -2850,9 +2405,9 @@ def _run_approval_gate(
             "description": description,
         }
 
-    if choice == "session":
+    if not requester_scoped and choice == "session":
         approve_session(session_key, pattern_key)
-    elif choice == "always":
+    elif not requester_scoped and choice == "always":
         approve_session(session_key, pattern_key)
         approve_permanent(pattern_key)
         save_permanent_allowlist(_permanent_approved)
@@ -2914,12 +2469,25 @@ def check_dangerous_command(command: str, env_type: str,
                        deny_pattern, command[:200])
         return _user_deny_block_result(deny_pattern)
 
+    # Requester exemptions apply only after the unconditional safety floor
+    # and explicit deny rules have had a chance to block the command.
+    if is_current_requester_approval_exempt():
+        return {"approved": True, "message": None, "requester_exempt": True}
+
     # --yolo: bypass all approval prompts. Gateway /yolo is session-scoped;
     # CLI --yolo remains process-scoped via the env var for local use.
-    if _YOLO_MODE_FROZEN or is_current_session_yolo_enabled():
+    requester_scoped = _current_request_has_dedicated_approver()
+    if _YOLO_MODE_FROZEN or (
+        is_current_session_yolo_enabled() and not requester_scoped
+    ):
         return {"approved": True, "message": None}
 
-    if _command_matches_permanent_allowlist(command):
+    require_pattern = _match_user_require_rule(command)
+    if (
+        not requester_scoped
+        and require_pattern is None
+        and _command_matches_permanent_allowlist(command)
+    ):
         return {"approved": True, "message": None}
 
     is_dangerous, pattern_key, description = detect_dangerous_command(command)
@@ -3115,7 +2683,7 @@ def _await_gateway_decision(session_key: str, notify_cb, approval_data: dict,
         return {"resolved": False, "choice": None, "notify_failed": True}
 
     # Block until the user responds or the canonical approval timeout elapses
-    # (default 300s). Poll in short slices so we can fire activity heartbeats
+    # (default 60s). Poll in short slices so we can fire activity heartbeats
     # every ~10s to the agent's inactivity tracker — otherwise the gateway
     # watchdog kills the agent while the user is still responding. Mirrors
     # _wait_for_process() cadence.
@@ -3225,13 +2793,27 @@ def check_all_command_guards(command: str, env_type: str,
                        deny_pattern, command[:200])
         return _user_deny_block_result(deny_pattern)
 
+    if is_current_requester_approval_exempt():
+        return {"approved": True, "message": None, "requester_exempt": True}
+
+    requester_scoped = _current_request_has_dedicated_approver()
+
     # --yolo or approvals.mode=off: bypass all approval prompts.
     # Gateway /yolo is session-scoped; CLI --yolo remains process-scoped.
     approval_mode = _get_approval_mode()
-    if _YOLO_MODE_FROZEN or is_current_session_yolo_enabled() or approval_mode == "off":
+    if (
+        _YOLO_MODE_FROZEN
+        or (is_current_session_yolo_enabled() and not requester_scoped)
+        or approval_mode == "off"
+    ):
         return {"approved": True, "message": None}
 
-    if _command_matches_permanent_allowlist(command):
+    require_pattern = _match_user_require_rule(command)
+    if (
+        not requester_scoped
+        and require_pattern is None
+        and _command_matches_permanent_allowlist(command)
+    ):
         return {"approved": True, "message": None}
 
     is_cli = _is_interactive_cli()
@@ -3369,11 +2951,11 @@ def check_all_command_guards(command: str, env_type: str,
         rule_id = findings[0].get("rule_id", "unknown") if findings else "unknown"
         tirith_key = f"tirith:{rule_id}"
         tirith_desc = _format_tirith_description(tirith_result)
-        if not is_approved(session_key, tirith_key):
+        if requester_scoped or not is_approved(session_key, tirith_key):
             warnings.append((tirith_key, tirith_desc, True))
 
     if is_dangerous:
-        if not is_approved(session_key, pattern_key):
+        if requester_scoped or not is_approved(session_key, pattern_key):
             warnings.append((pattern_key, description, False))
 
     # Nothing to warn about
@@ -3396,7 +2978,7 @@ def check_all_command_guards(command: str, env_type: str,
         )
         verdict = _smart_approve(command, combined_desc_for_llm)
         _observe_smart_approval_verdict(observer_payload, verdict)
-        if verdict == "approve":
+        if verdict == "approve" and not requester_scoped:
             # Approve this command only. Pattern-level persistence would let one
             # benign command suppress review of later commands that happen to
             # match the same broad detector category.
@@ -3423,15 +3005,7 @@ def check_all_command_guards(command: str, env_type: str,
     combined_desc = "; ".join(desc for _, desc, _ in warnings)
     primary_key = warnings[0][0]
     all_keys = [key for key, _, _ in warnings]
-    # "Always" is offered when at least one warning is a dangerous-pattern
-    # key that the persistence layer would actually allowlist permanently.
-    # Pure-tirith findings are session-max by design (no broad permanent
-    # allowlisting of content-level security findings), so a prompt with
-    # ONLY tirith warnings keeps Always hidden.  Mixed prompts (pattern +
-    # tirith) previously hid Always too, even though choosing it would
-    # correctly persist the pattern key and downgrade the tirith key to
-    # session — the UI was stricter than the persistence layer.
-    has_permanent_capable = any(not is_t for _, _, is_t in warnings)
+    has_tirith = any(is_t for _, _, is_t in warnings)
 
     # Gateway/async approval — block the agent thread until the user
     # responds with /approve or /deny, mirroring the CLI's synchronous
@@ -3461,15 +3035,13 @@ def check_all_command_guards(command: str, env_type: str,
                 "pattern_keys": all_keys,
                 "description": redact_sensitive_text(combined_desc),
                 # Smart DENY overrides are one-operation decisions, so the UI
-                # must not offer a permanent scope.  Otherwise offer Always
-                # whenever any dangerous-pattern warning can actually be
-                # persisted (pure-tirith prompts stay session-max).
-                "allow_permanent": has_permanent_capable and not smart_denied_for_owner,
-                # Session approval is safe for every non-Smart-DENY prompt —
-                # including pure-tirith ones, where the persistence layer
-                # already caps scope at session. Adapters use this to render
-                # a session tier independently of the permanent tier.
-                "allow_session": not smart_denied_for_owner,
+                # must not offer a permanent scope.
+                "allow_session": not requester_scoped,
+                "allow_permanent": (
+                    not requester_scoped
+                    and not has_tirith
+                    and not smart_denied_for_owner
+                ),
             }
             if smart_denied_for_owner:
                 approval_data["smart_denied"] = True
@@ -3528,7 +3100,7 @@ def check_all_command_guards(command: str, env_type: str,
             # A smart-DENY owner override is always one operation, even if an
             # older client returns "session" or "always". Manual and ESCALATE
             # choices retain their existing persistence semantics.
-            if not smart_denied_for_owner:
+            if not smart_denied_for_owner and not requester_scoped:
                 for key, _, is_tirith in warnings:
                     if choice == "session" or (choice == "always" and is_tirith):
                         approve_session(session_key, key)
@@ -3552,6 +3124,8 @@ def check_all_command_guards(command: str, env_type: str,
             "pattern_key": primary_key,
             "pattern_keys": all_keys,
             "description": _disp_combined_desc,
+            "allow_session": not requester_scoped,
+            "allow_permanent": not requester_scoped and not has_tirith,
         }
         if smart_denied_for_owner:
             pending_data.update(smart_denied=True, allow_permanent=False)
@@ -3563,6 +3137,8 @@ def check_all_command_guards(command: str, env_type: str,
             "approval_pending": True,
             "command": _disp_command,
             "description": _disp_combined_desc,
+            "allow_session": not requester_scoped,
+            "allow_permanent": not requester_scoped and not has_tirith,
             "message": (
                 f"⚠️ {_disp_combined_desc}. Asking the user for approval.\n\n**Command:**\n```\n{_disp_command}\n```"
             ),
@@ -3572,7 +3148,7 @@ def check_all_command_guards(command: str, env_type: str,
         return result
 
     # CLI interactive: single combined prompt
-    # Hide [a]lways when no persistable (non-tirith) warning is present
+    # Hide [a]lways when any tirith warning is present
     _fire_approval_hook(
         "pre_approval_request",
         command=command,
@@ -3585,7 +3161,7 @@ def check_all_command_guards(command: str, env_type: str,
     choice = prompt_dangerous_approval(
         command,
         combined_desc,
-        allow_permanent=has_permanent_capable and not smart_denied_for_owner,
+        allow_permanent=not has_tirith and not smart_denied_for_owner,
         smart_denied=smart_denied_for_owner,
         approval_callback=approval_callback,
     )
@@ -3619,7 +3195,7 @@ def check_all_command_guards(command: str, env_type: str,
 
     # Smart-DENY owner overrides are one-operation scoped. Preserve existing
     # persistence for manual mode and smart ESCALATE.
-    if not smart_denied_for_owner:
+    if not smart_denied_for_owner and not requester_scoped:
         for key, _, is_tirith in warnings:
             if choice == "session" or (choice == "always" and is_tirith):
                 # tirith: session only (no permanent broad allowlisting)
@@ -3669,9 +3245,18 @@ def check_execute_code_guard(code: str, env_type: str,
     if _should_skip_container_guards(env_type, has_host_access=has_host_access):
         return {"approved": True, "message": None}
 
+    if is_current_requester_approval_exempt():
+        return {"approved": True, "message": None, "requester_exempt": True}
+
+    requester_scoped = _current_request_has_dedicated_approver()
+
     # --yolo or approvals.mode=off: bypass (session- or process-scoped).
     approval_mode = _get_approval_mode()
-    if _YOLO_MODE_FROZEN or is_current_session_yolo_enabled() or approval_mode == "off":
+    if (
+        _YOLO_MODE_FROZEN
+        or (is_current_session_yolo_enabled() and not requester_scoped)
+        or approval_mode == "off"
+    ):
         return {"approved": True, "message": None}
 
     is_gateway = _is_gateway_approval_context()
@@ -3713,7 +3298,7 @@ def check_execute_code_guard(code: str, env_type: str,
     # Check session/permanent approval — same gate as check_all_command_guards.
     # Without this, "Approve session" / "Always" choices are stored but never
     # consulted, so every execute_code call re-prompts the user (#39275).
-    if is_approved(session_key, pattern_key):
+    if not requester_scoped and is_approved(session_key, pattern_key):
         return {"approved": True, "message": None}
 
     # Smart mode: ask the aux LLM about the whole script. An APPROVE here only
@@ -3730,7 +3315,7 @@ def check_execute_code_guard(code: str, env_type: str,
         )
         verdict = _smart_approve(command, description)
         _observe_smart_approval_verdict(observer_payload, verdict)
-        if verdict == "approve":
+        if verdict == "approve" and not requester_scoped:
             logger.debug("Smart approval: auto-approved execute_code for session %s",
                          session_key)
             return {"approved": True, "message": None,
@@ -3775,6 +3360,8 @@ def check_execute_code_guard(code: str, env_type: str,
             "pattern_key": pattern_key,
             "pattern_keys": [pattern_key],
             "description": display_description,
+            "allow_session": not requester_scoped,
+            "allow_permanent": not requester_scoped,
         }
         if smart_denied_for_owner:
             pending_data.update(smart_denied=True, allow_permanent=False)
@@ -3786,6 +3373,8 @@ def check_execute_code_guard(code: str, env_type: str,
             "approval_pending": True,
             "command": display_command,
             "description": display_description,
+            "allow_session": not requester_scoped,
+            "allow_permanent": not requester_scoped,
             "message": (
                 f"⚠️ {display_description}. Asking the user for approval.\n\n"
                 f"**Code:**\n```python\n{display_code}\n```"
@@ -3800,8 +3389,8 @@ def check_execute_code_guard(code: str, env_type: str,
         "pattern_key": pattern_key,
         "pattern_keys": [pattern_key],
         "description": display_description,
-        "allow_permanent": not smart_denied_for_owner,
-        "allow_session": not smart_denied_for_owner,
+        "allow_session": not requester_scoped,
+        "allow_permanent": not requester_scoped and not smart_denied_for_owner,
     }
     if smart_denied_for_owner:
         approval_data["smart_denied"] = True
@@ -3847,7 +3436,7 @@ def check_execute_code_guard(code: str, env_type: str,
     # Never persist a smart-DENY override under the coarse execute_code key;
     # doing so would approve unrelated future scripts. Manual and ESCALATE
     # decisions preserve their existing session/permanent behavior.
-    if not smart_denied_for_owner:
+    if not smart_denied_for_owner and not requester_scoped:
         if choice == "session":
             approve_session(session_key, pattern_key)
         elif choice == "always":

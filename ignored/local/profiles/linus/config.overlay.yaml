@@ -1,0 +1,9 @@
+approvals:
+  mode: 'off'
+  timeout: 60
+  cron_mode: deny
+model:
+  provider: openai-codex
+  default: gpt-5.5
+agent:
+  reasoning_effort: medium

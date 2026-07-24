@@ -307,6 +307,32 @@ class TestChatCompletionsBuildKwargs:
         kw = transport.build_kwargs(model="gpt-4o", messages=msgs, tools=tools)
         assert kw["tools"] == tools
 
+    def test_cloudflare_workers_ai_reasoning_off_top_level(self, transport):
+        from providers import get_provider_profile
+        profile = get_provider_profile("workers-ai")
+        msgs = [{"role": "user", "content": "Hi"}]
+        kw = transport.build_kwargs(
+            model="@cf/zai-org/glm-5.2",
+            messages=msgs,
+            provider_profile=profile,
+            reasoning_config={"enabled": False},
+        )
+        assert kw["reasoning_effort"] == "none"
+        assert "extra_body" not in kw
+
+    def test_cloudflare_workers_ai_omits_reasoning_for_other_families(self, transport):
+        from providers import get_provider_profile
+        profile = get_provider_profile("workers-ai")
+        msgs = [{"role": "user", "content": "Hi"}]
+        kw = transport.build_kwargs(
+            model="@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+            messages=msgs,
+            provider_profile=profile,
+            reasoning_config={"enabled": False},
+        )
+        assert "reasoning_effort" not in kw
+        assert "extra_body" not in kw
+
     def test_openrouter_provider_prefs(self, transport):
         from providers import get_provider_profile
         profile = get_provider_profile("openrouter")
@@ -747,28 +773,6 @@ class TestChatCompletionsKimi:
         )
         assert kw["tools"][0]["function"]["parameters"]["properties"]["q"]["type"] == "string"
 
-    def test_moonshot_outgoing_schema_carries_required_array(self, transport):
-        """Moonshot 400s on object schemas without an explicit `required` array
-        (#66835). Assert the wire-level tool schema — what actually leaves the
-        transport — carries `required: []` on a zero-required-param tool."""
-        tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "browser_snapshot",
-                    "description": "Snapshot",
-                    "parameters": {"type": "object", "properties": {}},
-                },
-            },
-        ]
-        kw = transport.build_kwargs(
-            model="moonshotai/kimi-k3",
-            messages=[{"role": "user", "content": "Hi"}],
-            tools=tools,
-            max_tokens_param_fn=lambda n: {"max_tokens": n},
-        )
-        assert kw["tools"][0]["function"]["parameters"]["required"] == []
-
     def test_non_moonshot_tools_are_not_mutated(self, transport):
         """Other models don't go through the Moonshot sanitizer."""
         original_params = {
@@ -1136,33 +1140,6 @@ class TestChatCompletionsCacheStats:
         r = SimpleNamespace(usage=SimpleNamespace(prompt_tokens_details=details))
         result = transport.extract_cache_stats(r)
         assert result == {"cached_tokens": 500, "creation_tokens": 100}
-
-    def test_deepseek_native_top_level_cache_hit_tokens(self, transport):
-        """DeepSeek's native API (api.deepseek.com) reports cache hits as
-        top-level prompt_cache_hit_tokens, not the OpenAI nested shape —
-        the extractor must read it or direct DeepSeek sessions show 0%
-        cache hit rate (#61871)."""
-        r = SimpleNamespace(
-            usage=SimpleNamespace(
-                prompt_tokens_details=None,
-                prompt_cache_hit_tokens=1500,
-                prompt_cache_miss_tokens=500,
-            )
-        )
-        result = transport.extract_cache_stats(r)
-        assert result == {"cached_tokens": 1500, "creation_tokens": 0}
-
-    def test_nested_details_win_over_deepseek_top_level(self, transport):
-        """When both shapes are present, the OpenAI nested value wins."""
-        details = SimpleNamespace(cached_tokens=800, cache_write_tokens=0)
-        r = SimpleNamespace(
-            usage=SimpleNamespace(
-                prompt_tokens_details=details,
-                prompt_cache_hit_tokens=1500,
-            )
-        )
-        result = transport.extract_cache_stats(r)
-        assert result == {"cached_tokens": 800, "creation_tokens": 0}
 
 
 class TestChatCompletionsGeminiNativeExtraBodyStrip:

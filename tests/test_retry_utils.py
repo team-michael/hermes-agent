@@ -5,7 +5,12 @@ import threading
 import agent.retry_utils as retry_utils
 from types import SimpleNamespace
 
-from agent.retry_utils import adaptive_rate_limit_backoff, is_zai_coding_overload_error, jittered_backoff
+from agent.retry_utils import (
+    adaptive_rate_limit_backoff,
+    is_cloudflare_workers_ai_capacity_error,
+    is_zai_coding_overload_error,
+    jittered_backoff,
+)
 
 
 def test_backoff_is_exponential():
@@ -117,6 +122,29 @@ def test_backoff_uses_locked_tick_for_seed(monkeypatch):
 
     assert len(recorded_seeds) == 2
     assert len(set(recorded_seeds)) == 2, f"Expected unique seeds, got {recorded_seeds}"
+
+
+def test_cloudflare_workers_ai_capacity_uses_code_not_message():
+    error = SimpleNamespace(
+        status_code=429,
+        body={"errors": [{"message": "temporary provider failure", "code": 3040}]},
+    )
+
+    assert is_cloudflare_workers_ai_capacity_error(
+        base_url="https://api.cloudflare.com/client/v4/accounts/test/ai/v1",
+        error=error,
+    )
+    assert not is_cloudflare_workers_ai_capacity_error(
+        base_url="https://api.cloudflare.com/client/v4/accounts/test/ai/v1",
+        error=SimpleNamespace(
+            status_code=429,
+            body={"errors": [{"message": "rate limit exceeded", "code": 3021}]},
+        ),
+    )
+    assert not is_cloudflare_workers_ai_capacity_error(
+        base_url="https://openrouter.ai/api/v1",
+        error=error,
+    )
 
 
 def _zai_overload_error():

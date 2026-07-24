@@ -105,6 +105,34 @@ def is_zai_coding_overload_error(*, base_url: str | None, model: str | None, err
     )
 
 
+def is_cloudflare_workers_ai_capacity_error(*, base_url: str | None, error: Any) -> bool:
+    """Return True for Cloudflare Workers AI's transient capacity code 3040."""
+    base = (base_url or "").lower()
+    status = getattr(error, "status_code", None)
+    body = getattr(error, "body", None)
+
+    payloads = []
+    if isinstance(body, dict):
+        payloads.append(body)
+        if isinstance(body.get("error"), dict):
+            payloads.append(body["error"])
+        if isinstance(body.get("errors"), list):
+            payloads.extend(item for item in body["errors"] if isinstance(item, dict))
+    has_capacity_code = any(
+        str(payload.get("code") or payload.get("error_code") or "").strip() == "3040"
+        for payload in payloads
+    )
+    if not has_capacity_code:
+        compact_text = _error_text(error).replace(" ", "").replace("'", '"')
+        has_capacity_code = '"code":3040' in compact_text
+
+    return (
+        status == 429
+        and "api.cloudflare.com/client/v4/accounts/" in base
+        and has_capacity_code
+    )
+
+
 def adaptive_rate_limit_backoff(
     attempt: int,
     *,

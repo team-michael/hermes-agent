@@ -1,0 +1,11 @@
+Alert status: `no_action` for false positives/spikes/recovered, `needs_fix` for trackable non-urgent work, `urgent` only for active outages. Internal `internal-api-service` AI_AGENT_METRIC chat_aborted without error stack is noise. Korean replies use compact bullets (원인/범위/빈도/고객영향도/즉시조치) in that order; `no_action` = 5 bullets, no action-item line.
+§
+Sentry `replaceAll` TypeError on user-journey edit page: confirmed 3-project recurrence (tourlive 2026-06-18, qmarket 2026-07-06, issue 7520113669 again 2026-07-21). Cross-project `needs_fix` threshold crossed at #2. Always catalog-check title+transaction+message before `no_action` for sentry alerts — reference is `check/references/sentry-email-alert-pipeline-false-positives.md` (read-only external; manual updates required).
+§
+kakao-delivery-result-poller-queue-dlq: Lambda Errors=0, DLQ ApproximateReceiveCount=4(>maxReceiveCount=3), poll_attempt=0(producer가 백어넣은 값). Root: Kakao completed_failure(handled) → batchItemFailure → 3번 재시도 후 DLQ. depth<50 안정=no_action; 수백+증가추세 단일캠페인>80%=needs_fix. 새 DLQ에 오래된 메시지(>100k s)+단 답변 대상 주 queue=0 → 과거 잔재물, no_action. `notifly-`/`michael`/console-stage.notifly.tech = 내벀용, 고객무영향.
+§
+사용자는 Slack 영어 알럿에 대한 한국어 답변을 간략하게 작성하길 원함. sentry email alert pipeline(no_action) 답변은 3~4줄 내외로 압축.
+§
+kakao-brand-message-delivery Lambda: INFO `request_body` logs match `%ERROR|Status: timeout%` filter as false positives. When alarm fires and Lambda Errors=0/Throttles=0/Duration normal with INFO dominating `current_top_signatures`, classify `no_action`. Real ERRORs are handled biz rejections (`resultCode: -3002`). Cannot persist to external `check` skill.
+§
+Hashimoto 프로필의 `check` skill이 `skills.external_dirs`에 위치해 있어 skill_manage로 직접 수정 불가능함. `aurora-writer-cpu-batch-lambda-spike.md` 참조에 다음 내용 추가 필요: (1) reader replica CPU spike가 Lambda batch correlation(Errors=0)이 있으면 `no_action` 가능, (2) Metrics Insights alarm에서 per-instance CPU를 추적할 때 `get-metric-data` with exact expression을 사용하는 방법, (3) 11:00 UTC(KST 20:00) batch window도 reader CPU spike를 유발할 수 있음.

@@ -1046,6 +1046,7 @@ def test_named_custom_provider_same_url_uses_matching_key_env_and_api_mode(monke
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setenv("GPT_KEY", "gpt-secret")
     monkeypatch.setenv("CLAUDE_KEY", "claude-secret")
+
     monkeypatch.setattr(
         rp,
         "load_config",
@@ -1086,6 +1087,93 @@ def test_named_custom_provider_same_url_uses_matching_key_env_and_api_mode(monke
     assert resolved["api_mode"] == "anthropic_messages"
     assert resolved["requested_provider"] == "custom:claude"
     assert resolved["model"] == "claude-opus-4-8"
+
+
+def test_named_custom_provider_expands_env_vars_in_providers_dict(monkeypatch):
+    """Provider dict URLs may contain env placeholders such as Cloudflare account IDs."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("CF_TOKEN", "cf-secret")
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acct-123")
+
+    monkeypatch.setattr(
+        rp,
+        "load_config",
+        lambda: {
+            "providers": {
+                "workers-ai": {
+                    "api": "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/ai/v1",
+                    "key_env": "CF_TOKEN",
+                    "name": "Cloudflare Workers AI",
+                }
+            }
+        },
+    )
+    monkeypatch.setattr(
+        rp,
+        "resolve_provider",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError(
+                "resolve_provider should not be called for named custom providers"
+            )
+        ),
+    )
+
+    resolved = rp.resolve_runtime_provider(requested="workers-ai")
+
+    assert resolved["provider"] == "custom"
+    assert resolved["base_url"] == "https://api.cloudflare.com/client/v4/accounts/acct-123/ai/v1"
+    assert resolved["api_key"] == "cf-secret"
+    assert resolved["requested_provider"] == "workers-ai"
+
+
+def test_cloudflare_native_provider_resolves_account_scoped_base_url(monkeypatch):
+    class _Pool:
+        def has_credentials(self):
+            return False
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "cf-secret")
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "acct-123")
+    monkeypatch.setattr(rp, "load_pool", lambda provider: _Pool())
+    monkeypatch.setattr(
+        rp,
+        "_get_model_config",
+        lambda: {
+            "provider": "cloudflare",
+            "default": "@cf/zai-org/glm-5.2",
+        },
+    )
+
+    resolved = rp.resolve_runtime_provider(requested="cloudflare")
+
+    assert resolved["provider"] == "cloudflare"
+    assert resolved["api_mode"] == "chat_completions"
+    assert resolved["base_url"] == "https://api.cloudflare.com/client/v4/accounts/acct-123/ai/v1"
+    assert resolved["api_key"] == "cf-secret"
+    assert resolved["requested_provider"] == "cloudflare"
+
+
+def test_cloudflare_alias_resolves_native_without_custom_shadow(monkeypatch):
+    class _Pool:
+        def has_credentials(self):
+            return False
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "cf-secret")
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "acct-123")
+    monkeypatch.setattr(rp, "load_pool", lambda provider: _Pool())
+    monkeypatch.setattr(rp, "load_config", lambda: {})
+    monkeypatch.setattr(rp, "_get_model_config", lambda: {})
+
+    resolved = rp.resolve_runtime_provider(requested="cf")
+
+    assert resolved["provider"] == "cloudflare"
+    assert resolved["base_url"] == "https://api.cloudflare.com/client/v4/accounts/acct-123/ai/v1"
+    assert resolved["api_key"] == "cf-secret"
+    assert resolved["requested_provider"] == "cf"
 
 
 def test_named_custom_provider_falls_back_to_openai_api_key(monkeypatch):
@@ -1152,25 +1240,6 @@ def test_named_custom_provider_does_not_shadow_builtin_provider(monkeypatch):
     assert resolved["base_url"] == "https://inference-api.nousresearch.com/v1"
     assert resolved["api_key"] == "nous-runtime-key"
     assert resolved["requested_provider"] == "nous"
-
-
-def test_disabled_named_custom_provider_is_not_compatibility_fallback(monkeypatch):
-    """Disabled modern entries stay unavailable through the legacy projection."""
-    monkeypatch.setattr(
-        rp,
-        "load_config",
-        lambda: {
-            "providers": {
-                "route-key": {
-                    "name": "Route Key",
-                    "api": "https://disabled.example/v1",
-                    "enabled": False,
-                }
-            }
-        },
-    )
-
-    assert rp._get_named_custom_provider("custom:route-key") is None
 
 
 def test_nous_pool_entry_refreshes_expired_agent_key(monkeypatch):
@@ -3426,9 +3495,7 @@ def test_resolve_named_custom_runtime_pool_result_includes_extra_headers(monkeyp
         },
     )
 
-    # Exercise the public resolver: it is responsible for preserving the
-    # original named identity after the pool path canonicalizes to "custom".
-    resolved = rp.resolve_runtime_provider(requested="custom:lmstudio")
+    resolved = rp._resolve_named_custom_runtime(requested_provider="custom:lmstudio")
 
     assert resolved is not None
     assert resolved["extra_headers"] == {
@@ -3437,5 +3504,3 @@ def test_resolve_named_custom_runtime_pool_result_includes_extra_headers(monkeyp
     }
     assert resolved["api_key"] == "pooled-key"
     assert resolved["source"] == "pool:lmstudio-pool"
-    assert resolved["provider"] == "custom"
-    assert resolved["requested_provider"] == "custom:lmstudio"

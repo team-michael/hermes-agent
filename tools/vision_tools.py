@@ -424,13 +424,10 @@ async def _download_image(image_url: str, destination: Path, max_retries: int = 
             if blocked:
                 raise PermissionError(blocked["message"])
 
-            from tools.url_safety import create_ssrf_safe_async_client
-
             # Download the image with appropriate headers using async httpx
             # Enable follow_redirects to handle image CDNs that redirect (e.g., Imgur, Picsum)
-            # SSRF: the client validates DNS at TCP connect time; event_hooks
-            # validate each redirect target against private IP ranges.
-            async with create_ssrf_safe_async_client(
+            # SSRF: event_hooks validates each redirect target against private IP ranges
+            async with httpx.AsyncClient(
                 timeout=_VISION_DOWNLOAD_TIMEOUT,
                 follow_redirects=True,
                 event_hooks={"response": [_ssrf_redirect_guard]},
@@ -1578,9 +1575,7 @@ async def _download_video(video_url: str, destination: Path, max_retries: int = 
             if blocked:
                 raise PermissionError(blocked["message"])
 
-            from tools.url_safety import create_ssrf_safe_async_client
-
-            async with create_ssrf_safe_async_client(
+            async with httpx.AsyncClient(
                 timeout=60.0,
                 follow_redirects=True,
                 event_hooks={"response": [_ssrf_redirect_guard]},

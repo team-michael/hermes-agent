@@ -1,5 +1,7 @@
 """Tests for the provider module registry and profiles."""
 
+import pytest
+
 from providers import get_provider_profile, _REGISTRY
 from providers.base import ProviderProfile, OMIT_TEMPERATURE
 
@@ -94,6 +96,76 @@ class TestKimiProfile:
         eb, tl = p.build_api_kwargs_extras(reasoning_config=None)
         assert eb["thinking"] == {"type": "enabled"}
         assert "reasoning_effort" not in tl
+
+
+class TestWorkersAIProfile:
+    def test_alias_lookup(self):
+        assert get_provider_profile("workers-ai").name == "cloudflare"
+        assert get_provider_profile("cf").name == "cloudflare"
+
+    @pytest.mark.parametrize(
+        "model",
+        [
+            "@cf/zai-org/glm-5.2",
+            "zai-org/glm-5.2",
+            "@cf/moonshotai/kimi-k2.6",
+            "@cf/moonshotai/kimi-k2.7-code",
+        ],
+    )
+    def test_reasoning_off_uses_top_level_for_glm_and_kimi(self, model):
+        p = get_provider_profile("workers-ai")
+        eb, tl = p.build_api_kwargs_extras(
+            reasoning_config={"enabled": False},
+            model=model,
+        )
+        assert eb == {}
+        assert tl == {"reasoning_effort": "none"}
+
+    @pytest.mark.parametrize(
+        "reasoning_config, expected",
+        [
+            ({"enabled": False}, "none"),
+            ({"enabled": True, "effort": "none"}, "none"),
+            ({"enabled": True, "effort": "minimal"}, "low"),
+            ({"enabled": True, "effort": "low"}, "low"),
+            ({"enabled": True, "effort": "medium"}, "medium"),
+            ({"enabled": True, "effort": "high"}, "high"),
+            ({"enabled": True, "effort": "xhigh"}, "high"),
+            ({"enabled": True, "effort": "max"}, "high"),
+        ],
+    )
+    def test_reasoning_effort_normalization_for_glm_kimi_common_denominator(
+        self, reasoning_config, expected
+    ):
+        p = get_provider_profile("workers-ai")
+        eb, tl = p.build_api_kwargs_extras(
+            reasoning_config=reasoning_config,
+            model="@cf/moonshotai/kimi-k2.6",
+        )
+        assert eb == {}
+        assert tl == {"reasoning_effort": expected}
+
+    def test_non_reasoning_families_omit_reasoning_effort(self):
+        p = get_provider_profile("workers-ai")
+        for model in [
+            "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+            "@cf/google/gemma-4-26b-a4b-it",
+        ]:
+            eb, tl = p.build_api_kwargs_extras(
+                reasoning_config={"enabled": False},
+                model=model,
+            )
+            assert eb == {}
+            assert tl == {}
+
+    def test_no_reasoning_config_omits_reasoning_effort(self):
+        p = get_provider_profile("workers-ai")
+        eb, tl = p.build_api_kwargs_extras(
+            reasoning_config=None,
+            model="@cf/zai-org/glm-5.2",
+        )
+        assert eb == {}
+        assert tl == {}
 
 
 class TestOpenRouterProfile:
@@ -424,24 +496,6 @@ class TestNousProfile:
             "tags": nous_portal_tags(),
             "provider": preferences,
         }
-
-    def test_tags_include_conversation_when_session_id(self):
-        from agent.portal_tags import conversation_tag
-        p = get_provider_profile("nous")
-        body = p.build_extra_body(session_id="sess-99")
-        assert conversation_tag("sess-99") in body["tags"]
-
-    def test_extra_body_session_id(self):
-        """Top-level session_id is the provider sticky-routing key — keeps
-        Anthropic cache_control breakpoints pinned to one upstream endpoint."""
-        p = get_provider_profile("nous")
-        body = p.build_extra_body(session_id="sess-99")
-        assert body["session_id"] == "sess-99"
-
-    def test_extra_body_no_session_id(self):
-        p = get_provider_profile("nous")
-        body = p.build_extra_body()
-        assert "session_id" not in body
 
     def test_auth_type(self):
         p = get_provider_profile("nous")

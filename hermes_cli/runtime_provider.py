@@ -63,6 +63,10 @@ def _normalize_custom_provider_name(value: str) -> str:
     return value.strip().lower().replace(" ", "-")
 
 
+def _expand_config_value(value: str) -> str:
+    return os.path.expandvars(os.path.expanduser(str(value or "").strip()))
+
+
 def _loopback_hostname(host: str) -> bool:
     h = (host or "").lower().rstrip(".")
     return h in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
@@ -317,24 +321,13 @@ def _provider_supports_explicit_api_mode(provider: Optional[str], configured_pro
     return normalized_configured == normalized_provider
 
 
-def _copilot_runtime_api_mode(
-    model_cfg: Dict[str, Any],
-    api_key: str,
-    *,
-    target_model: Optional[str] = None,
-) -> str:
+def _copilot_runtime_api_mode(model_cfg: Dict[str, Any], api_key: str) -> str:
     configured_provider = str(model_cfg.get("provider") or "").strip().lower()
     configured_mode = _parse_api_mode(model_cfg.get("api_mode"))
     if configured_mode and _provider_supports_explicit_api_mode("copilot", configured_provider):
         return configured_mode
 
-    # Use the model being resolved for this runtime, not the persisted global
-    # default. MoA slots, fallback models, and mid-session model switches all
-    # resolve credentials for a target model that can differ from config.yaml's
-    # model.default. If we derive Copilot api_mode from the stale default, a
-    # Claude/Gemini MoA slot can inherit codex_responses from a GPT-5 default and
-    # fail with "model ... does not support Responses API".
-    model_name = str(target_model or model_cfg.get("default") or "").strip()
+    model_name = str(model_cfg.get("default") or "").strip()
     if not model_name:
         return "chat_completions"
 
@@ -460,11 +453,7 @@ def _resolve_runtime_from_pool_entry(
         api_mode = "chat_completions"
         base_url = _nous_inference_base_url_override() or base_url
     elif provider == "copilot":
-        api_mode = _copilot_runtime_api_mode(
-            model_cfg,
-            getattr(entry, "runtime_api_key", ""),
-            target_model=effective_model,
-        )
+        api_mode = _copilot_runtime_api_mode(model_cfg, getattr(entry, "runtime_api_key", ""))
         base_url = base_url or PROVIDER_REGISTRY["copilot"].inference_base_url
     elif provider == "azure-foundry":
         # Azure Foundry: read api_mode and base_url from config
@@ -499,6 +488,17 @@ def _resolve_runtime_from_pool_entry(
         # Only override when the pool entry has no explicit base_url (i.e. it
         # fell back to the hardcoded default).  Env var overrides win (#6039).
         pconfig = PROVIDER_REGISTRY.get(provider)
+        if provider == "cloudflare" and (
+            not base_url
+            or "{account_id}" in base_url
+            or "${CLOUDFLARE_ACCOUNT_ID}" in base_url
+            or "${CF_ACCOUNT_ID}" in base_url
+        ):
+            try:
+                creds = resolve_api_key_provider_credentials(provider)
+                base_url = creds.get("base_url", "").rstrip("/")
+            except Exception:
+                pass
         pool_url_is_default = pconfig and base_url.rstrip("/") == pconfig.inference_base_url.rstrip("/")
         if configured_provider == provider and pool_url_is_default:
             cfg_base_url = str(model_cfg.get("base_url") or "").strip().rstrip("/")
@@ -674,15 +674,8 @@ def _get_named_custom_provider(requested_provider: str) -> Optional[Dict[str, An
     # First check providers: dict (new-style user-defined providers)
     providers = config.get("providers")
     if isinstance(providers, dict):
-        from hermes_cli.config import is_provider_enabled
         for ep_name, entry in providers.items():
             if not isinstance(entry, dict):
-                continue
-            # Skip providers the user explicitly disabled via
-            # ``providers.<name>.enabled: false``. They remain in config
-            # so re-enabling is a one-line edit, but the resolver pretends
-            # they're not configured.
-            if not is_provider_enabled(entry):
                 continue
             # Match exact name or normalized name
             name_norm = _normalize_custom_provider_name(ep_name)
@@ -697,9 +690,10 @@ def _get_named_custom_provider(requested_provider: str) -> Optional[Dict[str, An
                 # Found match by provider key
                 base_url = entry.get("api") or entry.get("url") or entry.get("base_url") or ""
                 if base_url:
+                    base_url = _expand_config_value(base_url)
                     result = {
                         "name": entry.get("name", ep_name),
-                        "base_url": base_url.strip(),
+                        "base_url": base_url,
                         "api_key": resolved_api_key,
                         "model": entry.get("default_model", ""),
                     }
@@ -727,9 +721,10 @@ def _get_named_custom_provider(requested_provider: str) -> Optional[Dict[str, An
                     # Found match by display name
                     base_url = entry.get("api") or entry.get("url") or entry.get("base_url") or ""
                     if base_url:
+                        base_url = _expand_config_value(base_url)
                         result = {
                             "name": display_name,
-                            "base_url": base_url.strip(),
+                            "base_url": base_url,
                             "api_key": resolved_api_key,
                             "model": entry.get("default_model", ""),
                         }
@@ -773,7 +768,7 @@ def _get_named_custom_provider(requested_provider: str) -> Optional[Dict[str, An
             continue
         result = {
             "name": name.strip(),
-            "base_url": base_url.strip(),
+            "base_url": _expand_config_value(base_url),
             "api_key": str(entry.get("api_key", "") or "").strip(),
         }
         key_env = str(entry.get("key_env", "") or "").strip()
@@ -1386,7 +1381,6 @@ def _resolve_explicit_runtime(
     model_cfg: Dict[str, Any],
     explicit_api_key: Optional[str] = None,
     explicit_base_url: Optional[str] = None,
-    target_model: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     explicit_api_key = str(explicit_api_key or "").strip()
     explicit_base_url = str(explicit_base_url or "").strip().rstrip("/")
@@ -1494,7 +1488,7 @@ def _resolve_explicit_runtime(
 
         base_url = explicit_base_url
         if not base_url:
-            if provider in {"kimi-coding", "kimi-coding-cn"}:
+            if provider in {"kimi-coding", "kimi-coding-cn", "cloudflare"}:
                 creds = resolve_api_key_provider_credentials(provider)
                 base_url = creds.get("base_url", "").rstrip("/")
             else:
@@ -1509,11 +1503,7 @@ def _resolve_explicit_runtime(
 
         api_mode = "chat_completions"
         if provider == "copilot":
-            api_mode = _copilot_runtime_api_mode(
-                model_cfg,
-                api_key,
-                target_model=target_model,
-            )
+            api_mode = _copilot_runtime_api_mode(model_cfg, api_key)
         elif provider == "xai":
             api_mode = "codex_responses"
         else:
@@ -1557,27 +1547,6 @@ def resolve_runtime_provider(
     behavior (api_mode derived from config).
     """
     requested_provider = resolve_requested_provider(requested)
-
-    # Honour ``providers.<name>.enabled: false`` for BOTH user-defined
-    # custom providers and the built-in ones (openai / anthropic /
-    # openrouter / gemini / ...). The earlier ``_get_named_custom_provider``
-    # gate only covers custom blocks — built-in resolution paths
-    # (``resolve_provider`` + pool / explicit / generic runtime) walk
-    # their own short-circuits and would otherwise return stale config
-    # for a provider the user explicitly turned off.
-    #
-    # Fail fast with a typed error so the fallback chain can advance to
-    # the next provider instead of using a disabled one.
-    from hermes_cli.config import is_provider_enabled, load_config
-    _full_cfg = load_config()
-    _provs_cfg = _full_cfg.get("providers") if isinstance(_full_cfg, dict) else None
-    if isinstance(_provs_cfg, dict):
-        _block = _provs_cfg.get(requested_provider)
-        if isinstance(_block, dict) and not is_provider_enabled(_block):
-            raise ValueError(
-                f"provider {requested_provider!r} is disabled in config "
-                f"(providers.{requested_provider}.enabled: false)"
-            )
 
     if requested_provider == "moa":
         return {
@@ -1646,7 +1615,7 @@ def resolve_runtime_provider(
                 "in ~/.hermes/.env, or run 'gcloud auth application-default "
                 "login' for ADC. Set the GCP project/region under vertex: in "
                 "config.yaml if they aren't embedded in the credentials. "
-                "Run `hermes setup` to install Vertex support."
+                "Install the extra with: pip install 'hermes-agent[vertex]'."
             )
         return {
             "provider": "vertex",
@@ -1715,7 +1684,6 @@ def resolve_runtime_provider(
         model_cfg=model_cfg,
         explicit_api_key=explicit_api_key,
         explicit_base_url=explicit_base_url,
-        target_model=target_model,
     )
     if explicit_runtime:
         return explicit_runtime
@@ -2088,11 +2056,7 @@ def resolve_runtime_provider(
         base_url = cfg_base_url or creds.get("base_url", "").rstrip("/")
         api_mode = "chat_completions"
         if provider == "copilot":
-            api_mode = _copilot_runtime_api_mode(
-                model_cfg,
-                creds.get("api_key", ""),
-                target_model=target_model,
-            )
+            api_mode = _copilot_runtime_api_mode(model_cfg, creds.get("api_key", ""))
         elif provider == "xai":
             api_mode = "codex_responses"
         else:

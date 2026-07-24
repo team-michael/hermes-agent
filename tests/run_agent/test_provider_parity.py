@@ -83,9 +83,6 @@ def _make_agent(monkeypatch, provider, api_mode="chat_completions", base_url="ht
         kwargs["model"] = model
     elif provider == "nous":
         kwargs["model"] = "gpt-5"
-    base_url="https://openrouter.ai/api/v1",
-    api_key="test-key",
-    base_url="https://openrouter.ai/api/v1",
     return AIAgent(**kwargs)
 
 
@@ -429,7 +426,7 @@ class TestBuildApiKwargsNousPortal:
         messages = [{"role": "user", "content": "hi"}]
         kwargs = agent._build_api_kwargs(messages)
         extra = kwargs.get("extra_body", {})
-        assert extra.get("tags") == nous_portal_tags(session_id=agent.session_id)
+        assert extra.get("tags") == nous_portal_tags()
 
     def test_uses_chat_completions_format(self, monkeypatch):
         agent = _make_agent(
@@ -1019,6 +1016,15 @@ class TestBuildAssistantMessage:
 
 class TestAuxiliaryClientProviderPriority:
     """Verify auxiliary client resolution doesn't break for any provider."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_runtime_main(self):
+        """Exercise fallback ordering without a prior agent's runtime override."""
+        import agent.auxiliary_client as ac
+
+        ac.clear_runtime_main()
+        yield
+        ac.clear_runtime_main()
 
     def test_openrouter_always_wins(self, monkeypatch):
         monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")

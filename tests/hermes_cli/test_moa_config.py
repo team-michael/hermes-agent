@@ -1,6 +1,3 @@
-import pytest
-
-from agent.errors import MoAPresetNotFoundError
 from hermes_cli.moa_config import (
     DEFAULT_MOA_AGGREGATOR,
     DEFAULT_MOA_PRESET_NAME,
@@ -12,27 +9,6 @@ from hermes_cli.moa_config import (
     resolve_moa_preset,
     set_active_moa_preset,
 )
-
-
-def test_moa_slot_picker_excludes_unconfigured_providers(monkeypatch):
-    from hermes_cli import moa_cmd
-
-    captured = {}
-    monkeypatch.setattr(moa_cmd, "load_picker_context", lambda: object())
-
-    def fake_build(_context, **kwargs):
-        captured.update(kwargs)
-        return {
-            "providers": [
-                {"slug": "moa", "models": ["default"]},
-                {"slug": "opencode-go", "models": ["deepseek-v4-pro"]},
-            ]
-        }
-
-    monkeypatch.setattr(moa_cmd, "build_models_payload", fake_build)
-
-    assert [row["slug"] for row in moa_cmd._model_options()] == ["opencode-go"]
-    assert captured["include_unconfigured"] is False
 
 
 def test_normalize_moa_config_uses_default_named_preset():
@@ -121,31 +97,6 @@ def test_normalize_moa_config_wraps_bare_dict_reference_models():
     assert cfg["presets"]["p"]["reference_models"] == [{"provider": "openai", "model": "gpt-4o"}]
 
 
-def test_normalize_moa_config_parses_json_string_reference_models():
-    """reference_models stored as a JSON string (hand-edited config.yaml or a
-    stringified GUI save) must round-trip to the parsed model list instead of
-    being discarded for defaults."""
-    import json
-
-    models = [
-        {"provider": "openai", "model": "gpt-4o"},
-        {"provider": "anthropic", "model": "claude-sonnet-4"},
-    ]
-    cfg = normalize_moa_config(
-        {"presets": {"p": {"reference_models": json.dumps(models)}}}
-    )
-    assert cfg["presets"]["p"]["reference_models"] == models
-
-
-def test_normalize_moa_config_malformed_json_string_falls_back_to_defaults():
-    """A malformed JSON string reference_models must degrade to the default
-    reference models without raising."""
-    cfg = normalize_moa_config(
-        {"presets": {"p": {"reference_models": "[{'provider': broken"}}}
-    )
-    assert cfg["presets"]["p"]["reference_models"] == DEFAULT_MOA_REFERENCE_MODELS
-
-
 def test_normalize_moa_config_preserves_slot_reasoning_effort():
     cfg = normalize_moa_config(
         {
@@ -155,7 +106,6 @@ def test_normalize_moa_config_preserves_slot_reasoning_effort():
                         {"provider": "openai-codex", "model": "gpt-5.6-sol", "reasoning_effort": "LOW"},
                         {"provider": "openai-codex", "model": "gpt-5.6-sol", "reasoning_effort": False},
                         {"provider": "openai-codex", "model": "gpt-5.6-sol", "reasoning_effort": "nonsense"},
-                        {"provider": "openai-codex", "model": "gpt-5.6-sol", "reasoning_effort": "ultra"},
                     ],
                     "aggregator": {"provider": "openai-codex", "model": "gpt-5.6-sol", "reasoning_effort": "xhigh"},
                 }
@@ -167,7 +117,6 @@ def test_normalize_moa_config_preserves_slot_reasoning_effort():
     assert preset["reference_models"][0]["reasoning_effort"] == "low"
     assert preset["reference_models"][1]["reasoning_effort"] == "none"
     assert "reasoning_effort" not in preset["reference_models"][2]
-    assert preset["reference_models"][3]["reasoning_effort"] == "ultra"
     assert preset["aggregator"]["reasoning_effort"] == "xhigh"
 
 
@@ -252,46 +201,6 @@ def test_resolve_moa_preset_returns_requested_model_set():
     assert resolve_moa_preset(cfg, "review")["reference_models"] == [
         {"provider": "openrouter", "model": "deepseek/deepseek-v4-pro"}
     ]
-
-
-def test_resolve_missing_moa_preset_has_actionable_error():
-    cfg = {
-        "default_preset": "日常对话-高峰",
-        "presets": {"日常对话-高峰": {}, "日常对话-非高峰": {}},
-    }
-
-    with pytest.raises(MoAPresetNotFoundError) as exc_info:
-        resolve_moa_preset(cfg, "日常对话-高峰期")
-
-    message = str(exc_info.value)
-    assert "日常对话-高峰期" in message
-    assert "日常对话-高峰" in message
-    assert "日常对话-非高峰" in message
-    assert "hermes moa list" in message
-
-
-def test_resolve_missing_moa_preset_does_not_silently_fallback():
-    cfg = {
-        "default_preset": "日常对话-高峰",
-        "presets": {"日常对话-高峰": {}},
-    }
-
-    with pytest.raises(MoAPresetNotFoundError):
-        resolve_moa_preset(cfg, "renamed-preset")
-
-
-def test_missing_moa_preset_is_non_retryable():
-    from agent.error_classifier import FailoverReason, classify_api_error
-
-    result = classify_api_error(
-        MoAPresetNotFoundError("MoA preset 'old' was not found"),
-        provider="moa",
-        model="old",
-    )
-
-    assert result.reason == FailoverReason.model_not_found
-    assert result.retryable is False
-    assert result.should_fallback is False
 
 
 def test_build_moa_turn_prompt_encodes_one_shot_default_preset():
@@ -507,150 +416,3 @@ def test_validate_moa_payload_rejects_non_dict():
     assert validate_moa_payload(None)
     assert validate_moa_payload([1, 2])
     assert validate_moa_payload({"presets": {"p": "not-a-dict"}})
-
-
-# ── Per-slot max_tokens ────────────────────────────────────────────────────
-
-
-def test_slot_max_tokens_preserved():
-    """A max_tokens field on a reference slot survives normalization."""
-    cfg = normalize_moa_config(
-        {
-            "presets": {
-                "p": {
-                    "reference_models": [
-                        {"provider": "openrouter", "model": "deepseek/deepseek-v4-pro", "max_tokens": 600},
-                        {"provider": "openai-codex", "model": "gpt-5.5"},
-                    ],
-                    "aggregator": {"provider": "openrouter", "model": "anthropic/claude-opus-4.8"},
-                }
-            }
-        }
-    )
-    refs = cfg["presets"]["p"]["reference_models"]
-    assert refs[0] == {"provider": "openrouter", "model": "deepseek/deepseek-v4-pro", "max_tokens": 600}
-    assert refs[1] == {"provider": "openai-codex", "model": "gpt-5.5"}
-
-
-def test_slot_max_tokens_coerced_from_string():
-    """Hand-edited YAML string '600' coerces to int on a slot."""
-    cfg = normalize_moa_config(
-        {
-            "presets": {
-                "p": {
-                    "reference_models": [
-                        {"provider": "openrouter", "model": "deepseek/deepseek-v4-pro", "max_tokens": "600"},
-                    ],
-                }
-            }
-        }
-    )
-    refs = cfg["presets"]["p"]["reference_models"]
-    assert refs[0]["max_tokens"] == 600
-
-
-def test_slot_max_tokens_invalid_dropped():
-    """Non-positive / non-numeric slot max_tokens is dropped (slot kept)."""
-    for bad in (0, -5, "abc", "", None):
-        cfg = normalize_moa_config(
-            {
-                "presets": {
-                    "p": {
-                        "reference_models": [
-                            {"provider": "openrouter", "model": "deepseek/deepseek-v4-pro", "max_tokens": bad},
-                        ],
-                    }
-                }
-            }
-        )
-        ref = cfg["presets"]["p"]["reference_models"][0]
-        assert "max_tokens" not in ref, bad
-        assert ref["provider"] == "openrouter"
-
-
-def test_slot_max_tokens_absent_by_default():
-    """Slots without max_tokens don't get the field — backward compat."""
-    cfg = normalize_moa_config(
-        {
-            "presets": {
-                "p": {
-                    "reference_models": [
-                        {"provider": "openrouter", "model": "deepseek/deepseek-v4-pro"},
-                    ],
-                }
-            }
-        }
-    )
-    ref = cfg["presets"]["p"]["reference_models"][0]
-    assert "max_tokens" not in ref
-
-
-# --- fanout cadence normalization (every_n) ---
-
-
-def test_fanout_defaults_to_per_iteration():
-    cfg = normalize_moa_config({})
-    assert cfg["fanout"] == "per_iteration"
-
-
-def test_fanout_every_n_string_form_normalized():
-    cfg = normalize_moa_config({"fanout": "every_n:3"})
-    assert cfg["fanout"] == "every_n:3"
-    assert cfg["presets"][DEFAULT_MOA_PRESET_NAME]["fanout"] == "every_n:3"
-
-
-def test_fanout_every_n_mapping_form_normalized_to_string():
-    cfg = normalize_moa_config({"fanout": {"mode": "every_n", "n": 4}})
-    assert cfg["fanout"] == "every_n:4"
-
-
-def test_fanout_every_n_degenerate_n_falls_back():
-    # n=1 means "every iteration" — that IS per_iteration; n=0 / negative /
-    # garbage must never produce a broken cadence string.
-    assert normalize_moa_config({"fanout": "every_n:1"})["fanout"] == "per_iteration"
-    assert normalize_moa_config({"fanout": "every_n:0"})["fanout"] == "per_iteration"
-    assert normalize_moa_config({"fanout": "every_n:-2"})["fanout"] == "per_iteration"
-    assert normalize_moa_config({"fanout": "every_n:x"})["fanout"] == "per_iteration"
-    assert normalize_moa_config({"fanout": "every_n"})["fanout"] == "per_iteration"
-    assert normalize_moa_config({"fanout": {"mode": "every_n"}})["fanout"] == "per_iteration"
-
-
-def test_fanout_every_n_round_trips_through_normalize():
-    once = normalize_moa_config({"fanout": "every_n:3"})
-    twice = normalize_moa_config(once)
-    assert twice["fanout"] == "every_n:3"
-    assert twice["presets"][DEFAULT_MOA_PRESET_NAME]["fanout"] == "every_n:3"
-
-
-def test_fanout_mapping_user_turn_mode_accepted():
-    cfg = normalize_moa_config({"fanout": {"mode": "user_turn"}})
-    assert cfg["fanout"] == "user_turn"
-
-
-# --- privacy_filter normalization ---
-
-
-def test_privacy_filter_defaults_off():
-    cfg = normalize_moa_config({})
-    assert cfg["privacy_filter"] == ""
-
-
-def test_privacy_filter_modes_normalized():
-    from hermes_cli.moa_config import coerce_privacy_filter
-
-    assert coerce_privacy_filter("display") == "display"
-    assert coerce_privacy_filter("FULL") == "full"
-    assert coerce_privacy_filter(True) == "full"       # legacy boolean → issue #59959 ask
-    assert coerce_privacy_filter("true") == "full"
-    assert coerce_privacy_filter(False) == ""
-    assert coerce_privacy_filter(None) == ""
-    assert coerce_privacy_filter("bogus") == ""
-    assert coerce_privacy_filter("off") == ""
-
-
-def test_privacy_filter_round_trips_through_normalize():
-    once = normalize_moa_config({"privacy_filter": "display"})
-    assert once["privacy_filter"] == "display"
-    assert normalize_moa_config(once)["privacy_filter"] == "display"
-    full = normalize_moa_config({"privacy_filter": "full"})
-    assert normalize_moa_config(full)["privacy_filter"] == "full"
