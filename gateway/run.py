@@ -11359,6 +11359,12 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 logger.info("STOP for session %s — agent interrupted, session lock released", _quick_key)
                 return EphemeralReply(t("gateway.stop.stopped"))
 
+            if _cmd_def_inner and _cmd_def_inner.name == "mute":
+                return await self._handle_mute_command(event)
+
+            if _cmd_def_inner and _cmd_def_inner.name == "unmute":
+                return await self._handle_unmute_command(event)
+
             # /reset and /new must bypass the running-agent guard so they
             # actually dispatch as commands instead of being queued as user
             # text (which would be fed back to the agent with the same
@@ -11899,6 +11905,12 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         
         if canonical == "stop":
             return await self._handle_stop_command(event)
+
+        if canonical == "mute":
+            return await self._handle_mute_command(event)
+
+        if canonical == "unmute":
+            return await self._handle_unmute_command(event)
         
         if canonical == "reasoning":
             return await self._handle_reasoning_command(event)

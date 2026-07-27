@@ -95,6 +95,10 @@ COMMAND_REGISTRY: list[CommandDef] = [
     CommandDef("snapshot", "Create or restore state snapshots of Hermes config/state", "Session",
                cli_only=True, aliases=("snap",), args_hint="[create|restore <id>|prune]"),
     CommandDef("stop", "Kill all running background processes", "Session"),
+    CommandDef("mute", "Mute this Slack thread", "Session",
+               gateway_only=True, args_hint="[thread_ts]"),
+    CommandDef("unmute", "Unmute this Slack thread", "Session",
+               gateway_only=True, args_hint="[thread_ts]"),
     CommandDef("approve", "Approve a pending dangerous command", "Session",
                gateway_only=True, args_hint="[session|always]"),
     CommandDef("deny", "Deny a pending dangerous command (optionally with a reason)", "Session",
@@ -398,6 +402,8 @@ ACTIVE_SESSION_BYPASS_COMMANDS: frozenset[str] = frozenset(
         "status",
         "steer",
         "stop",
+        "mute",
+        "unmute",
         "update",
         "version",
     }
@@ -1198,7 +1204,20 @@ _SLACK_PRIORITY_ALIASES = ("btw", "bg")
 #     /hermes update on Slack. Demoted to free the native slot /approvals now
 #     claims — without this entry /approvals tips the registry past the 50-cap
 #     and silently clamps /update off, breaking Telegram parity.
-_SLACK_VIA_HERMES_ONLY = frozenset({"topup", "moa", "debug", "egress", "init", "version", "diff", "update"})
+_SLACK_VIA_HERMES_ONLY = frozenset({
+    "topup",
+    "moa",
+    "debug",
+    "egress",
+    "init",
+    "version",
+    "diff",
+    "update",
+    # Slack reserves /mute, and keeping its inverse off the native list avoids
+    # consuming another slot. Both remain available as !mute/!unmute in
+    # threads and as /hermes mute|unmute outside them.
+    "unmute",
+})
 
 
 def _sanitize_slack_name(raw: str) -> str:

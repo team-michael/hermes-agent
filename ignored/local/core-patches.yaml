@@ -1,5 +1,15 @@
 version: 1
-paths: []
+paths:
+- gateway/authz_mixin.py
+- gateway/config.py
+- gateway/platforms/base.py
+- gateway/run.py
+- gateway/slash_commands.py
+- hermes_cli/commands.py
+- plugins/platforms/slack/adapter.py
+- tests/gateway/test_slack_message_subscriptions.py
 test_commands:
 - - '{repo}/venv/bin/python'
   - .agents/skills/update-hermes/tests/test_local_state.py
+- - '{repo}/venv/bin/python'
+  - tests/gateway/test_slack_message_subscriptions.py

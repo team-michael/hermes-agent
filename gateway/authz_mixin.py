@@ -469,7 +469,14 @@ class GatewayAuthorizationMixin:
         }
         if getattr(source, "is_bot", False):
             allow_bots_var = platform_allow_bots_map.get(source.platform)
-            if allow_bots_var and os.getenv(allow_bots_var, "none").lower().strip() in {"mentions", "all"}:
+            allowed_modes = {"mentions", "all"}
+            if source.platform == Platform.SLACK:
+                allowed_modes.update({"filtered", "subscriptions"})
+            if (
+                allow_bots_var
+                and os.getenv(allow_bots_var, "none").lower().strip()
+                in allowed_modes
+            ):
                 return True
 
         if not user_id:

@@ -1423,6 +1423,105 @@ class GatewaySlashCommandsMixin:
 
         return t("gateway.stop.no_active")
 
+    def _resolve_slack_thread_command_target(
+        self,
+        event: MessageEvent,
+        command_name: str,
+    ) -> tuple[SessionSource | None, str | None]:
+        """Resolve the Slack thread targeted by /mute or /unmute."""
+        source = event.source
+        if source.platform != Platform.SLACK:
+            return None, f"`/{command_name}` is only supported for Slack threads."
+
+        channel_id = source.chat_id
+        thread_ts = source.thread_id or ""
+        scope_id = source.scope_id
+        raw = getattr(event, "raw_message", None)
+        if isinstance(raw, dict):
+            channel_id = channel_id or str(
+                raw.get("channel_id") or raw.get("channel") or ""
+            )
+            thread_ts = thread_ts or str(
+                raw.get("thread_ts") or raw.get("message_ts") or ""
+            )
+            scope_id = scope_id or str(
+                raw.get("team_id") or raw.get("team") or ""
+            )
+            container = raw.get("container")
+            if isinstance(container, dict):
+                thread_ts = thread_ts or str(
+                    container.get("thread_ts")
+                    or container.get("message_ts")
+                    or ""
+                )
+
+        args = event.get_command_args().strip()
+        if not thread_ts and args:
+            thread_ts = args.split()[0].strip()
+        if not channel_id or not thread_ts:
+            return (
+                None,
+                f"Usage: `/{command_name} <thread_ts>` "
+                "(Slack did not provide a thread context).",
+            )
+        return dataclasses.replace(
+            source,
+            chat_id=channel_id,
+            chat_type="dm" if channel_id.startswith("D") else "group",
+            thread_id=thread_ts,
+            scope_id=scope_id or None,
+        ), None
+
+    async def _handle_mute_command(self, event: MessageEvent) -> str:
+        """Stop this profile from responding in a Slack thread."""
+        from gateway.run import _INTERRUPT_REASON_STOP
+
+        target_source, error = self._resolve_slack_thread_command_target(
+            event, "mute"
+        )
+        if error:
+            return error
+        assert target_source is not None
+        adapter = self.adapters.get(Platform.SLACK)
+        if not adapter or not hasattr(adapter, "mute_thread"):
+            return "Slack adapter is not available."
+
+        changed = adapter.mute_thread(
+            target_source.chat_id,
+            target_source.thread_id or "",
+            team_id=target_source.scope_id or "",
+        )
+        target_key = self._session_key_for_source(target_source)
+        if target_key in self._running_agents:
+            await self._interrupt_and_clear_session(
+                target_key,
+                target_source,
+                interrupt_reason=_INTERRUPT_REASON_STOP,
+                invalidation_reason="mute_command",
+            )
+        state = "Muted" if changed else "Already muted"
+        return f"{state}. Hermes will ignore this Slack thread until `/unmute`."
+
+    async def _handle_unmute_command(self, event: MessageEvent) -> str:
+        """Resume this profile's responses in a Slack thread."""
+        target_source, error = self._resolve_slack_thread_command_target(
+            event, "unmute"
+        )
+        if error:
+            return error
+        assert target_source is not None
+        adapter = self.adapters.get(Platform.SLACK)
+        if not adapter or not hasattr(adapter, "unmute_thread"):
+            return "Slack adapter is not available."
+
+        changed = adapter.unmute_thread(
+            target_source.chat_id,
+            target_source.thread_id or "",
+            team_id=target_source.scope_id or "",
+        )
+        state = "Unmuted" if changed else "Was not muted"
+        return f"{state}. Hermes can respond in this Slack thread again."
+
     async def _handle_platform_command(self, event: MessageEvent) -> str:
         """Handle ``/platform list|pause|resume [name]`` — surface and
         manually control failed/paused gateway adapters.

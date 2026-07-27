@@ -35,6 +35,9 @@ _AUDIO_EXTS = frozenset({'.ogg', '.opus', '.mp3', '.wav', '.m4a', '.flac'})
 _TELEGRAM_AUDIO_ATTACHMENT_EXTS = frozenset({'.mp3', '.m4a'})
 _TELEGRAM_VOICE_EXTS = frozenset({'.ogg', '.opus'})
 _POST_DELIVERY_CALLBACK_TIMEOUT_SECONDS = 30.0
+_PROCESSING_STATUS_DIRECTIVE_RE = re.compile(
+    r"\[\[\s*hermes:processing_status\s*=\s*[A-Za-z0-9_-]+\s*\]\]"
+)
 
 
 def _platform_name(platform) -> str:
@@ -5443,6 +5446,12 @@ class BasePlatformAdapter(ABC):
                 # by skills that produce large/lossless images (e.g. info-graph)
                 # where Telegram's sendPhoto recompression destroys legibility.
                 force_document_attachments = "[[as_document]]" in response
+
+                # Adapters may use this machine-readable status to select a
+                # final lifecycle reaction. Keep it on the event while hiding
+                # the directive from the user-facing response.
+                setattr(event, "_hermes_response_text", response)
+                response = _PROCESSING_STATUS_DIRECTIVE_RE.sub("", response).strip()
 
                 # Pre-extract snapshot for the #29346 recovery/invariant below.
                 _response_pre_extract = response
