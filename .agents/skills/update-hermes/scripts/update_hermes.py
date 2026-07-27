@@ -144,12 +144,31 @@ def restore_local_commits(
         result = git(
             repo,
             "cherry-pick",
-            "--empty=drop",
             commit,
             check=False,
         )
         if result.returncode != 0:
             details = (result.stdout + "\n" + result.stderr).strip()
+            has_cherry_pick = (
+                git(
+                    repo,
+                    "rev-parse",
+                    "--verify",
+                    "CHERRY_PICK_HEAD",
+                    check=False,
+                ).returncode
+                == 0
+            )
+            has_unmerged = bool(
+                git_output(repo, "diff", "--name-only", "--diff-filter=U")
+            )
+            has_staged_changes = (
+                git(repo, "diff", "--cached", "--quiet", check=False).returncode != 0
+            )
+            if has_cherry_pick and not has_unmerged and not has_staged_changes:
+                git(repo, "cherry-pick", "--skip")
+                print(f"dropped empty local commit: {commit[:12]}")
+                continue
             raise LocalStateError(
                 "local patch restore stopped on a conflict.\n"
                 "Keep main checked out, prefer origin/main where upstream has the "
@@ -324,6 +343,13 @@ def main() -> int:
             return 0
     except (LocalStateError, RuntimeError) as exc:
         print(f"update-hermes refused: {exc}", file=sys.stderr)
+        return 2
+    except subprocess.CalledProcessError as exc:
+        print(
+            f"update-hermes command failed ({exc.returncode}): "
+            f"{' '.join(str(part) for part in exc.cmd)}",
+            file=sys.stderr,
+        )
         return 2
 
 

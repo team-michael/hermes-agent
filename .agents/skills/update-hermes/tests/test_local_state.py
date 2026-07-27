@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import subprocess
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
-import pytest
 import yaml
 
 
@@ -18,6 +19,16 @@ SPEC.loader.exec_module(local_state)
 
 TMP_ROOT = Path.home() / ".hermes" / "tmp" / "update-hermes-tests"
 TMP_ROOT.mkdir(parents=True, exist_ok=True)
+
+
+@contextmanager
+def raises(error_type: type[Exception], *, match: str):
+    try:
+        yield
+    except error_type as exc:
+        assert re.search(match, str(exc)), str(exc)
+    else:
+        raise AssertionError(f"{error_type.__name__} was not raised")
 
 
 def run_git(repo: Path, *args: str) -> str:
@@ -64,7 +75,7 @@ def test_transient_files_are_skipped_but_secrets_stop_staging() -> None:
         assert local_state.stage_existing_state_files(repo) == []
 
         secret.write_text("SECRET=value\n", encoding="utf-8")
-        with pytest.raises(local_state.LocalStateError, match="unsafe runtime files"):
+        with raises(local_state.LocalStateError, match="unsafe runtime files"):
             local_state.stage_existing_state_files(repo)
 
 
@@ -110,7 +121,7 @@ def test_staging_refuses_implicit_state_deletion() -> None:
         run_git(repo, "commit", "-m", "state")
         state_file.unlink()
 
-        with pytest.raises(local_state.LocalStateError, match="deletions"):
+        with raises(local_state.LocalStateError, match="deletions"):
             local_state.stage_existing_state_files(repo)
 
         assert run_git(repo, "diff", "--cached", "--name-only") == ""
@@ -126,7 +137,7 @@ def test_core_commit_requires_manifest_declaration() -> None:
         run_git(repo, "add", "agent/example.py")
         run_git(repo, "commit", "-m", "local core patch")
 
-        with pytest.raises(local_state.LocalStateError, match="undeclared"):
+        with raises(local_state.LocalStateError, match="undeclared"):
             local_state.validate_local_commits(repo, "origin/main")
 
         manifest = repo / "ignored/local/core-patches.yaml"
@@ -151,3 +162,23 @@ def test_daily_script_has_no_history_rewrite_commands() -> None:
     assert "git reset" not in script
     assert "force-with-lease" not in script
     assert "sync-local-state.py" in script
+
+
+def test_update_script_supports_git_243_cherry_pick() -> None:
+    script = (
+        REPO_ROOT
+        / ".agents/skills/update-hermes/scripts/update_hermes.py"
+    ).read_text(encoding="utf-8")
+    assert "--empty=drop" not in script
+    assert '"cherry-pick", "--skip"' in script
+
+
+if __name__ == "__main__":
+    tests = [
+        value
+        for name, value in sorted(globals().items())
+        if name.startswith("test_") and callable(value)
+    ]
+    for test in tests:
+        test()
+    print(f"{len(tests)} local-state tests passed")

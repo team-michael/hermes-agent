@@ -2,7 +2,4 @@ version: 1
 paths: []
 test_commands:
 - - '{repo}/venv/bin/python'
-  - -m
-  - pytest
-  - -q
-  - .agents/skills/update-hermes/tests
+  - .agents/skills/update-hermes/tests/test_local_state.py
