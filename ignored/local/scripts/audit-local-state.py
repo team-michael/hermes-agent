@@ -10,6 +10,8 @@ from typing import Any
 
 import yaml
 
+from local_state import audit_unsafe_local_files
+
 
 LOCAL_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = LOCAL_ROOT.parents[1]
@@ -18,34 +20,6 @@ SOUL_INCLUDE_RE = re.compile(
     r"<!--\s*hermes-include:\s*(?P<path>[^>]+?)\s*-->",
     flags=re.IGNORECASE,
 )
-
-DENY_FILE_NAMES = {
-    ".env",
-    "auth.json",
-    "auth.lock",
-    "gateway.pid",
-    "gateway.lock",
-    "gateway_state.json",
-    "processes.json",
-    "channel_directory.json",
-}
-DENY_SUFFIXES = (
-    ".db",
-    ".db-shm",
-    ".db-wal",
-    ".jsonl",
-    ".pid",
-    ".lock",
-)
-DENY_DIR_NAMES = {
-    "logs",
-    "sessions",
-    "cache",
-    "checkpoints",
-    "sandboxes",
-    "__pycache__",
-}
-
 
 def profile_home(name: str) -> Path:
     if name == "default":
@@ -70,16 +44,11 @@ def iter_skill_dirs(root: Path):
 
 
 def audit_unsafe_files() -> list[str]:
-    issues: list[str] = []
-    for path in LOCAL_ROOT.rglob("*"):
-        rel = path.relative_to(REPO_ROOT)
-        if any(part in DENY_DIR_NAMES for part in path.parts):
-            issues.append(f"unsafe runtime dir/file under local: {rel}")
-            continue
-        if path.is_file():
-            if path.name in DENY_FILE_NAMES or path.name.endswith(DENY_SUFFIXES):
-                issues.append(f"unsafe runtime file under local: {rel}")
-    return issues
+    return [
+        "unsafe runtime file under local: "
+        + str(Path(path).relative_to(REPO_ROOT))
+        for path in audit_unsafe_local_files(LOCAL_ROOT)
+    ]
 
 
 def audit_profile_config(profile: str) -> list[str]:
