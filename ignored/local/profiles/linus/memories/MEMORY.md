@@ -1,0 +1,3 @@
+Notifly retention features may be enabled only for some customers/projects; avoid proposing global TTL that deletes data for all customers unless explicitly requested. Prefer per-project/customer-scoped deletion or mark non-scoped stores as requiring separate redesign/rewrite.
+§
+On this Hermes host, Linus profile previously saturated root EBS by running local pnpm deploy/install plus broad zip packaging on a large Notifly repo. Avoid large pnpm/npm installs, pnpm deploy, broad zip/tar/rsync/du/find/rg scans on root EBS; prefer CI or a separate build volume, explicit archive targets, preflight size/file-count checks, and I/O limits for Hermes-run commands.

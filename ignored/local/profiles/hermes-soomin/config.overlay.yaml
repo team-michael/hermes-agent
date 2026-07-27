@@ -1,0 +1,27 @@
+model:
+  provider: openai-codex
+  default: gpt-5.6-sol
+agent:
+  verify_on_stop: false
+  reasoning_effort: medium
+terminal:
+  cwd: /home/ubuntu/.hermes/workspace
+display:
+  tool_progress: all
+approvals:
+  mode: manual
+  timeout: 60
+  cron_mode: deny
+command_allowlist:
+- script execution via -e/-c flag
+- execute_code
+- overwrite project env/config via redirection
+security:
+  redact_secrets: true
+_config_version: 33
+plugins:
+  enabled: []
+mcp_servers:
+  search_docs:
+    url: https://docs.notifly.tech/mcp
+    enabled: true

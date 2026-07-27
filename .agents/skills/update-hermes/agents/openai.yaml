@@ -1,0 +1,4 @@
+interface:
+  display_name: "Update Hermes"
+  short_description: "Update Hermes with guarded local state"
+  default_prompt: "Use $update-hermes to run the official Hermes update, restore reviewed local main commits, synchronize every profile, and push team-michael/main safely."

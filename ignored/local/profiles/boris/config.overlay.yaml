@@ -1,0 +1,80 @@
+model:
+  default: us.anthropic.claude-fable-5
+  provider: bedrock
+  base_url: https://bedrock-runtime.us-east-1.amazonaws.com
+  context_length: 1000000
+compression:
+  enabled: true
+  threshold: 0.50
+  target_ratio: 0.35
+  protect_last_n: 20
+  hygiene_hard_message_limit: 400
+auxiliary:
+  compression:
+    provider: bedrock
+    model: us.anthropic.claude-fable-5
+    context_length: 1000000
+    timeout: 240
+agent:
+  gateway_notify_interval: 0
+  reasoning_effort: xhigh
+  service_tier: fast
+terminal:
+  env_passthrough:
+  - GITHUB_TOKEN
+  - SLACK_BOT_TOKEN
+display:
+  busy_input_mode: queue
+  interim_assistant_messages: false
+  platforms:
+    slack:
+      streaming: false
+      tool_progress: 'off'
+  tool_progress: 'off'
+approvals:
+  mode: 'off'
+session_reset:
+  mode: none
+platform_toolsets:
+  cli:
+  - browser
+  - clarify
+  - code_execution
+  - cronjob
+  - delegation
+  - file
+  - image_gen
+  - memory
+  - messaging
+  - session_search
+  - skills
+  - terminal
+  - todo
+  - tts
+  - vision
+  - web
+  slack:
+  - browser
+  - clarify
+  - code_execution
+  - cronjob
+  - delegation
+  - file
+  - image_gen
+  - memory
+  - messaging
+  - session_search
+  - skills
+  - terminal
+  - todo
+  - tts
+  - vision
+  - web
+update:
+  local_patch_branch: main
+skills:
+  external_dirs:
+  - /home/ubuntu/.hermes/hermes-agent/ignored/local/profiles/boris/skills
+  - /home/ubuntu/.hermes/hermes-agent/ignored/local/skills
+bedrock:
+  region: us-east-1

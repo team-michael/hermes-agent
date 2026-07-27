@@ -1,0 +1,90 @@
+model:
+  provider: openai-codex
+  base_url: ''
+  default: gpt-5.6-sol
+providers:
+  openai-codex:
+    request_timeout_seconds: 900
+    stale_timeout_seconds: 900
+credential_pool_strategies:
+  openai-codex: fill_first
+compression:
+  enabled: true
+  threshold: 0.73
+  codex_gpt55_autoraise_notice: false
+  target_ratio: 0.3
+  protect_last_n: 20
+  hygiene_hard_message_limit: 400
+auxiliary:
+  compression:
+    provider: auto
+    model: gpt-5.6-luna
+    base_url: ''
+    api_key: ''
+    timeout: 240
+    extra_body:
+      service_tier: priority
+      reasoning:
+        effort: low
+        enabled: false
+agent:
+  gateway_notify_interval: 0
+  reasoning_effort: xhigh
+  service_tier: fast
+terminal:
+  env_passthrough:
+  - GITHUB_TOKEN
+  - SLACK_BOT_TOKEN
+display:
+  busy_input_mode: queue
+  interim_assistant_messages: false
+  platforms:
+    slack:
+      streaming: false
+      tool_progress: 'off'
+  tool_progress: 'off'
+approvals:
+  mode: 'off'
+session_reset:
+  mode: none
+platform_toolsets:
+  cli:
+  - browser
+  - clarify
+  - code_execution
+  - cronjob
+  - delegation
+  - file
+  - image_gen
+  - memory
+  - messaging
+  - session_search
+  - skills
+  - terminal
+  - todo
+  - tts
+  - vision
+  - web
+  slack:
+  - browser
+  - clarify
+  - code_execution
+  - cronjob
+  - delegation
+  - file
+  - image_gen
+  - memory
+  - messaging
+  - session_search
+  - skills
+  - terminal
+  - todo
+  - tts
+  - vision
+  - web
+update:
+  local_patch_branch: main
+skills:
+  external_dirs:
+  - /home/ubuntu/.hermes/hermes-agent/ignored/local/profiles/andrej/skills
+  - /home/ubuntu/.hermes/hermes-agent/ignored/local/skills

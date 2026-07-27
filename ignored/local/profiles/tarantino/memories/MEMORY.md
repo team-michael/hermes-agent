@@ -1,0 +1,11 @@
+Primary Slack workspace for tarantino profile: notifly-greybox.slack.com (team Notifly, team_id T03N2U9PATE). Bot handle: @Hermes / tarantino (user_id U0AUVN6K7KL). Primary channels: #clix-app-growth-project (strategy/discussions), #clix-app-growth-report (pipeline operations + weekly pre-email previews).
+§
+**gh/.env flows: source .env by ABSOLUTE path** — terminal `$HOME`=`/home/ubuntu/.hermes/profiles/tarantino/home`, so `~/.hermes/.../.env` resolves wrong & gh fails "gh auth login". Use `set -a; . /home/ubuntu/.hermes/profiles/tarantino/.env; set +a`. .env has GITHUB_TOKEN (read_file blocked by cred guard; hermes-github-api not on PATH → use gh).
+§
+Google OAuth recover (tarantino): token expires → `setup.py --check`=`REFRESH_FAILED invalid_grant`. Fix: `setup.py --auth-url` BARE → send URL to jace → `--auth-code "<URL>"`. **setup.py SCOPES drives re-auth; it once had ONLY drive.readonly → every re-auth SILENTLY downgraded Drive scope → ALL HBB Drive uploads 403 "insufficient authentication scopes" (2026-06-17). Added drive.file; HBB upload NEEDS it.** Upload/Sheet 403 = re-auth, don't fabricate. setup.py venvs use uv (no pip): `uv pip install --python <venv> google-auth-oauthlib`.
+§
+ops→tiktok-daily-account-report skill (yt-dlp in venv clix-growth=captcha-free DL). Clix app="virtual pet grows to look like you", LION mascot; Track A jellycat cuteness FLAT SOLID pastel bg char-only (jace likes), Track B reveal "fed diary→became me".
+§
+Clix prompt-builder: github.com/clix-so/clix-prompt-builder → https://clix-prompt-builder.pages.dev (CF Pages auto-deploy on main). Vite+React SPA + Pages Functions + Sheets DB. Composers: src/lib/{image,video,naturalness,axes}.ts. Craft → image-prompt-engineering skill.
+§
+Recipes→fal-video-generation skill. **HBB videos→Veo 3.1 (`fal-ai/veo3.1/image-to-video`) NOT Seedance (jace 2026-07-01): Seedance mangles "halal"/"mosque"; Veo+PLAIN spelling=right (no phonetic). Veo caps 8s. Whisper can't judge pronunciation—ear only. →hbb-ugc-confessional-video skill.** ZaiSpace weekly report→zaispace-weekly-client-report skill: 3-section (🎯Takeaway+①prose+②Net:X/3+③3 concepts), MEDIAN≥1000+save≥1%.
