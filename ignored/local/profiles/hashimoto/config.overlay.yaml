@@ -93,3 +93,7 @@ slack:
     - check
 bedrock:
   region: us-east-1
+platforms:
+  slack:
+    extra:
+      rich_blocks: true

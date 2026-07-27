@@ -89,7 +89,7 @@ skills:
   - /home/ubuntu/.hermes/hermes-agent/ignored/local/profiles/sdr/skills
   - /home/ubuntu/.hermes/hermes-agent/ignored/local/skills
 slack:
-  allow_bots: all
+  allow_bots: filtered
   message_subscriptions:
   - name: notifly-help-inbound-research
     channels:
@@ -112,3 +112,7 @@ slack:
     skills:
     - notifly-sdr-lead-research
     - notifly-sales-enablement
+platforms:
+  slack:
+    extra:
+      rich_blocks: true

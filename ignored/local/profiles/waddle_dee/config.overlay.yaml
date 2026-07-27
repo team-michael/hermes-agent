@@ -86,3 +86,7 @@ skills:
   external_dirs:
   - /home/ubuntu/.hermes/hermes-agent/ignored/local/profiles/waddle_dee/skills
   - /home/ubuntu/.hermes/hermes-agent/ignored/local/skills
+platforms:
+  slack:
+    extra:
+      rich_blocks: true

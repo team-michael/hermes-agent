@@ -505,3 +505,7 @@ mcp_servers:
   search_docs:
     url: https://docs.notifly.tech/mcp
     enabled: true
+platforms:
+  slack:
+    extra:
+      rich_blocks: true

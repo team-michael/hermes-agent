@@ -78,3 +78,7 @@ skills:
   - /home/ubuntu/.hermes/hermes-agent/ignored/local/skills
 bedrock:
   region: us-east-1
+platforms:
+  slack:
+    extra:
+      rich_blocks: true

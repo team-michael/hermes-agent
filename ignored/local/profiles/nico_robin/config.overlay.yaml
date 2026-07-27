@@ -566,3 +566,7 @@ mcp_servers:
     timeout: 120
     connect_timeout: 60
     enabled: true
+platforms:
+  slack:
+    extra:
+      rich_blocks: true

@@ -88,3 +88,7 @@ skills:
   external_dirs:
   - /home/ubuntu/.hermes/hermes-agent/ignored/local/profiles/andrej/skills
   - /home/ubuntu/.hermes/hermes-agent/ignored/local/skills
+platforms:
+  slack:
+    extra:
+      rich_blocks: true
