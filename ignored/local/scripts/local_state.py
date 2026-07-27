@@ -48,6 +48,14 @@ DENY_DIR_NAMES = {
     "sandboxes",
     "sessions",
 }
+TRANSIENT_FILE_NAMES = {"gateway.lock", "gateway.pid"}
+TRANSIENT_SUFFIXES = (".lock", ".pid", ".pyc")
+TRANSIENT_DIR_NAMES = {"__pycache__"}
+SENSITIVE_FILE_NAMES = DENY_FILE_NAMES - TRANSIENT_FILE_NAMES
+SENSITIVE_SUFFIXES = tuple(
+    suffix for suffix in DENY_SUFFIXES if suffix not in TRANSIENT_SUFFIXES
+)
+SENSITIVE_DIR_NAMES = DENY_DIR_NAMES - TRANSIENT_DIR_NAMES
 
 
 class LocalStateError(RuntimeError):
@@ -168,12 +176,24 @@ def is_unsafe_local_path(path: Path, local_root: Path) -> bool:
     return path.name in DENY_FILE_NAMES or path.name.endswith(DENY_SUFFIXES)
 
 
+def is_sensitive_local_path(path: Path, local_root: Path) -> bool:
+    """Return whether a local-state path must stop automation, not just be skipped."""
+    try:
+        relative = path.relative_to(local_root)
+    except ValueError:
+        return True
+    if any(part in SENSITIVE_DIR_NAMES for part in relative.parts):
+        return True
+    return path.name in SENSITIVE_FILE_NAMES or path.name.endswith(SENSITIVE_SUFFIXES)
+
+
 def audit_unsafe_local_files(local_root: Path) -> list[str]:
+    """Find sensitive/runtime data; harmless locks and bytecode are skipped."""
     issues: list[str] = []
     if not local_root.exists():
         return issues
     for path in local_root.rglob("*"):
-        if is_unsafe_local_path(path, local_root):
+        if is_sensitive_local_path(path, local_root):
             issues.append(str(path))
     return issues
 

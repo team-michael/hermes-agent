@@ -47,6 +47,27 @@ def test_state_path_allowlist_keeps_dot_agents_prefix() -> None:
     assert not local_state.is_state_path("agent/conversation_loop.py")
 
 
+def test_transient_files_are_skipped_but_secrets_stop_staging() -> None:
+    with tempfile.TemporaryDirectory(dir=TMP_ROOT) as raw:
+        repo = Path(raw)
+        init_repo(repo)
+        local_root = repo / "ignored/local"
+        cache = local_root / "scripts/__pycache__/helper.pyc"
+        lock = local_root / "profiles/demo/memories/MEMORY.md.lock"
+        secret = local_root / "profiles/demo/.env"
+        cache.parent.mkdir(parents=True)
+        lock.parent.mkdir(parents=True)
+        cache.write_bytes(b"cache")
+        lock.write_text("", encoding="utf-8")
+
+        assert local_state.audit_unsafe_local_files(local_root) == []
+        assert local_state.stage_existing_state_files(repo) == []
+
+        secret.write_text("SECRET=value\n", encoding="utf-8")
+        with pytest.raises(local_state.LocalStateError, match="unsafe runtime files"):
+            local_state.stage_existing_state_files(repo)
+
+
 def test_export_updates_only_curated_overlay_keys() -> None:
     with tempfile.TemporaryDirectory(dir=TMP_ROOT) as raw:
         root = Path(raw)
