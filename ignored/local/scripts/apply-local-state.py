@@ -23,10 +23,12 @@ from typing import Any
 
 import yaml
 
+from local_state import HERMES_ROOT
+
 
 LOCAL_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = LOCAL_ROOT.parents[1]
-DEFAULT_HERMES_ROOT = Path(os.environ.get("HERMES_ROOT", Path.home() / ".hermes"))
+DEFAULT_HERMES_ROOT = HERMES_ROOT
 SOUL_INCLUDE_RE = re.compile(
     r"<!--\s*hermes-include:\s*(?P<path>[^>]+?)\s*-->",
     flags=re.IGNORECASE,

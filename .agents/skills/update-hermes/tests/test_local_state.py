@@ -58,6 +58,17 @@ def test_state_path_allowlist_keeps_dot_agents_prefix() -> None:
     assert not local_state.is_state_path("agent/conversation_loop.py")
 
 
+def test_profile_scoped_home_resolves_machine_hermes_root() -> None:
+    root = Path("/home/example/.hermes")
+    env = {
+        "HOME": str(root / "profiles/andrej/home"),
+        "HERMES_HOME": str(root / "profiles/andrej"),
+        "HERMES_REAL_HOME": "/home/example",
+    }
+
+    assert local_state.resolve_hermes_root(env) == root
+
+
 def test_transient_files_are_skipped_but_secrets_stop_staging() -> None:
     with tempfile.TemporaryDirectory(dir=TMP_ROOT) as raw:
         repo = Path(raw)
@@ -162,6 +173,7 @@ def test_daily_script_has_no_history_rewrite_commands() -> None:
     assert "git reset" not in script
     assert "force-with-lease" not in script
     assert "sync-local-state.py" in script
+    assert 'export HERMES_ROOT="$hermes_root"' in script
 
 
 def test_update_script_supports_git_243_cherry_pick() -> None:

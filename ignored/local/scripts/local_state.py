@@ -11,12 +11,34 @@ import subprocess
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator, Sequence
+from typing import Any, Iterator, Mapping, Sequence
 
 import yaml
 
 
-HERMES_ROOT = Path(os.environ.get("HERMES_ROOT", Path.home() / ".hermes"))
+def resolve_hermes_root(env: Mapping[str, str] | None = None) -> Path:
+    """Resolve the machine-level Hermes root from profile-scoped environments."""
+    values = os.environ if env is None else env
+
+    configured = values.get("HERMES_ROOT", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+
+    hermes_home = values.get("HERMES_HOME", "").strip()
+    if hermes_home:
+        scoped_home = Path(hermes_home).expanduser()
+        if scoped_home.parent.name == "profiles":
+            return scoped_home.parent.parent
+        return scoped_home
+
+    real_home = values.get("HERMES_REAL_HOME", "").strip()
+    if real_home:
+        return Path(real_home).expanduser() / ".hermes"
+
+    return Path.home() / ".hermes"
+
+
+HERMES_ROOT = resolve_hermes_root()
 LOCK_PATH = HERMES_ROOT / "locks" / "hermes-main-maintenance.lock"
 STATE_PREFIXES = ("ignored/local/", ".agents/skills/")
 DENY_FILE_NAMES = {

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo="/home/ubuntu/.hermes/hermes-agent"
+hermes_root="/home/ubuntu/.hermes"
+repo="$hermes_root/hermes-agent"
 sync_script="$repo/ignored/local/scripts/sync-local-state.py"
-cache_dir="/home/ubuntu/.hermes/cache"
-env_file="/home/ubuntu/.hermes/profiles/andrej/.env"
+cache_dir="$hermes_root/cache"
+env_file="$hermes_root/profiles/andrej/.env"
 
 fail() {
   printf 'Hermes local-state backup failed: %s\n' "$*" >&2
@@ -56,6 +57,7 @@ chmod 700 "$askpass"
 
 export GIT_ASKPASS="$askpass"
 export GIT_TERMINAL_PROMPT=0
+export HERMES_ROOT="$hermes_root"
 
 exec python3 "$sync_script" \
   --repo "$repo" \

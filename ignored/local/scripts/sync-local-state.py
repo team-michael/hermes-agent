@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from local_state import (
+    HERMES_ROOT,
     LocalStateError,
     commit_staged_state,
     ensure_under_hermes,
@@ -22,7 +23,7 @@ from local_state import (
 )
 
 
-DEFAULT_REPO = Path.home() / ".hermes" / "hermes-agent"
+DEFAULT_REPO = HERMES_ROOT / "hermes-agent"
 
 
 def parse_args() -> argparse.Namespace:
