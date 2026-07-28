@@ -588,6 +588,15 @@ def build_dlq_disposition(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         'scope': (
             'infra_common; project/campaign/user_journey unconfirmed'
         ),
+        'frequency_summary_ko': (
+            '제한된 최근 표본: 이벤트 '
+            f"{_safe_int(recent.get('event_count_in_sample')) or 0}건, "
+            '최신과 같은 스냅샷 '
+            f"{_safe_int(recent.get('same_as_latest_count')) or 0}건, "
+            '서로 다른 스냅샷 '
+            f"{_safe_int(recent.get('distinct_snapshot_count')) or 0}종. "
+            '연속 지속 여부 미확인.'
+        ),
         'recurrence_sample': {
             'sample_is_complete_history': False,
             'continuity_confirmed': False,
@@ -1256,14 +1265,26 @@ def _compact_dlq_disposition(disposition: Any) -> Any:
             'live_sqs_observed_empty',
             'inspection_issues',
             'scope',
+            'frequency_summary_ko',
             'recurrence_sample',
-            'monitor_lambda_health',
             'customer_impact',
             'immediate_action_label_ko',
             'immediate_action_reason_ko',
             'action_owner',
             'mutation_allowed',
             'next_action',
+        )
+    }
+    recurrence_sample = response_facts.get('recurrence_sample') or {}
+    compact_response_facts['recurrence_sample'] = {
+        key: recurrence_sample.get(key)
+        for key in (
+            'sample_is_complete_history',
+            'continuity_confirmed',
+            'persistence_duration_confirmed',
+            'event_count',
+            'same_as_latest_snapshot_count',
+            'distinct_snapshot_count',
         )
     }
     compact_response_facts['queues'] = compact_queues

@@ -479,10 +479,15 @@ class QueueRecoveryDecisionTest(unittest.TestCase):
         ).encode("utf-8")
 
         self.assertLessEqual(len(encoded), COMPACT_OUTPUT_MAX_BYTES)
+        facts = result["dlq_disposition"]["response_facts"]
+        self.assertNotIn("monitor_lambda_health", facts)
+        self.assertNotIn("sample_start_kst", facts["recurrence_sample"])
+        self.assertNotIn("sample_end_kst", facts["recurrence_sample"])
+        self.assertIn("연속 지속 여부 미확인", facts["frequency_summary_ko"])
         self.assertEqual(
             [
                 queue["recovery_disposition"]
-                for queue in result["dlq_disposition"]["response_facts"]["queues"]
+                for queue in facts["queues"]
             ],
             ["hold_for_evidence", "hold_for_evidence"],
         )

@@ -120,6 +120,9 @@ Required classification:
   7-day history, all-consecutive events, or a persistence duration; report
   `event_count`, `same_as_latest_snapshot_count`, and
   `distinct_snapshot_count` separately and state continuity is unconfirmed.
+- Use `frequency_summary_ko` verbatim. Monitoring-Lambda runtime metrics are
+  intentionally omitted from compact response facts; never attribute them to
+  a discovered queue consumer.
 - `DLQ_BACKLOG_INSPECTION_FAILED`, malformed markers, and oversized markers
   remain `needs_fix / hold_for_evidence`; report the parser/inspection failure
   without exposing raw payloads.

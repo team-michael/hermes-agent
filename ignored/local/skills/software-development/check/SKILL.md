@@ -1,7 +1,7 @@
 ---
 name: check
 description: Investigate Notifly Slack/Amazon Q/CloudWatch alerts from live data sources using the bundled deterministic helper, then return one concise Korean triage result.
-version: 1.4.3
+version: 1.4.4
 author: Hermes Agent
 license: MIT
 metadata:
@@ -163,10 +163,14 @@ When `dlq_backlog.event_type` is `DLQ_BACKLOG_DETECTED`, use the helper's
   7-day history, call the sample-window span a persistence duration, or say
   every sample is consecutive. Use its provided KST timestamps verbatim and
   state that continuity is unconfirmed.
+- Render `frequency_summary_ko` verbatim; do not derive a duration from hidden
+  or neighboring timestamps.
 - Do not assign an owner unless `response_facts` provides one.
 - Use `immediate_action_label_ko` and `immediate_action_reason_ko` verbatim.
   Queue depth alone is not an urgency threshold. If `action_owner` is
   `unconfirmed`, omit the owner instead of inventing a team or role.
+- Consumer runtime metrics are not in DLQ `response_facts`. Do not transfer the
+  monitoring Lambda's Errors/Throttles/Duration to the queue consumer.
 - Output Korean only except for exact technical identifiers.
 - Never recommend or perform redrive, purge, delete, or stream replay while the
   disposition is `hold_for_evidence`.
@@ -228,6 +232,8 @@ Do not modify skills or write one-off production scripts during the foreground a
 
 ## Known improvements
 
+- `v1.4.4`: DLQ compact facts provide one safe frequency sentence and omit
+  monitoring-Lambda metrics that the model previously attributed to consumers.
 - `v1.4.3`: DLQ response facts precompute the immediate-action label and block
   low-depth severity downgrades or invented owners observed in live responses.
 - `v1.4.2`: DLQ disposition reconciles the trigger marker with current SQS
