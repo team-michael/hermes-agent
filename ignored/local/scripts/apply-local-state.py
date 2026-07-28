@@ -5,6 +5,7 @@ This script intentionally manages only safe, explicit assets:
 - config overlays
 - non-lock profile memory Markdown files
 - skill directory symlinks
+- profile-scoped model-provider plugin symlinks
 - optional SOUL.md symlinks
 
 It never copies .env, auth.json, sessions, logs, state DBs, or caches.
@@ -192,6 +193,55 @@ def apply_skill_links(profile: str, dry_run: bool, replace_existing: bool) -> No
             ensure_symlink(skills_home / rel, skill_dir, dry_run, replace_existing)
 
 
+def configured_provider_names(config: dict[str, Any]) -> set[str]:
+    """Return explicit provider ids referenced by a profile config."""
+    providers: set[str] = set()
+
+    def add_from(value: Any) -> None:
+        if not isinstance(value, dict):
+            return
+        provider = value.get("provider")
+        if isinstance(provider, str) and provider.strip():
+            providers.add(provider.strip().lower())
+
+    add_from(config.get("model"))
+    fallback = config.get("fallback_model")
+    if isinstance(fallback, dict):
+        add_from(fallback)
+    elif isinstance(fallback, list):
+        for entry in fallback:
+            add_from(entry)
+
+    auxiliary = config.get("auxiliary")
+    if isinstance(auxiliary, dict):
+        for entry in auxiliary.values():
+            add_from(entry)
+    return providers
+
+
+def apply_provider_plugin_links(
+    profile: str,
+    dry_run: bool,
+    replace_existing: bool,
+) -> None:
+    source_root = LOCAL_ROOT / "plugins" / "model-providers"
+    if not source_root.exists():
+        return
+
+    home = profile_home(profile)
+    configured = configured_provider_names(load_yaml(home / "config.yaml"))
+    destination_root = home / "plugins" / "model-providers"
+    for source in sorted(path for path in source_root.iterdir() if path.is_dir()):
+        if source.name.lower() not in configured:
+            continue
+        ensure_symlink(
+            destination_root / source.name,
+            source,
+            dry_run,
+            replace_existing,
+        )
+
+
 def apply_soul(profile: str, dry_run: bool, link_soul: bool) -> None:
     if not link_soul:
         return
@@ -293,6 +343,11 @@ def main() -> int:
         apply_overlay(profile, args.dry_run)
         apply_memories(profile, args.dry_run)
         apply_skill_links(profile, args.dry_run, args.replace_existing)
+        apply_provider_plugin_links(
+            profile,
+            args.dry_run,
+            args.replace_existing,
+        )
         apply_soul(profile, args.dry_run, args.link_soul)
         apply_profile_scripts(profile, args.dry_run)
     return 0

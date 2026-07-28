@@ -183,11 +183,15 @@ def apply_and_audit(repo: Path) -> None:
 
     apply_script = repo / "ignored" / "local" / "scripts" / "apply-local-state.py"
     audit_script = repo / "ignored" / "local" / "scripts" / "audit-local-state.py"
+    provider_audit_script = (
+        repo / "ignored" / "local" / "scripts" / "audit-profile-providers.py"
+    )
     run_checked(
         ["python3", str(apply_script), "--replace-existing", "--link-soul"],
         cwd=repo,
     )
     run_checked(["python3", str(audit_script)], cwd=repo)
+    run_checked(["python3", str(provider_audit_script)], cwd=repo)
 
 
 def run_manifest_tests(repo: Path) -> None:

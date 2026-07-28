@@ -4021,6 +4021,31 @@ class SlackAdapter(BasePlatformAdapter):
             subscription.get("prompt") or subscription.get("channel_prompt") or ""
         ).strip()
 
+    @staticmethod
+    def _slack_subscription_execution_limits(
+        subscription: Optional[Dict[str, Any]],
+    ) -> Dict[str, int]:
+        """Return validated per-event execution limits for a subscription."""
+        if not subscription:
+            return {}
+        raw = subscription.get("execution")
+        if not isinstance(raw, dict):
+            return {}
+        limits: Dict[str, int] = {}
+        for key in (
+            "max_iterations",
+            "max_tool_calls",
+            "terminal_timeout",
+            "max_tool_output_chars",
+        ):
+            try:
+                value = int(raw.get(key))
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                limits[key] = value
+        return limits
+
     def _prepend_slack_subscription_context(
         self,
         text: str,
@@ -6727,6 +6752,17 @@ class SlackAdapter(BasePlatformAdapter):
             text, chat_id=channel_id, team_id=team_id
         )
 
+        execution_limits = self._slack_subscription_execution_limits(
+            message_subscription
+        )
+        event_metadata = {
+            "slack_team_id": team_id,
+            "slack_channel_id": channel_id,
+            "slack_thread_ts": thread_ts,
+        }
+        if execution_limits:
+            event_metadata["execution_limits"] = execution_limits
+
         msg_event = MessageEvent(
             text=(command_probe_text if is_command_text else text),
             message_type=msg_type,
@@ -6740,11 +6776,7 @@ class SlackAdapter(BasePlatformAdapter):
             channel_context=channel_context,
             reply_to_text=reply_to_text,
             auto_skill=_auto_skill,
-            metadata={
-                "slack_team_id": team_id,
-                "slack_channel_id": channel_id,
-                "slack_thread_ts": thread_ts,
-            },
+            metadata=event_metadata,
         )
 
         # Only react when bot is directly addressed (1:1 DM or @mention).

@@ -135,6 +135,35 @@ def _warn_slack_directory(team_id: str, detail: str) -> None:
         )
 
 
+def _slack_entry_chat_id(entry: Dict[str, Any]) -> str:
+    """Return the base conversation id for a session-derived Slack target."""
+    entry_id = str(entry.get("id") or "")
+    thread_id = entry.get("thread_id")
+    if thread_id:
+        suffix = f":{thread_id}"
+        if entry_id.endswith(suffix):
+            return entry_id[: -len(suffix)]
+    return entry_id.split(":", 1)[0]
+
+
+def _apply_slack_resolved_name(
+    entry: Dict[str, Any],
+    chat_id: str,
+    resolved_name: str,
+    resolved_type: Optional[str] = None,
+) -> None:
+    """Replace a raw Slack id while preserving a session thread label."""
+    current_name = str(entry.get("name") or "")
+    if current_name == chat_id:
+        entry["name"] = resolved_name
+    elif current_name.startswith(f"{chat_id} / "):
+        entry["name"] = resolved_name + current_name[len(chat_id):]
+    else:
+        entry["name"] = resolved_name
+    if resolved_type:
+        entry["type"] = resolved_type
+
+
 # ---------------------------------------------------------------------------
 # Build / refresh
 # ---------------------------------------------------------------------------
@@ -330,40 +359,64 @@ async def _build_slack(adapter) -> List[Dict[str, Any]]:
             # If the entry name is still a raw Slack ID (e.g. C0xxx / D0xxx),
             # try to resolve it from the API lookup first.
             if entry.get("name", "").startswith(("C0", "D0", "G0")):
-                if eid in api_name_lookup:
-                    entry["name"] = api_name_lookup[eid]
+                chat_id = _slack_entry_chat_id(entry)
+                if chat_id in api_name_lookup:
+                    _apply_slack_resolved_name(
+                        entry, chat_id, api_name_lookup[chat_id]
+                    )
             channels.append(entry)
             seen_ids.add(eid)
 
     # Resolve remaining raw-ID entries (DMs, private channels not in bot scope)
-    # by calling conversations.info + users.info for each.
+    # once per real conversation. Historical thread targets use a composite
+    # directory id, so resolving each entry independently can otherwise issue
+    # thousands of sequential API calls during gateway startup.
     unresolved = [ch for ch in channels if ch.get("name", "").startswith(("C0", "D0", "G0"))]
     if unresolved and team_clients:
         client = next(iter(team_clients.values()))
+        resolved_by_chat: Dict[str, Optional[tuple[str, Optional[str]]]] = {}
         for entry in unresolved:
-            try:
-                resp = await client.conversations_info(channel=entry["id"])
-                if not resp.get("ok"):
-                    continue
-                ch_info = resp.get("channel", {})
-                if ch_info.get("is_im"):
-                    peer_user = ch_info.get("user", "")
-                    if peer_user:
-                        user_resp = await client.users_info(user=peer_user)
-                        if user_resp.get("ok"):
-                            u = user_resp["user"]
-                            entry["name"] = (
-                                u.get("profile", {}).get("display_name")
-                                or u.get("real_name")
-                                or u.get("name")
-                                or entry["id"]
-                            )
-                            entry["type"] = "dm"
-                else:
-                    entry["name"] = ch_info.get("name") or ch_info.get("name_normalized") or entry["id"]
-            except Exception as e:
-                logger.debug("Channel directory: failed to resolve %s: %s", entry["id"], e)
+            chat_id = _slack_entry_chat_id(entry)
+            if not chat_id:
                 continue
+            if chat_id not in resolved_by_chat:
+                resolution: Optional[tuple[str, Optional[str]]] = None
+                try:
+                    resp = await client.conversations_info(channel=chat_id)
+                    if resp.get("ok"):
+                        ch_info = resp.get("channel", {})
+                        if ch_info.get("is_im"):
+                            peer_user = ch_info.get("user", "")
+                            if peer_user:
+                                user_resp = await client.users_info(user=peer_user)
+                                if user_resp.get("ok"):
+                                    u = user_resp["user"]
+                                    name = (
+                                        u.get("profile", {}).get("display_name")
+                                        or u.get("real_name")
+                                        or u.get("name")
+                                        or chat_id
+                                    )
+                                    resolution = (name, "dm")
+                        else:
+                            name = (
+                                ch_info.get("name")
+                                or ch_info.get("name_normalized")
+                                or chat_id
+                            )
+                            resolution = (name, None)
+                except Exception as e:
+                    logger.debug(
+                        "Channel directory: failed to resolve %s: %s",
+                        chat_id,
+                        e,
+                    )
+                resolved_by_chat[chat_id] = resolution
+
+            resolution = resolved_by_chat[chat_id]
+            if resolution is not None:
+                name, entry_type = resolution
+                _apply_slack_resolved_name(entry, chat_id, name, entry_type)
 
     return channels
 

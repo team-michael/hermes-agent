@@ -2004,6 +2004,35 @@ async def test_startup_restore_gate_releases_when_resume_turn_outlives_timeout(
 
 
 @pytest.mark.asyncio
+async def test_startup_restore_watchdog_releases_gate_before_finish_is_called():
+    """An earlier startup step cannot leave inbound queued indefinitely."""
+    runner, adapter = make_restart_runner()
+    runner._startup_restore_in_progress = True
+    runner._startup_restore_queue = []
+    runner._startup_restore_tasks = []
+
+    seen: list[str] = []
+
+    async def fake_handle_message(event: MessageEvent) -> None:
+        seen.append(event.text)
+
+    adapter.handle_message = fake_handle_message
+
+    inbound = MessageEvent(
+        text="queued during slow startup",
+        message_type=MessageType.TEXT,
+        source=make_restart_source(chat_id="restore-chat"),
+    )
+    assert await runner._handle_message(inbound) is None
+
+    await runner._startup_restore_gate_watchdog(0.01)
+
+    assert seen == ["queued during slow startup"]
+    assert runner._startup_restore_queue == []
+    assert runner._startup_restore_in_progress is False
+
+
+@pytest.mark.asyncio
 async def test_startup_restore_gate_still_waits_for_a_prompt_resume_turn(
     monkeypatch,
 ):

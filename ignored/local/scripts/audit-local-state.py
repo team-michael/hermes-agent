@@ -130,6 +130,52 @@ def audit_skill_links(profile: str) -> list[str]:
     return issues
 
 
+def configured_provider_names(config: dict[str, Any]) -> set[str]:
+    providers: set[str] = set()
+
+    def add_from(value: Any) -> None:
+        if not isinstance(value, dict):
+            return
+        provider = value.get("provider")
+        if isinstance(provider, str) and provider.strip():
+            providers.add(provider.strip().lower())
+
+    add_from(config.get("model"))
+    fallback = config.get("fallback_model")
+    if isinstance(fallback, dict):
+        add_from(fallback)
+    elif isinstance(fallback, list):
+        for entry in fallback:
+            add_from(entry)
+    auxiliary = config.get("auxiliary")
+    if isinstance(auxiliary, dict):
+        for entry in auxiliary.values():
+            add_from(entry)
+    return providers
+
+
+def audit_provider_plugin_links(profile: str) -> list[str]:
+    issues: list[str] = []
+    source_root = LOCAL_ROOT / "plugins" / "model-providers"
+    if not source_root.exists():
+        return issues
+
+    home = profile_home(profile)
+    configured = configured_provider_names(load_yaml(home / "config.yaml"))
+    for source in sorted(path for path in source_root.iterdir() if path.is_dir()):
+        if source.name.lower() not in configured:
+            continue
+        link = home / "plugins" / "model-providers" / source.name
+        if not link.is_symlink():
+            issues.append(f"{profile}: {link} is not a symlink")
+        elif link.resolve() != source.resolve():
+            issues.append(
+                f"{profile}: {link} points to {link.resolve()}, "
+                f"expected {source.resolve()}"
+            )
+    return issues
+
+
 def render_repo_soul(source: Path) -> str:
     source_text = source.read_text(encoding="utf-8")
 
@@ -198,6 +244,7 @@ def main() -> int:
         issues.extend(audit_profile_config(profile))
         issues.extend(audit_profile_memories(profile))
         issues.extend(audit_skill_links(profile))
+        issues.extend(audit_provider_plugin_links(profile))
         issues.extend(audit_soul(profile))
         issues.extend(audit_profile_scripts(profile))
 

@@ -23,7 +23,7 @@ The wrapper keeps the active checkout on `main` and performs these steps:
 6. Validate every local-only commit against `ignored/local/core-patches.yaml`. Undeclared Hermes source changes stop the update.
 7. Save the current local commits under `refs/hermes-local-backups/update-*`, then run the official `hermes update --yes`.
 8. If the official updater resets divergent local commits while installing upstream, cherry-pick only the validated local commits back onto `main`.
-9. Apply and audit all managed profiles, run the core-patch test commands, and verify that `origin/main` is an ancestor of `main`.
+9. Apply and audit all managed profiles, verify that every configured main/fallback/auxiliary provider resolves, run the core-patch test commands, and verify that `origin/main` is an ancestor of `main`.
 10. Push `team-michael/main` with an explicit force-with-lease tied to the fetched remote SHA.
 
 ## Conflict Handling
@@ -56,4 +56,5 @@ It is state backup only. It requires local `main` to equal `team-michael/main`, 
 - Create temporary files, refs, backups, and worktrees only below `~/.hermes`.
 - Do not put secrets or runtime state under `ignored/local`.
 - Do not bypass the core-patch manifest after a failed integrity check.
+- Do not push or restart gateways when any profile references an unresolvable provider.
 - Before completion, report the active branch, `origin/main` ancestry, `team-michael/main` equality, profile audit result, and gateway restart status.

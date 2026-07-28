@@ -551,6 +551,53 @@ class TestBuildSlack:
         # Channel ID from API should not be duplicated by the session merge
         assert sum(1 for e in entries if e["id"] == "C001") == 1
 
+    def test_thread_entries_resolve_base_conversation_only_once(self, tmp_path):
+        sessions_path = tmp_path / "sessions" / "sessions.json"
+        sessions_path.parent.mkdir(parents=True)
+        sessions_path.write_text(json.dumps({
+            "s1": {
+                "origin": {
+                    "platform": "slack",
+                    "chat_id": "D0123456789",
+                    "chat_name": "D0123456789",
+                    "thread_id": "100.001",
+                },
+            },
+            "s2": {
+                "origin": {
+                    "platform": "slack",
+                    "chat_id": "D0123456789",
+                    "chat_name": "D0123456789",
+                    "thread_id": "200.002",
+                },
+            },
+        }))
+        client = _make_slack_client([{
+            "ok": True,
+            "channels": [],
+            "response_metadata": {},
+        }])
+        client.conversations_info = AsyncMock(return_value={
+            "ok": True,
+            "channel": {"is_im": True, "user": "U123"},
+        })
+        client.users_info = AsyncMock(return_value={
+            "ok": True,
+            "user": {
+                "profile": {"display_name": "Minkyu"},
+                "name": "minkyu",
+            },
+        })
+
+        with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):
+            entries = asyncio.run(_build_slack(_make_slack_adapter({"T1": client})))
+
+        assert len(entries) == 2
+        assert all(entry["name"].startswith("Minkyu / ") for entry in entries)
+        assert all(entry["type"] == "dm" for entry in entries)
+        client.conversations_info.assert_awaited_once_with(channel="D0123456789")
+        client.users_info.assert_awaited_once_with(user="U123")
+
     def test_skips_channels_with_no_id_or_name(self, tmp_path):
         client = _make_slack_client([
             {

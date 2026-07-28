@@ -1,7 +1,7 @@
 ---
 name: check
 description: Investigate Notifly Slack/Amazon Q/CloudWatch alerts from live data sources using the bundled deterministic helper, then return one concise Korean triage result.
-version: 1.3.2
+version: 1.3.3
 author: Hermes Agent
 license: MIT
 metadata:
@@ -44,7 +44,7 @@ Rules:
 ## One-pass workflow
 
 1. Extract the exact alarm name, region, account, metric/log group, and Slack event timestamp from the supplied alert.
-2. Run the helper once with the exact alarm name when available. Use a 120-second terminal timeout.
+2. Run the helper once with the exact alarm name when available. Use a 30-second terminal timeout.
 3. Inspect only these result boundaries first:
    - `can_answer_root_cause`
    - `missing_required_context`
@@ -54,9 +54,10 @@ Rules:
    - `scope_attribution` / `projects`
    - `code`
 4. If `can_answer_root_cause: true`, answer immediately. Do not repeat helper-covered CloudWatch, RDS, PI, Logs Insights, SQS, Lambda, DynamoDB, or source queries.
-5. If required context is missing, execute only the listed read-only follow-ups that affect a mandatory final field. Prefer at most two bounded follow-up calls.
-6. If a datasource is unavailable (`NotAuthorizedException`, expired ECS stream, ingestion lag), mark it unavailable and continue with the strongest remaining evidence. Do not retry the same failed operation with alternate syntax unless the failure explicitly identifies a correctable parameter.
-7. Never invent Logs Insights `parse` syntax repeatedly in the model loop. Use a vetted reference or add a deterministic helper collector outside the foreground alert response.
+5. If required context is missing, execute only the listed read-only follow-ups that affect a mandatory final field. Execute no more than two follow-up tool calls.
+6. After those two calls, finalize with the strongest available evidence and state any remaining field as unavailable. Do not start another investigation branch.
+7. If a datasource is unavailable (`NotAuthorizedException`, expired ECS stream, ingestion lag), mark it unavailable and continue with the strongest remaining evidence. Do not retry the same failed operation with alternate syntax unless the failure explicitly identifies a correctable parameter.
+8. Never invent Logs Insights `parse` syntax repeatedly in the model loop. Use a vetted reference or add a deterministic helper collector outside the foreground alert response.
 
 ## Manual fallback boundary
 
@@ -67,6 +68,8 @@ Manual fallback is allowed only when the helper itself fails or names a blocking
 - Parallelize independent AWS reads when a compact probe is genuinely required.
 - Stop after the missing final-answer field is filled.
 - Never turn one alarm into an open-ended tour of every related AWS service.
+- Never use `find /`, recursive searches across multiple workspaces, or unbounded `filter-log-events` pagination.
+- Restrict source searches to known repository roots with `rg`, and restrict log reads to the current alarm window unless a listed follow-up explicitly requests an aggregate.
 
 Useful references, loaded only when the alarm shape matches:
 
@@ -172,9 +175,14 @@ A `no_action` answer has exactly five visible bullets and no `액션 아이템:`
 
 Do not modify skills or write one-off production scripts during the foreground alert turn. Finish the user response first. Afterward, only add a reusable bounded collector when a deterministic gap was actually observed and a focused regression test exists. Prefer helper code and references over growing this orchestrator.
 
-|## Known improvements (v1.3.1)
-|
-|- `logs.py`: sharded table references (`table_refs`) now feed their `project_id` into the `project_ids` used for DynamoDB project mapping. Previously, table suffixes like `user_journey_sessions_031b18009978590188e49e6777447fc2` were captured as `table_refs` but never promoted to `project_ids`, causing `scope_attribution.projects` to return `null` even when the project ID was clearly present in the logs. The fix extracts `project_id` from `table_refs` at three points: (1) `current_error_details_from_contexts` concrete-trigger branch, (2) `current_error_details_from_contexts` normal branch, and (3) `collect_logs_insights_summary` current-row scope detection.
+## Known improvements
+
+- `v1.3.3`: compact helper output is capped at 10 KB, missing required
+  context cannot be marked answerable, and automated alert turns are bounded
+  to the helper plus at most two follow-up tool calls.
+- `v1.3.1`: sharded table references (`table_refs`) feed their `project_id`
+  into DynamoDB project mapping so scope attribution can resolve projects
+  already identified in logs.
 |
 |## Known improvements (v1.3.2)
 |

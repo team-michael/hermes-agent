@@ -136,6 +136,109 @@ def test_filtered_subscription_dispatches_without_mention() -> None:
     assert adapter._subscription_reaction_configs[key]["name"] == "amazon-q"
 
 
+def test_subscription_attaches_validated_execution_limits() -> None:
+    adapter = _adapter(
+        subscription=_subscription(
+            execution={
+                "max_iterations": 6,
+                "max_tool_calls": 3,
+                "terminal_timeout": 30,
+                "max_tool_output_chars": 12000,
+                "ignored": 999,
+            }
+        )
+    )
+
+    asyncio.run(adapter._handle_slack_message(_event()))
+
+    message = adapter.handle_message.await_args.args[0]
+    assert message.metadata["execution_limits"] == {
+        "max_iterations": 6,
+        "max_tool_calls": 3,
+        "terminal_timeout": 30,
+        "max_tool_output_chars": 12000,
+    }
+
+
+def test_subscription_ignores_invalid_execution_limits() -> None:
+    adapter = _adapter(
+        subscription=_subscription(
+            execution={
+                "max_iterations": 0,
+                "max_tool_calls": "not-a-number",
+                "terminal_timeout": -1,
+            }
+        )
+    )
+
+    asyncio.run(adapter._handle_slack_message(_event()))
+
+    message = adapter.handle_message.await_args.args[0]
+    assert "execution_limits" not in message.metadata
+
+
+def test_gateway_bounds_untrusted_event_execution_limits() -> None:
+    from gateway.run import _normalize_event_execution_limits
+
+    assert _normalize_event_execution_limits(
+        {
+            "max_iterations": 9999,
+            "max_tool_calls": 3,
+            "terminal_timeout": "30",
+            "max_tool_output_chars": 12000,
+            "ignored": 1,
+        }
+    ) == {
+        "max_iterations": 500,
+        "max_tool_calls": 3,
+        "terminal_timeout": 30,
+        "max_tool_output_chars": 12000,
+    }
+    assert _normalize_event_execution_limits(
+        {
+            "max_iterations": 0,
+            "max_tool_calls": "bad",
+        }
+    ) == {}
+
+
+def test_gateway_execution_limit_scope_restores_cached_agent() -> None:
+    from agent.tool_guardrails import (
+        ToolCallGuardrailConfig,
+        ToolCallGuardrailController,
+    )
+    from gateway.run import _scoped_gateway_execution_limits
+    from tools.terminal_tool import resolve_task_overrides
+
+    controller = ToolCallGuardrailController(ToolCallGuardrailConfig())
+    agent = SimpleNamespace(
+        max_iterations=6,
+        _tool_guardrails=controller,
+    )
+    original_config = controller.config
+    task_id = "bounded-slack-alert"
+
+    with _scoped_gateway_execution_limits(
+        agent,
+        task_id=task_id,
+        limits={
+            "max_tool_calls": 3,
+            "terminal_timeout": 30,
+            "max_tool_output_chars": 12000,
+        },
+        configured_max_iterations=300,
+    ):
+        assert controller.config.loop_caps.max_total_tools == 3
+        assert resolve_task_overrides(task_id) == {
+            "max_timeout": 30,
+            "max_output_chars": 12000,
+        }
+
+    assert controller.config is original_config
+    assert agent.max_iterations == 300
+    assert resolve_task_overrides(task_id) == {}
+
+
 def test_filtered_subscription_rejects_nonmatching_bot() -> None:
     adapter = _adapter(subscription=_subscription())
 

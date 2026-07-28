@@ -748,6 +748,7 @@ _AUTO_CONTINUE_FRESHNESS_SECS_DEFAULT = 60 * 60
 # long resumed turn can't hold every channel's inbound queued for minutes.
 # Override via ``config.yaml`` ``agent.gateway_startup_restore_drain_timeout``.
 _STARTUP_RESTORE_DRAIN_TIMEOUT_SECS_DEFAULT = 30.0
+_INITIAL_CHANNEL_DIRECTORY_BUILD_TIMEOUT_SECS = 15.0
 
 
 def _coerce_gateway_timestamp(value: Any) -> Optional[float]:
@@ -1722,6 +1723,89 @@ def _current_max_iterations() -> int:
 
 
 from contextlib import contextmanager as _contextmanager
+
+
+_EVENT_EXECUTION_LIMIT_BOUNDS = {
+    "max_iterations": 500,
+    "max_tool_calls": 100,
+    "terminal_timeout": 1800,
+    "max_tool_output_chars": 1_000_000,
+}
+
+
+def _normalize_event_execution_limits(raw: Any) -> Dict[str, int]:
+    """Validate untrusted adapter metadata before applying per-turn limits."""
+    if not isinstance(raw, dict):
+        return {}
+    normalized: Dict[str, int] = {}
+    for key, upper_bound in _EVENT_EXECUTION_LIMIT_BOUNDS.items():
+        try:
+            value = int(raw.get(key))
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            normalized[key] = min(value, upper_bound)
+    return normalized
+
+
+def _event_execution_limits(event: Any) -> Dict[str, int]:
+    metadata = getattr(event, "metadata", None)
+    if not isinstance(metadata, dict):
+        return {}
+    return _normalize_event_execution_limits(metadata.get("execution_limits"))
+
+
+@_contextmanager
+def _scoped_gateway_execution_limits(
+    agent: Any,
+    *,
+    task_id: str,
+    limits: Dict[str, int],
+    configured_max_iterations: int,
+):
+    """Apply restrictive event limits without mutating a cached agent later."""
+    original_guardrail_config = None
+    max_tool_calls = limits.get("max_tool_calls")
+    guardrails = getattr(agent, "_tool_guardrails", None)
+    guardrail_config = getattr(guardrails, "config", None)
+    loop_caps = getattr(guardrail_config, "loop_caps", None)
+    if (
+        max_tool_calls
+        and dataclasses.is_dataclass(guardrail_config)
+        and dataclasses.is_dataclass(loop_caps)
+    ):
+        original_guardrail_config = guardrail_config
+        existing_total_cap = loop_caps.max_total_tools
+        effective_total_cap = (
+            min(existing_total_cap, max_tool_calls)
+            if existing_total_cap
+            else max_tool_calls
+        )
+        guardrails.config = dataclasses.replace(
+            guardrail_config,
+            loop_caps=dataclasses.replace(
+                loop_caps,
+                max_total_tools=effective_total_cap,
+            ),
+        )
+
+    terminal_limits = {}
+    if limits.get("terminal_timeout"):
+        terminal_limits["max_timeout"] = limits["terminal_timeout"]
+    if limits.get("max_tool_output_chars"):
+        terminal_limits["max_output_chars"] = limits[
+            "max_tool_output_chars"
+        ]
+
+    from tools.terminal_tool import scoped_task_env_overrides
+
+    try:
+        with scoped_task_env_overrides(task_id, terminal_limits):
+            yield
+    finally:
+        if original_guardrail_config is not None:
+            guardrails.config = original_guardrail_config
+        agent.max_iterations = configured_max_iterations
 
 
 # Platforms that bind a host TCP port (HTTP/webhook listeners). In a profile
@@ -7579,10 +7663,46 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                         exc_info=(type(exc), exc, exc.__traceback__),
                     )
         self._startup_restore_tasks = []
-        drained = await self._drain_startup_restore_queue()
-        self._startup_restore_in_progress = False
-        if drained:
-            logger.info("Drained %d inbound message(s) queued during startup restore", drained)
+        await self._release_startup_restore_gate()
+
+    async def _release_startup_restore_gate(self) -> int:
+        """Drain queued inbound exactly once and open the startup gate."""
+        lock = getattr(self, "_startup_restore_release_lock", None)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._startup_restore_release_lock = lock
+        async with lock:
+            if not getattr(self, "_startup_restore_in_progress", False):
+                return 0
+            drained = await self._drain_startup_restore_queue()
+            self._startup_restore_in_progress = False
+            if drained:
+                logger.info(
+                    "Drained %d inbound message(s) queued during startup restore",
+                    drained,
+                )
+            return drained
+
+    async def _startup_restore_gate_watchdog(self, timeout: float) -> None:
+        """Release the inbound gate even if an earlier startup step stalls."""
+        await asyncio.sleep(timeout)
+        if not getattr(self, "_startup_restore_in_progress", False):
+            return
+
+        tasks = list(getattr(self, "_startup_restore_tasks", []) or [])
+        for task in tasks:
+            if not task.done():
+                task.add_done_callback(self._log_background_resume_result)
+        self._startup_restore_tasks = []
+        queued = len(getattr(self, "_startup_restore_queue", []) or [])
+        logger.warning(
+            "Startup-restore gate force-released after %.0fs while startup "
+            "initialization was still pending; draining %d queued inbound "
+            "message(s).",
+            timeout,
+            queued,
+        )
+        await self._release_startup_restore_gate()
 
     @staticmethod
     def _log_background_resume_result(task: "asyncio.Task") -> None:
@@ -8281,6 +8401,13 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         self._startup_restore_in_progress = True
         self._startup_restore_queue = []
         self._startup_restore_tasks = []
+        _restore_timeout = _startup_restore_drain_timeout_secs()
+        if _restore_timeout > 0:
+            _restore_watchdog = asyncio.create_task(
+                self._startup_restore_gate_watchdog(_restore_timeout)
+            )
+            self._background_tasks.add(_restore_watchdog)
+            _restore_watchdog.add_done_callback(self._background_tasks.discard)
 
         connected_count = 0
         enabled_platform_count = 0
@@ -8602,9 +8729,18 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         # Build initial channel directory for send_message name resolution
         try:
             from gateway.channel_directory import build_channel_directory
-            directory = await build_channel_directory(self.adapters)
+            directory = await asyncio.wait_for(
+                build_channel_directory(self.adapters),
+                timeout=_INITIAL_CHANNEL_DIRECTORY_BUILD_TIMEOUT_SECS,
+            )
             ch_count = sum(len(chs) for chs in directory.get("platforms", {}).values())
             logger.info("Channel directory built: %d target(s)", ch_count)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Initial channel directory build exceeded %.0fs; continuing "
+                "gateway startup. The periodic refresh will retry.",
+                _INITIAL_CHANNEL_DIRECTORY_BUILD_TIMEOUT_SECS,
+            )
         except Exception as e:
             logger.warning("Channel directory build failed: %s", e)
         
@@ -14176,6 +14312,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 event_message_id=self._reply_anchor_for_event(event),
                 channel_prompt=event.channel_prompt,
                 moa_config=getattr(event, "_moa_config", None),
+                execution_limits=_event_execution_limits(event),
                 persist_user_message=persist_user_message,
                 persist_user_timestamp=persist_user_timestamp,
             )
@@ -20239,6 +20376,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         event_message_id: Optional[str] = None,
         channel_prompt: Optional[str] = None,
         moa_config: Optional[dict] = None,
+        execution_limits: Optional[Dict[str, int]] = None,
         persist_user_message: Optional[Any] = None,
         persist_user_timestamp: Optional[float] = None,
     ) -> Dict[str, Any]:
@@ -20257,6 +20395,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 session_key=session_key, run_generation=run_generation,
                 _interrupt_depth=_interrupt_depth, event_message_id=event_message_id,
                 channel_prompt=channel_prompt, moa_config=moa_config,
+                execution_limits=execution_limits,
                 persist_user_message=persist_user_message,
                 persist_user_timestamp=persist_user_timestamp,
             )
@@ -20268,6 +20407,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 session_key=session_key, run_generation=run_generation,
                 _interrupt_depth=_interrupt_depth, event_message_id=event_message_id,
                 channel_prompt=channel_prompt, moa_config=moa_config,
+                execution_limits=execution_limits,
                 persist_user_message=persist_user_message,
                 persist_user_timestamp=persist_user_timestamp,
             )
@@ -20389,6 +20529,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         event_message_id: Optional[str] = None,
         channel_prompt: Optional[str] = None,
         moa_config: Optional[dict] = None,
+        execution_limits: Optional[Dict[str, int]] = None,
         persist_user_message: Optional[Any] = None,
         persist_user_timestamp: Optional[float] = None,
     ) -> Dict[str, Any]:
@@ -20427,6 +20568,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         
         user_config = _load_gateway_config()
         platform_key = _platform_config_key(source.platform)
+        execution_limits = _normalize_event_execution_limits(execution_limits)
 
         from hermes_cli.tools_config import _get_platform_tools
         enabled_toolsets = sorted(_get_platform_tools(user_config, platform_key))
@@ -21502,7 +21644,14 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             if cfg_channel_prompt:
                 combined_ephemeral = (combined_ephemeral + "\n\n" + cfg_channel_prompt).strip()
 
-            max_iterations = _current_max_iterations()
+            configured_max_iterations = _current_max_iterations()
+            max_iterations = min(
+                configured_max_iterations,
+                execution_limits.get(
+                    "max_iterations",
+                    configured_max_iterations,
+                ),
+            )
 
             try:
                 model, runtime_kwargs = self._resolve_session_agent_runtime(
@@ -22493,7 +22642,17 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     _conversation_kwargs["moa_config"] = moa_config
                 if _persist_user_timestamp_override is not None:
                     _conversation_kwargs["persist_user_timestamp"] = _persist_user_timestamp_override
-                result = agent.run_conversation(_api_run_message, **_conversation_kwargs)
+
+                with _scoped_gateway_execution_limits(
+                    agent,
+                    task_id=session_id,
+                    limits=execution_limits,
+                    configured_max_iterations=configured_max_iterations,
+                ):
+                    result = agent.run_conversation(
+                        _api_run_message,
+                        **_conversation_kwargs,
+                    )
             finally:
                 unregister_gateway_notify(_approval_session_key)
                 # Cancel any pending clarify entries so blocked agent
@@ -23564,6 +23723,11 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     _interrupt_depth=_interrupt_depth + 1,
                     event_message_id=next_message_id,
                     channel_prompt=next_channel_prompt,
+                    execution_limits=(
+                        _event_execution_limits(pending_event)
+                        if pending_event is not None
+                        else None
+                    ),
                 )
                 return _preserve_queued_followup_history_offset(result, followup_result)
         finally:

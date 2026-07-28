@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import re
 import subprocess
 import tempfile
@@ -183,6 +184,86 @@ def test_update_script_supports_git_243_cherry_pick() -> None:
     ).read_text(encoding="utf-8")
     assert "--empty=drop" not in script
     assert '"cherry-pick", "--skip"' in script
+
+
+def test_update_script_runs_profile_provider_audit() -> None:
+    script = (
+        REPO_ROOT
+        / ".agents/skills/update-hermes/scripts/update_hermes.py"
+    ).read_text(encoding="utf-8")
+    assert "audit-profile-providers.py" in script
+    assert "apply_and_audit(repo)" in script
+
+
+def test_cloudflare_user_plugin_resolves_from_profile_link() -> None:
+    with tempfile.TemporaryDirectory(dir=TMP_ROOT) as raw:
+        profile_home = Path(raw) / "profile"
+        provider_root = profile_home / "plugins" / "model-providers"
+        provider_root.mkdir(parents=True)
+        provider_source = (
+            REPO_ROOT
+            / "ignored/local/plugins/model-providers/cloudflare"
+        )
+        (provider_root / "cloudflare").symlink_to(
+            provider_source,
+            target_is_directory=True,
+        )
+        (profile_home / "config.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "model": {
+                        "provider": "cloudflare",
+                        "default": "@cf/moonshotai/kimi-k2.6",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        (profile_home / ".env").write_text(
+            "CLOUDFLARE_ACCOUNT_ID=test-account\n"
+            "CLOUDFLARE_API_TOKEN=test-token\n",
+            encoding="utf-8",
+        )
+        env = {**os.environ, "HERMES_HOME": str(profile_home)}
+        audit = subprocess.run(
+            [
+                str(REPO_ROOT / "venv/bin/python"),
+                str(
+                    REPO_ROOT
+                    / "ignored/local/scripts/audit-profile-providers.py"
+                ),
+                "--profile-home",
+                str(profile_home),
+            ],
+            cwd=REPO_ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+        )
+        assert audit.returncode == 0, audit.stdout + audit.stderr
+
+        probe = subprocess.run(
+            [
+                str(REPO_ROOT / "venv/bin/python"),
+                "-c",
+                (
+                    "from providers import get_provider_profile;"
+                    "p=get_provider_profile('cloudflare');"
+                    "assert p is not None;"
+                    "print(p.base_url)"
+                ),
+            ],
+            cwd=REPO_ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+        )
+        assert probe.returncode == 0, probe.stdout + probe.stderr
+        assert (
+            probe.stdout.strip()
+            == "https://api.cloudflare.com/client/v4/accounts/"
+            "test-account/ai/v1"
+        )
 
 
 if __name__ == "__main__":

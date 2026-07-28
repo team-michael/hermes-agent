@@ -376,18 +376,219 @@ def assess_helper_context(data: Dict[str, Any]) -> Dict[str, Any]:
         'rds_pi_top_sql',
     }
     blocking_missing = [item for item in missing if item.get('key') in blocking_keys]
+    required_missing = [
+        item for item in missing
+        if str(item.get('severity') or 'required').lower() == 'required'
+    ]
     if root_cause_evidence:
-        can_answer = not any(item.get('key') in {'alarm_metadata', 'alarm_history', 'latest_alarm_transition'} for item in missing)
+        evidence_is_sufficient = not any(
+            item.get('key') in {
+                'alarm_metadata',
+                'alarm_history',
+                'latest_alarm_transition',
+            }
+            for item in missing
+        )
     else:
-        can_answer = not blocking_missing and not (log_shaped or rds_shaped)
+        evidence_is_sufficient = (
+            not blocking_missing and not (log_shaped or rds_shaped)
+        )
+
+    can_answer = bool(evidence_is_sufficient and not required_missing)
+    selected_followups = [] if can_answer else followups[:2]
 
     return {
         'can_answer_root_cause': bool(can_answer),
+        'next_action': (
+            'finalize_now_no_more_tools'
+            if can_answer
+            else 'run_only_listed_followups_then_finalize'
+        ),
         'root_cause_evidence': root_cause_evidence,
         'missing_required_context': missing,
-        'required_followups': followups,
-        'note': 'If can_answer_root_cause is false, perform required_followups before finalizing when read-only and safe.',
+        'required_followups': selected_followups,
+        'omitted_followup_count': max(0, len(followups) - len(selected_followups)),
+        'note': (
+            'STOP: evidence is sufficient. Do not call another tool; produce '
+            'the final response now.'
+            if can_answer
+            else 'Perform only the listed read-only follow-ups, then finalize '
+            'with unavailable fields stated explicitly.'
+        ),
     }
+
+COMPACT_OUTPUT_MAX_BYTES = 10_000
+
+
+def _bounded_value(
+    value: Any,
+    *,
+    depth: int = 0,
+    max_depth: int = 3,
+    max_items: int = 3,
+    max_keys: int = 12,
+    max_string: int = 420,
+) -> Any:
+    if isinstance(value, str):
+        return truncate(value, max_string)
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if depth >= max_depth:
+        if isinstance(value, dict):
+            return {'summary': f'{len(value)} keys omitted'}
+        if isinstance(value, (list, tuple)):
+            return [f'{len(value)} items omitted']
+        return truncate(str(value), max_string)
+    if isinstance(value, dict):
+        compact: Dict[str, Any] = {}
+        for key, item in list(value.items())[:max_keys]:
+            compact[str(key)] = _bounded_value(
+                item,
+                depth=depth + 1,
+                max_depth=max_depth,
+                max_items=max_items,
+                max_keys=max_keys,
+                max_string=max_string,
+            )
+        if len(value) > max_keys:
+            compact['_omitted_key_count'] = len(value) - max_keys
+        return compact
+    if isinstance(value, (list, tuple)):
+        compact_items = [
+            _bounded_value(
+                item,
+                depth=depth + 1,
+                max_depth=max_depth,
+                max_items=max_items,
+                max_keys=max_keys,
+                max_string=max_string,
+            )
+            for item in list(value)[:max_items]
+        ]
+        if len(value) > max_items:
+            compact_items.append(
+                {'_omitted_item_count': len(value) - max_items}
+            )
+        return compact_items
+    return truncate(str(value), max_string)
+
+
+def _compact_logs(logs_summary: Any) -> Any:
+    if not isinstance(logs_summary, dict):
+        return _bounded_value(logs_summary)
+    keys = (
+        'log_groups',
+        'filter_terms',
+        'skipped',
+        'count_7d',
+        'count_30d',
+        'daily_counts_30d',
+        'current_alarm_window',
+        'current_top_signatures',
+        'current_trigger_contexts',
+        'current_error_details',
+        'current_project_campaign_pairs',
+        'detected_scope_ids',
+        'query_status',
+        'errors',
+    )
+    return _bounded_value(
+        {key: logs_summary.get(key) for key in keys if key in logs_summary},
+        max_items=2,
+        max_keys=len(keys),
+        max_string=360,
+    )
+
+
+def _serialized_size(value: Any) -> int:
+    return len(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            indent=2,
+            default=str,
+        ).encode('utf-8')
+    )
+
+
+def _fit_compact_budget(result: Dict[str, Any]) -> Dict[str, Any]:
+    if _serialized_size(result) <= COMPACT_OUTPUT_MAX_BYTES:
+        return result
+
+    omitted: List[str] = []
+    optional = (
+        'campaign_scope_hints',
+        'five_xx',
+        'http',
+        'lambda',
+        'sqs',
+        'rds',
+        'rds_performance_insights',
+        'metric_filters',
+        'code',
+        'projects',
+        'aws',
+    )
+    while _serialized_size(result) > COMPACT_OUTPUT_MAX_BYTES:
+        candidates = [
+            (key, _serialized_size(result.get(key)))
+            for key in optional
+            if key in result
+        ]
+        if not candidates:
+            break
+        largest = max(candidates, key=lambda item: item[1])[0]
+        result.pop(largest, None)
+        omitted.append(largest)
+
+    if _serialized_size(result) > COMPACT_OUTPUT_MAX_BYTES:
+        result['logs'] = _bounded_value(
+            result.get('logs'),
+            max_depth=2,
+            max_items=1,
+            max_keys=8,
+            max_string=220,
+        )
+        result['scope_attribution'] = _bounded_value(
+            result.get('scope_attribution'),
+            max_depth=2,
+            max_items=2,
+            max_keys=8,
+            max_string=220,
+        )
+
+    if omitted:
+        result['omitted_sections'] = omitted
+    if _serialized_size(result) <= COMPACT_OUTPUT_MAX_BYTES:
+        return result
+
+    essential = {
+        key: result.get(key)
+        for key in (
+            'can_answer_root_cause',
+            'next_action',
+            'missing_required_context',
+            'required_followups',
+            'omitted_followup_count',
+            'root_cause_evidence',
+            'alarm',
+            'history',
+            'metric',
+            'logs',
+            'scope_attribution',
+        )
+    }
+    essential['omitted_sections'] = sorted(
+        set(omitted + ['nonessential_evidence'])
+    )
+    return _bounded_value(
+        essential,
+        max_depth=3,
+        max_items=2,
+        max_keys=16,
+        max_string=220,
+    )
+
 
 def compact_output(data: Dict[str, Any]) -> Dict[str, Any]:
     alarm = data.get('alarm_summary') or {}
@@ -395,12 +596,14 @@ def compact_output(data: Dict[str, Any]) -> Dict[str, Any]:
     metric = data.get('metric_datapoints') or {}
     logs_summary = data.get('logs_insights') or {}
     assessment = data.get('helper_assessment') or assess_helper_context(data)
-    return {
+    result = {
         'can_answer_root_cause': assessment.get('can_answer_root_cause'),
+        'next_action': assessment.get('next_action'),
         'missing_required_context': assessment.get('missing_required_context') or [],
         'required_followups': assessment.get('required_followups') or [],
-        'detected': data.get('detected'),
-        'aws': data.get('aws_caller_identity'),
+        'omitted_followup_count': assessment.get('omitted_followup_count') or 0,
+        'detected': _bounded_value(data.get('detected')),
+        'aws': _bounded_value(data.get('aws_caller_identity')),
         'alarm': {
             'name': alarm.get('AlarmName'),
             'state': alarm.get('StateValue'),
@@ -412,7 +615,7 @@ def compact_output(data: Dict[str, Any]) -> Dict[str, Any]:
                 'period': alarm.get('Period'),
                 'threshold': alarm.get('Threshold'),
                 'comparison': alarm.get('ComparisonOperator'),
-                'dimensions': alarm.get('Dimensions'),
+                'dimensions': _bounded_value(alarm.get('Dimensions')),
             },
         },
         'history': {
@@ -424,10 +627,18 @@ def compact_output(data: Dict[str, Any]) -> Dict[str, Any]:
             'state_transitions_1d': history.get('state_transitions_1d'),
             'state_transitions_7d': history.get('state_transitions_7d'),
             'state_transitions_30d': history.get('state_transitions_lookback'),
-            'daily_alarm_counts': history.get('alarm_daily_counts'),
-            'latest_alarm_transition': history.get('latest_alarm_transition'),
-            'rapid_recurrence': history.get('rapid_recurrence'),
-            'recent_items': (history.get('sample_items') or [])[:5],
+            'daily_alarm_counts': _bounded_value(
+                history.get('alarm_daily_counts'),
+                max_items=7,
+            ),
+            'latest_alarm_transition': _bounded_value(
+                history.get('latest_alarm_transition')
+            ),
+            'rapid_recurrence': _bounded_value(history.get('rapid_recurrence')),
+            'recent_items': _bounded_value(
+                history.get('sample_items'),
+                max_items=3,
+            ),
         },
         'metric': {
             'days': metric.get('days'),
@@ -439,25 +650,33 @@ def compact_output(data: Dict[str, Any]) -> Dict[str, Any]:
             'max': metric.get('max'),
             'avg': metric.get('avg'),
             'latest': metric.get('latest'),
-            'recent_points': (metric.get('recent_points') or [])[-6:],
+            'recent_points': _bounded_value(
+                (metric.get('recent_points') or [])[-4:],
+                max_items=4,
+            ),
         },
-        'metric_filters': data.get('metric_filters'),
-        'logs': logs_summary,
-        'http': data.get('http_context'),
-        'five_xx': data.get('five_xx_metrics'),
-        'sqs': data.get('sqs_context'),
-        'lambda': data.get('lambda_context'),
-        'rds': data.get('rds_context'),
-        'rds_performance_insights': data.get('rds_performance_insights'),
-        'campaign_scope_hints': data.get('campaign_scope_hints'),
-        'scope_attribution': data.get('scope_attribution'),
-        'projects': data.get('project_mappings'),
-        'code': data.get('repo_code_hits'),
+        'metric_filters': _bounded_value(data.get('metric_filters')),
+        'logs': _compact_logs(logs_summary),
+        'http': _bounded_value(data.get('http_context')),
+        'five_xx': _bounded_value(data.get('five_xx_metrics')),
+        'sqs': _bounded_value(data.get('sqs_context')),
+        'lambda': _bounded_value(data.get('lambda_context')),
+        'rds': _bounded_value(data.get('rds_context')),
+        'rds_performance_insights': _bounded_value(
+            data.get('rds_performance_insights')
+        ),
+        'campaign_scope_hints': _bounded_value(
+            data.get('campaign_scope_hints')
+        ),
+        'scope_attribution': _bounded_value(data.get('scope_attribution')),
+        'projects': _bounded_value(data.get('project_mappings')),
+        'code': _bounded_value(data.get('repo_code_hits')),
         'root_cause_evidence': assessment.get('root_cause_evidence') or [],
         'helper_notes': [
             assessment.get('note'),
             'Logs Insights used fixed query templates only.',
             'Raw log dumps are suppressed; samples are sanitized and grouped by signature.',
-            'If additional manual tool calls were needed, fold that reusable step back into this skill/helper.',
+            'The compact payload is capped at 10,000 UTF-8 bytes.',
         ],
     }
+    return _fit_compact_budget(result)

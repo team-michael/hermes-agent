@@ -156,6 +156,7 @@ class LoopCapConfig:
 
     max_web_searches: int = _DEFAULT_MAX_WEB_SEARCHES_PER_TURN
     max_subagents: int = _DEFAULT_MAX_SUBAGENTS_PER_TURN
+    max_total_tools: int = 0
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any] | None) -> "LoopCapConfig":
@@ -169,6 +170,9 @@ class LoopCapConfig:
             ),
             max_subagents=_non_negative_int(
                 data.get("max_subagents"), defaults.max_subagents
+            ),
+            max_total_tools=_non_negative_int(
+                data.get("max_total_tools"), defaults.max_total_tools
             ),
         )
 
@@ -194,7 +198,7 @@ class ToolCallSignature:
 class ToolGuardrailDecision:
     """Decision returned by the tool-call guardrail controller."""
 
-    action: str = "allow"  # allow | warn | block | halt
+    action: str = "allow"  # allow | warn | skip | block | halt
     code: str = "allow"
     message: str = ""
     tool_name: str = ""
@@ -287,6 +291,7 @@ class ToolCallGuardrailController:
         # single agent loop rather than accumulating across the session.
         self._turn_web_search_count = 0
         self._turn_subagent_count = 0
+        self._turn_total_tool_count = 0
 
     @property
     def halt_decision(self) -> ToolGuardrailDecision | None:
@@ -452,8 +457,8 @@ class ToolCallGuardrailController:
     ) -> ToolGuardrailDecision | None:
         """Enforce and advance the per-turn runaway-loop counters.
 
-        Returns a ``block`` decision when the cap is already reached, otherwise
-        increments the relevant counter for the allowed call and returns
+        Returns a ``block`` decision when a cap is already reached, otherwise
+        increments every applicable counter for the allowed call and returns
         ``None``. A cap of 0 disables that limit entirely. Counters reset each
         turn via ``reset_for_turn``.
         """
@@ -477,15 +482,11 @@ class ToolCallGuardrailController:
                 )
                 self._halt_decision = decision
                 return decision
-            self._turn_web_search_count += 1
-            return None
 
         if tool_name == "delegate_task":
             cap = caps.max_subagents
-            if not cap:
-                return None
             spawn_count = _subagent_spawn_count(args)
-            if self._turn_subagent_count >= cap:
+            if cap and self._turn_subagent_count >= cap:
                 decision = ToolGuardrailDecision(
                     action="block",
                     code="loop_subagent_cap",
@@ -501,9 +502,28 @@ class ToolCallGuardrailController:
                 )
                 self._halt_decision = decision
                 return decision
-            self._turn_subagent_count += spawn_count
-            return None
 
+        total_cap = caps.max_total_tools
+        if total_cap and self._turn_total_tool_count >= total_cap:
+            decision = ToolGuardrailDecision(
+                action="skip",
+                code="loop_total_tool_cap",
+                message=(
+                    f"Blocked {tool_name}: this turn has already made "
+                    f"{total_cap} tool calls, the per-turn limit. Use the "
+                    "evidence already collected and give the user your answer."
+                ),
+                tool_name=tool_name,
+                count=self._turn_total_tool_count,
+                signature=signature,
+            )
+            return decision
+
+        if tool_name == "web_search":
+            self._turn_web_search_count += 1
+        elif tool_name == "delegate_task":
+            self._turn_subagent_count += _subagent_spawn_count(args)
+        self._turn_total_tool_count += 1
         return None
 
 

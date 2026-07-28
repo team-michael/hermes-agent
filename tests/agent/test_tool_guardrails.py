@@ -288,14 +288,22 @@ def test_loop_cap_defaults():
     caps = ToolCallGuardrailConfig().loop_caps
     assert caps.max_web_searches == 50
     assert caps.max_subagents == 50
+    assert caps.max_total_tools == 0
 
 
 def test_loop_cap_config_parses_nested_section():
     cfg = ToolCallGuardrailConfig.from_mapping(
-        {"loop_caps": {"max_web_searches": 3, "max_subagents": 0}}
+        {
+            "loop_caps": {
+                "max_web_searches": 3,
+                "max_subagents": 0,
+                "max_total_tools": 4,
+            }
+        }
     )
     assert cfg.loop_caps.max_web_searches == 3
     assert cfg.loop_caps.max_subagents == 0
+    assert cfg.loop_caps.max_total_tools == 4
 
 
 def test_loop_cap_zero_disables_and_junk_falls_back():
@@ -387,3 +395,37 @@ def test_other_tools_never_touched_by_loop_caps():
     # read_file / terminal / etc. are unaffected regardless of the web cap.
     for _ in range(10):
         assert controller.before_call("read_file", {"path": "/tmp/x"}).action == "allow"
+
+
+def test_total_tool_cap_applies_to_all_tools_and_resets_each_turn():
+    controller = ToolCallGuardrailController(
+        ToolCallGuardrailConfig(
+            loop_caps=LoopCapConfig(
+                max_web_searches=50,
+                max_subagents=50,
+                max_total_tools=3,
+            )
+        )
+    )
+    assert controller.before_call("terminal", {"command": "true"}).action == "allow"
+    assert controller.before_call("read_file", {"path": "/tmp/a"}).action == "allow"
+    assert controller.before_call("web_search", {"query": "q"}).action == "allow"
+    decision = controller.before_call("terminal", {"command": "false"})
+    assert decision.action == "skip"
+    assert decision.code == "loop_total_tool_cap"
+    assert decision.allows_execution is False
+    assert decision.should_halt is False
+
+    controller.reset_for_turn()
+    assert controller.before_call("terminal", {"command": "true"}).action == "allow"
+
+
+if __name__ == "__main__":
+    tests = [
+        value
+        for name, value in sorted(globals().items())
+        if name.startswith("test_") and callable(value)
+    ]
+    for test in tests:
+        test()
+    print(f"{len(tests)} tool guardrail tests passed")

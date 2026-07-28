@@ -1,6 +1,7 @@
 """Regression tests for task/session cwd propagation in terminal_tool."""
 
 import json
+import os
 from types import SimpleNamespace
 
 import tools.terminal_tool as terminal_tool
@@ -229,6 +230,102 @@ def test_registering_non_cwd_override_leaves_live_env_cwd_untouched(monkeypatch)
     assert fake_env.cwd == "/workspace/keep"
 
 
+def test_scoped_task_limits_merge_and_restore_without_clearing_cwd(monkeypatch):
+    task_id = "gateway-alert-turn"
+    monkeypatch.setattr(
+        terminal_tool,
+        "_task_env_overrides",
+        {task_id: {"cwd": "/workspace/alert"}},
+    )
+    monkeypatch.setattr(
+        terminal_tool,
+        "_session_cwd",
+        {task_id: "/workspace/alert/live"},
+    )
+
+    with terminal_tool.scoped_task_env_overrides(
+        task_id,
+        {"max_timeout": 30, "max_output_chars": 12000},
+    ):
+        assert terminal_tool.resolve_task_overrides(task_id) == {
+            "cwd": "/workspace/alert",
+            "max_timeout": 30,
+            "max_output_chars": 12000,
+        }
+
+    assert terminal_tool.resolve_task_overrides(task_id) == {
+        "cwd": "/workspace/alert"
+    }
+    assert terminal_tool.get_session_cwd(task_id) == "/workspace/alert/live"
+
+
+def test_task_limits_cap_foreground_timeout_and_output(monkeypatch):
+    calls = []
+
+    class FakeEnv:
+        env = {}
+
+        def execute(self, command, **kwargs):
+            calls.append((command, kwargs))
+            return {"output": "x" * 1000, "returncode": 0}
+
+    task_id = "bounded-alert-turn"
+    monkeypatch.setattr(
+        terminal_tool,
+        "_active_environments",
+        {task_id: FakeEnv()},
+    )
+    monkeypatch.setattr(terminal_tool, "_last_activity", {})
+    monkeypatch.setattr(
+        terminal_tool,
+        "_task_env_overrides",
+        {
+            task_id: {
+                "cwd": "/workspace/alert",
+                "max_timeout": 30,
+                "max_output_chars": 100,
+            }
+        },
+    )
+    monkeypatch.setattr(
+        terminal_tool,
+        "_get_env_config",
+        lambda: _minimal_terminal_config(),
+    )
+    monkeypatch.setattr(terminal_tool, "_start_cleanup_thread", lambda: None)
+    monkeypatch.setattr(
+        terminal_tool,
+        "_resolve_container_task_id",
+        lambda value: value or "default",
+    )
+    monkeypatch.setattr(
+        terminal_tool,
+        "_check_all_guards",
+        lambda command, env_type, **kwargs: {"approved": True},
+    )
+
+    result = json.loads(
+        terminal_tool.terminal_tool(
+            command="printf x",
+            task_id=task_id,
+            timeout=180,
+        )
+    )
+
+    assert calls == [
+        (
+            "printf x",
+            {
+                "timeout": 30,
+                "cwd": "/workspace/alert",
+                "bounded_capture": True,
+            },
+        )
+    ]
+    assert "OUTPUT TRUNCATED" in result["output"]
+    assert result["output"].count("x") < 1000
+
+
 def test_stale_env_cwd_from_different_session_is_ignored(monkeypatch):
     """A different session's `cd` left env.cwd pointing at its checkout.
 
@@ -333,3 +430,61 @@ def test_safe_getcwd_falls_back_to_home_when_no_terminal_cwd(monkeypatch):
     monkeypatch.delenv("TERMINAL_CWD", raising=False)
     monkeypatch.setattr(terminal_tool.os.path, "expanduser", lambda p: "/home/me")
     assert terminal_tool._safe_getcwd() == "/home/me"
+
+
+class _StandaloneMonkeyPatch:
+    """Small pytest-monkeypatch subset for manifest preflight execution."""
+
+    def __init__(self):
+        self._undo = []
+
+    def setattr(self, target, name, value):
+        previous = getattr(target, name)
+        setattr(target, name, value)
+        self._undo.append(lambda: setattr(target, name, previous))
+
+    def setenv(self, name, value):
+        existed = name in os.environ
+        previous = os.environ.get(name)
+        os.environ[name] = value
+
+        def restore():
+            if existed:
+                os.environ[name] = previous
+            else:
+                os.environ.pop(name, None)
+
+        self._undo.append(restore)
+
+    def delenv(self, name, raising=True):
+        existed = name in os.environ
+        previous = os.environ.get(name)
+        if not existed and raising:
+            raise KeyError(name)
+        os.environ.pop(name, None)
+
+        def restore():
+            if existed:
+                os.environ[name] = previous
+
+        self._undo.append(restore)
+
+    def undo(self):
+        for restore in reversed(self._undo):
+            restore()
+        self._undo.clear()
+
+
+if __name__ == "__main__":
+    tests = [
+        value
+        for name, value in sorted(globals().items())
+        if name.startswith("test_") and callable(value)
+    ]
+    for test in tests:
+        monkeypatch = _StandaloneMonkeyPatch()
+        try:
+            test(monkeypatch)
+        finally:
+            monkeypatch.undo()
+    print(f"{len(tests)} terminal task tests passed")

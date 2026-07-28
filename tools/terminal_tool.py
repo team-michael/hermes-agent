@@ -42,6 +42,7 @@ import threading
 import atexit
 import shutil
 import subprocess
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
@@ -1068,6 +1069,7 @@ def _maybe_reap_docker_orphans(container_config: Dict[str, Any]) -> None:
 # This is never exposed to the model -- only infrastructure code calls it.
 # Thread-safe because each task_id is unique per rollout.
 _task_env_overrides: Dict[str, Dict[str, Any]] = {}
+_task_env_overrides_lock = threading.RLock()
 
 # ── Per-session cwd records (cwd rearchitecture, step 1) ────────────────────
 #
@@ -1133,12 +1135,15 @@ def register_task_env_overrides(task_id: str, overrides: Dict[str, Any]):
         - modal_image: str -- Path to Dockerfile or Docker Hub image name
         - docker_image: str -- Docker image name
         - cwd: str -- Working directory inside the sandbox
+        - max_timeout: int -- Hard upper bound for foreground command timeout
+        - max_output_chars: int -- Hard upper bound for returned output
 
     Args:
         task_id: The rollout's unique task identifier
         overrides: Dict of config keys to override
     """
-    _task_env_overrides[task_id] = overrides
+    with _task_env_overrides_lock:
+        _task_env_overrides[task_id] = overrides
 
     # If a live environment already exists for this task, a freshly registered
     # ``cwd`` override (e.g. the ACP client switching the editor's project root
@@ -1168,8 +1173,36 @@ def clear_task_env_overrides(task_id: str):
 
     Called during cleanup to avoid stale entries accumulating.
     """
-    _task_env_overrides.pop(task_id, None)
+    with _task_env_overrides_lock:
+        _task_env_overrides.pop(task_id, None)
     clear_session_cwd(task_id)
+
+
+@contextmanager
+def scoped_task_env_overrides(
+    task_id: str,
+    overrides: Dict[str, Any],
+):
+    """Temporarily merge infrastructure-only limits for one agent turn.
+
+    Unlike :func:`clear_task_env_overrides`, restoring this scope does not
+    clear the session cwd. This makes it safe for gateway turns that share a
+    durable terminal workspace while applying stricter per-event limits.
+    """
+    key = str(task_id or "default")
+    with _task_env_overrides_lock:
+        previous = _task_env_overrides.get(key)
+        merged = dict(previous or {})
+        merged.update(overrides)
+        _task_env_overrides[key] = merged
+    try:
+        yield
+    finally:
+        with _task_env_overrides_lock:
+            if previous is None:
+                _task_env_overrides.pop(key, None)
+            else:
+                _task_env_overrides[key] = previous
 
 
 def _resolve_container_task_id(task_id: Optional[str]) -> str:
@@ -1200,8 +1233,9 @@ def _resolve_container_task_id(task_id: Optional[str]) -> str:
         "docker_image", "modal_image", "singularity_image",
         "daytona_image", "env_type",
     })
-    if task_id and task_id in _task_env_overrides:
-        overrides = _task_env_overrides[task_id]
+    with _task_env_overrides_lock:
+        overrides = dict(_task_env_overrides.get(task_id) or {}) if task_id else {}
+    if overrides:
         if set(overrides.keys()) & _ISOLATION_KEYS:
             return task_id
     return "default"
@@ -1220,11 +1254,13 @@ def resolve_task_overrides(task_id: Optional[str]) -> Dict[str, Any]:
     source of that lookup so the terminal and file layers can't drift apart.
     """
     raw = task_id or "default"
-    return (
-        _task_env_overrides.get(raw)
-        or _task_env_overrides.get(_resolve_container_task_id(raw))
-        or {}
-    )
+    collapsed = _resolve_container_task_id(raw)
+    with _task_env_overrides_lock:
+        return dict(
+            _task_env_overrides.get(raw)
+            or _task_env_overrides.get(collapsed)
+            or {}
+        )
 
 
 # Configuration from environment variables
@@ -2205,13 +2241,19 @@ def terminal_tool(
             cwd = config["cwd"]
         default_timeout = config["timeout"]
         effective_timeout = timeout or default_timeout
+        try:
+            max_timeout = int(overrides.get("max_timeout") or 0)
+        except (TypeError, ValueError):
+            max_timeout = 0
+        if max_timeout > 0:
+            effective_timeout = min(effective_timeout, max_timeout)
 
         # Reject foreground commands where the model explicitly requests
         # a timeout above FOREGROUND_MAX_TIMEOUT — nudge it toward background.
-        if not background and timeout and timeout > FOREGROUND_MAX_TIMEOUT:
+        if not background and effective_timeout > FOREGROUND_MAX_TIMEOUT:
             return json.dumps({
                 "error": (
-                    f"Foreground timeout {timeout}s exceeds the maximum of "
+                    f"Foreground timeout {effective_timeout}s exceeds the maximum of "
                     f"{FOREGROUND_MAX_TIMEOUT}s. Use background=true with "
                     f"notify_on_complete=true for long-running commands."
                 ),
@@ -2817,6 +2859,17 @@ def terminal_tool(
             # Truncate output if too long, keeping both head and tail
             from tools.tool_output_limits import get_max_bytes
             MAX_OUTPUT_CHARS = get_max_bytes()
+            try:
+                task_max_output_chars = int(
+                    overrides.get("max_output_chars") or 0
+                )
+            except (TypeError, ValueError):
+                task_max_output_chars = 0
+            if task_max_output_chars > 0:
+                MAX_OUTPUT_CHARS = min(
+                    MAX_OUTPUT_CHARS,
+                    task_max_output_chars,
+                )
             if len(output) > MAX_OUTPUT_CHARS:
                 head_chars = int(MAX_OUTPUT_CHARS * 0.4)  # 40% head (error messages often appear early)
                 tail_chars = MAX_OUTPUT_CHARS - head_chars  # 60% tail (most recent/relevant output)
