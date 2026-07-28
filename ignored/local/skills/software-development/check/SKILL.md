@@ -1,7 +1,7 @@
 ---
 name: check
 description: Investigate Notifly Slack/Amazon Q/CloudWatch alerts from live data sources using the bundled deterministic helper, then return one concise Korean triage result.
-version: 1.4.2
+version: 1.4.3
 author: Hermes Agent
 license: MIT
 metadata:
@@ -164,6 +164,9 @@ When `dlq_backlog.event_type` is `DLQ_BACKLOG_DETECTED`, use the helper's
   every sample is consecutive. Use its provided KST timestamps verbatim and
   state that continuity is unconfirmed.
 - Do not assign an owner unless `response_facts` provides one.
+- Use `immediate_action_label_ko` and `immediate_action_reason_ko` verbatim.
+  Queue depth alone is not an urgency threshold. If `action_owner` is
+  `unconfirmed`, omit the owner instead of inventing a team or role.
 - Output Korean only except for exact technical identifiers.
 - Never recommend or perform redrive, purge, delete, or stream replay while the
   disposition is `hold_for_evidence`.
@@ -199,7 +202,9 @@ Visible format, in this exact order:
 - 즉시 조치 필요 여부: <필요|불필요|추적 필요 + reason>
 ```
 
-Add `- 액션 아이템:` only for `needs_fix` or `urgent`, and name a concrete code/SQL/Terraform/owner target.
+Add `- 액션 아이템:` only for `needs_fix` or `urgent`, and name a concrete
+code/SQL/Terraform target. Include an owner only when the relevant response
+facts provide a confirmed owner.
 
 Status directive:
 
@@ -223,6 +228,8 @@ Do not modify skills or write one-off production scripts during the foreground a
 
 ## Known improvements
 
+- `v1.4.3`: DLQ response facts precompute the immediate-action label and block
+  low-depth severity downgrades or invented owners observed in live responses.
 - `v1.4.2`: DLQ disposition reconciles the trigger marker with current SQS
   approximate attributes. Slack responses use the latest observed depth,
   retain marker depth for history, and report `no_action` only when every

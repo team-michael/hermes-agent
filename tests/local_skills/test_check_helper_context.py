@@ -329,6 +329,14 @@ class QueueRecoveryDecisionTest(unittest.TestCase):
             "needs_fix",
         )
         self.assertEqual(
+            disposition["response_facts"]["immediate_action_label_ko"],
+            "추적 필요",
+        )
+        self.assertEqual(
+            disposition["response_facts"]["action_owner"],
+            "unconfirmed",
+        )
+        self.assertEqual(
             [
                 (queue["marker_depth"], queue["depth"], queue["depth_source"])
                 for queue in disposition["queues"]
@@ -353,6 +361,10 @@ class QueueRecoveryDecisionTest(unittest.TestCase):
         self.assertEqual(
             disposition["response_facts"]["processing_status"],
             "no_action",
+        )
+        self.assertEqual(
+            disposition["response_facts"]["immediate_action_label_ko"],
+            "불필요",
         )
         self.assertTrue(disposition["live_sqs_observed_empty"])
         self.assertTrue(

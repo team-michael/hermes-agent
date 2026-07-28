@@ -104,6 +104,9 @@ Required classification:
   successfully. They do not prove that DLQ messages are harmless.
 - Do not receive, redrive, delete, purge, or replay messages automatically.
 - Message age and an `Enabled` mapping never satisfy recovery safety gates.
+- Render `immediate_action_label_ko` and `immediate_action_reason_ko` verbatim;
+  a small queue depth is not evidence that follow-up is unnecessary. Omit an
+  owner when `action_owner` is `unconfirmed`.
 - Do not call `receive_message` or payload inspection read-only; receiving a
   message changes visibility and requires explicit approval.
 - Do not speculate that messages are stale, historical residue, safe, or tied

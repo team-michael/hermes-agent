@@ -608,6 +608,15 @@ def build_dlq_disposition(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         },
         'monitor_lambda_health': monitor_lambda_health,
         'customer_impact': 'unconfirmed',
+        'immediate_action_label_ko': (
+            '불필요' if live_sqs_observed_empty else '추적 필요'
+        ),
+        'immediate_action_reason_ko': (
+            '현재 SQS 표본에서 적체가 관측되지 않음'
+            if live_sqs_observed_empty
+            else '현재 적체가 남아 있고 메시지 결과와 재처리 안전성이 미확인'
+        ),
+        'action_owner': 'unconfirmed',
         'mutation_allowed': False,
         'next_action': (
             'No queue mutation. Continue scheduled monitoring.'
@@ -714,6 +723,7 @@ def build_dlq_disposition(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             'Do not call a bounded recent sample complete 7-day history or consecutive events.',
             'Do not turn the sample start/end span into a persistence duration.',
             'Do not assign an owner unless response_facts provides one.',
+            'Do not downgrade needs_fix to immediate action unnecessary based only on queue depth.',
             'Use provided KST fields verbatim; do not convert timestamps manually.',
             'Use Korean only except exact technical identifiers.',
         ],
@@ -1249,6 +1259,9 @@ def _compact_dlq_disposition(disposition: Any) -> Any:
             'recurrence_sample',
             'monitor_lambda_health',
             'customer_impact',
+            'immediate_action_label_ko',
+            'immediate_action_reason_ko',
+            'action_owner',
             'mutation_allowed',
             'next_action',
         )
