@@ -444,7 +444,48 @@ def queue_main_guesses(queue_name: str) -> List[str]:
         guesses.append(queue_name[:-4])
     return unique(guesses)
 
-def sqs_queue_summary(sqs, queue_name: str) -> Dict[str, Any]:
+def lambda_consumers_for_queue(session, queue_arn: Optional[str]) -> Dict[str, Any]:
+    if not queue_arn:
+        return {'status': 'queue_arn_unavailable', 'mappings': []}
+    try:
+        mappings = session.client('lambda').list_event_source_mappings(
+            EventSourceArn=queue_arn,
+            MaxItems=10,
+        ).get('EventSourceMappings') or []
+        return {
+            'status': 'ok',
+            'mappings': [
+                {
+                    'uuid': mapping.get('UUID'),
+                    'function_arn': mapping.get('FunctionArn'),
+                    'function_name': str(
+                        mapping.get('FunctionArn') or ''
+                    ).rsplit(':', 1)[-1] or None,
+                    'state': mapping.get('State'),
+                    'last_processing_result': mapping.get(
+                        'LastProcessingResult'
+                    ),
+                    'batch_size': mapping.get('BatchSize'),
+                    'function_response_types': mapping.get(
+                        'FunctionResponseTypes'
+                    ) or [],
+                }
+                for mapping in mappings
+            ],
+            'note': (
+                'An empty mapping list only rules out Lambda event-source '
+                'mappings; polling consumers may still exist.'
+            ),
+        }
+    except Exception as e:
+        return {
+            'status': 'error',
+            'mappings': [],
+            'error': sanitize_error(e),
+        }
+
+
+def sqs_queue_summary(session, sqs, queue_name: str) -> Dict[str, Any]:
     out: Dict[str, Any] = {'queue_name': queue_name}
     try:
         url = sqs.get_queue_url(QueueName=queue_name).get('QueueUrl')
@@ -456,18 +497,26 @@ def sqs_queue_summary(sqs, queue_name: str) -> Dict[str, Any]:
                 'ApproximateNumberOfMessagesNotVisible',
                 'ApproximateNumberOfMessagesDelayed',
                 'RedrivePolicy',
+                'RedriveAllowPolicy',
                 'VisibilityTimeout',
                 'MessageRetentionPeriod',
                 'CreatedTimestamp',
                 'LastModifiedTimestamp',
+                'QueueArn',
             ],
         ).get('Attributes') or {}
-        if attrs.get('RedrivePolicy'):
+        for policy_name in ('RedrivePolicy', 'RedriveAllowPolicy'):
+            if not attrs.get(policy_name):
+                continue
             try:
-                attrs['RedrivePolicy'] = json.loads(attrs['RedrivePolicy'])
+                attrs[policy_name] = json.loads(attrs[policy_name])
             except Exception:
                 pass
         out['attributes'] = attrs
+        out['lambda_consumers'] = lambda_consumers_for_queue(
+            session,
+            attrs.get('QueueArn'),
+        )
         try:
             sources = sqs.list_dead_letter_source_queues(QueueUrl=url, MaxResults=10).get('queueUrls') or []
             out['dead_letter_source_queues'] = [src.rsplit('/', 1)[-1] for src in sources]
@@ -483,7 +532,8 @@ def collect_sqs_context(session, alarm: Optional[Dict[str, Any]], queue_names: S
     names = list(queue_names or [])
     if isinstance(alarm, dict):
         names.extend(alarm_dimension_value(alarm, ['QueueName']))
-    names = unique(names)[:MAX_CONTEXT_ITEMS]
+    all_names = unique(names)
+    names = all_names[:MAX_CONTEXT_ITEMS]
     if not names:
         return None
     sqs = session.client('sqs')
@@ -492,7 +542,7 @@ def collect_sqs_context(session, alarm: Optional[Dict[str, Any]], queue_names: S
         related = unique([name, *queue_main_guesses(name)])[:3]
         queue_rows = []
         for queue_name in related:
-            row = sqs_queue_summary(sqs, queue_name)
+            row = sqs_queue_summary(session, sqs, queue_name)
             row['metrics'] = [
                 collect_queue_metric(session, queue_name, 'ApproximateNumberOfMessagesVisible', 'Maximum', days),
                 collect_queue_metric(session, queue_name, 'ApproximateAgeOfOldestMessage', 'Maximum', days),
@@ -503,7 +553,11 @@ def collect_sqs_context(session, alarm: Optional[Dict[str, Any]], queue_names: S
             queue_rows.append(row)
         queues.append({'detected_queue': name, 'related_queues': queue_rows})
     return {
+        'observed_at': datetime.now(timezone.utc).isoformat(),
         'days': days,
+        'requested_queue_count': len(all_names),
+        'collected_queue_count': len(names),
+        'omitted_queue_names': all_names[len(names):],
         'queues': queues,
         'note': 'DLQ payload sampling is intentionally not performed here because receive_message changes message visibility.',
     }

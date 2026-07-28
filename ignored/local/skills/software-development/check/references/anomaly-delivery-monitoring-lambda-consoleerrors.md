@@ -29,6 +29,8 @@ window:
 
 | Confirmed reason | Default judgment |
 |---|---|
+| `DLQ_BACKLOG_DETECTED` | `needs_fix`, disposition `hold_for_evidence` |
+| `DLQ_BACKLOG_INSPECTION_FAILED` | `needs_fix`, disposition `hold_for_evidence` |
 | `not aggregated nhn pending messages exist` | `no_action` when isolated and not escalating |
 | `There exist messages that were scheduled but not delivered` | `no_action` when isolated and recovered |
 | `high failure rate detected` | `needs_fix` |
@@ -37,6 +39,92 @@ Do not assume every `ConsoleErrors` alarm is a Lambda failure. The alarm uses
 the broad metric filter `%ERROR|Status: timeout%` on
 `/aws/lambda/anomaly-delivery-monitoring`; the Lambda can complete successfully
 while reporting a delivery anomaly.
+
+## Pattern 0: Structured DLQ backlog marker
+
+```json
+{
+  "eventType": "DLQ_BACKLOG_DETECTED",
+  "messageCount": 476,
+  "queues": [
+    {
+      "queueName": "example-queue-dlq",
+      "visibleMessageCount": 476,
+      "notVisibleMessageCount": 0,
+      "delayedMessageCount": 0,
+      "messageCount": 476
+    }
+  ]
+}
+```
+
+The helper parses this payload from the raw current-window row before log
+sanitization and exposes:
+
+- `dlq_backlog`: exact marker totals, every queue/depth, and bounded recurrence
+  evidence.
+- `dlq_disposition`: live queue depth, confirmed or inferred source queue,
+  Lambda event-source consumer evidence, missing safety evidence, and the
+  allowed action.
+- `dlq_disposition.response_facts`: precomputed KST timestamps and the only
+  facts allowed in the Slack response. Do not manually convert timestamps or
+  add conclusions outside this object.
+- Each queue's `redrive_capability` says only whether SQS wiring permits a move
+  back to the source queue. `consumer_contract` says whether the event-source
+  mapping reports partial batch failures. Neither field proves replay safety.
+- Each queue's `recovery_decision` is evidence-gated: `redrive_candidate`
+  requires a transient failure, idempotent replay, non-obsolescence, and
+  preserved evidence; `purge_candidate` requires a terminal/permanent failure,
+  confirmed obsolescence, and preserved evidence. The decision never grants
+  mutation permission.
+- Prefer `response_facts.queues[].depth`, sourced from current SQS attributes,
+  over `marker_depth`. A prior marker can outlive a purge, expiry, or drain.
+- If the 10 KB emergency fallback emits `queue_fields` plus array rows, zip
+  those fields with every row and decode `queue_value_codes` before rendering;
+  this preserves all queue names while removing repeated JSON keys.
+- `live_sqs_observed_empty: true` means every marker queue reported zero in the
+  current read-only SQS approximate snapshot. It supports `no_action` for the
+  current backlog, but does not prove historical message outcomes. An alarm
+  `OK` transition alone never provides even this evidence.
+- `live_sqs_snapshot_complete: false` means at least one queue uses
+  `marker_snapshot_fallback`; report that queue as current-state unavailable
+  rather than treating the marker total as a fresh SQS observation.
+
+Required classification:
+
+- A currently non-empty live SQS snapshot is `needs_fix`. If a prior marker is
+  non-empty but every affected queue is currently observed empty, use the
+  helper's current-snapshot `no_action` without claiming historical outcomes.
+- The action disposition is `hold_for_evidence` until the message outcome,
+  consumer behavior, idempotency, and replay side effects are confirmed.
+- A current CloudWatch state of `OK` is not resolution evidence. This
+  log-derived alarm can return to `OK` between scheduled scans because missing
+  data is non-breaching.
+- Lambda `Errors=0` and `Throttles=0` mean the inspection Lambda ran
+  successfully. They do not prove that DLQ messages are harmless.
+- Do not receive, redrive, delete, purge, or replay messages automatically.
+- Message age and an `Enabled` mapping never satisfy recovery safety gates.
+- Do not call `receive_message` or payload inspection read-only; receiving a
+  message changes visibility and requires explicit approval.
+- Do not speculate that messages are stale, historical residue, safe, or tied
+  to a product subtype. Use the exact queue and consumer identifiers.
+- Do not call Lambda duration normal without a documented threshold or
+  baseline. Runtime metrics describe the inspection Lambda, not message
+  outcome.
+- An `Enabled` Lambda event-source mapping proves configuration wiring, not
+  consumer runtime health.
+- Recurrence values are a bounded recent sample. Do not call them complete
+  7-day history, all-consecutive events, or a persistence duration; report
+  `event_count`, `same_as_latest_snapshot_count`, and
+  `distinct_snapshot_count` separately and state continuity is unconfirmed.
+- `DLQ_BACKLOG_INSPECTION_FAILED`, malformed markers, and oversized markers
+  remain `needs_fix / hold_for_evidence`; report the parser/inspection failure
+  without exposing raw payloads.
+
+For the final response, list every queue's current approximate depth and marker
+depth, the bounded recurrence sample, source/consumer evidence, unavailable
+outcome evidence, and the read-only next action. Customer impact remains
+`미확인` until delivery outcome evidence establishes otherwise.
 
 ## Pattern 1: NHN pending aggregation
 

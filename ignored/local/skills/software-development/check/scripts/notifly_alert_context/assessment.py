@@ -89,6 +89,640 @@ def append_followup(
         'reason': reason,
     })
 
+
+def _safe_int(value: Any) -> Optional[int]:
+    if isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _format_kst(value: Any) -> Optional[str]:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(
+            timezone(timedelta(hours=9))
+        ).strftime('%Y-%m-%d %H:%M:%S KST')
+    except (TypeError, ValueError):
+        return None
+
+
+def _sqs_rows_by_name(sqs_context: Any) -> Dict[str, Dict[str, Any]]:
+    rows: Dict[str, Dict[str, Any]] = {}
+    if not isinstance(sqs_context, dict):
+        return rows
+    for group in sqs_context.get('queues') or []:
+        if not isinstance(group, dict):
+            continue
+        for row in group.get('related_queues') or []:
+            if not isinstance(row, dict) or not row.get('queue_name'):
+                continue
+            rows[str(row['queue_name'])] = row
+    return rows
+
+
+def _lambda_health_evidence(lambda_context: Any) -> List[Dict[str, Any]]:
+    evidence = []
+    if not isinstance(lambda_context, dict):
+        return evidence
+    for function in lambda_context.get('functions') or []:
+        if not isinstance(function, dict):
+            continue
+        metrics = {}
+        for metric in function.get('metrics') or []:
+            if not isinstance(metric, dict) or not metric.get('metric_name'):
+                continue
+            summary = metric.get('summary') or {}
+            metrics[str(metric['metric_name'])] = {
+                'statistic': metric.get('statistic'),
+                'latest': summary.get('latest'),
+                'max': summary.get('max'),
+            }
+        evidence.append({
+            'function_name': function.get('function_name')
+            or (function.get('configuration') or {}).get('function_name'),
+            'metrics': metrics,
+            'interpretation': (
+                'Inspection Lambda health only; not message-outcome evidence.'
+            ),
+        })
+    return evidence
+
+
+def decide_queue_recovery(evidence: Dict[str, Any]) -> Dict[str, Any]:
+    """Classify a queue recovery candidate without authorizing a mutation."""
+    failure_class = str(evidence.get('failure_class') or 'unknown')
+    replay_safety = str(evidence.get('replay_safety') or 'unknown')
+    obsolescence = str(evidence.get('obsolescence') or 'unknown')
+    redrive_supported = evidence.get('technical_redrive_supported') is True
+    evidence_preserved = evidence.get('evidence_preserved') is True
+
+    missing_evidence = []
+    if failure_class == 'unknown':
+        missing_evidence.append('failure_class')
+    if replay_safety == 'unknown':
+        missing_evidence.append('replay_safety')
+    if obsolescence == 'unknown':
+        missing_evidence.append('obsolescence')
+    if not evidence_preserved:
+        missing_evidence.append('evidence_preservation')
+
+    redrive_candidate = all([
+        redrive_supported,
+        failure_class == 'transient',
+        replay_safety == 'idempotent',
+        obsolescence == 'not_obsolete',
+        evidence_preserved,
+    ])
+    purge_candidate = all([
+        failure_class in {'terminal', 'permanent'},
+        obsolescence == 'confirmed_obsolete',
+        evidence_preserved,
+    ])
+
+    if purge_candidate:
+        disposition = 'purge_candidate'
+    elif redrive_candidate:
+        disposition = 'redrive_candidate'
+    else:
+        disposition = 'hold_for_evidence'
+
+    if disposition != 'hold_for_evidence':
+        missing_evidence = []
+
+    return {
+        'disposition': disposition,
+        'missing_evidence': missing_evidence,
+        'action_candidates': {
+            'hold_for_evidence': {
+                'recommended': disposition == 'hold_for_evidence',
+            },
+            'redrive': {
+                'recommended': redrive_candidate,
+                'requirements': [
+                    'technical_redrive_supported',
+                    'transient_failure',
+                    'idempotent_replay',
+                    'not_obsolete',
+                    'evidence_preserved',
+                ],
+            },
+            'purge': {
+                'recommended': purge_candidate,
+                'requirements': [
+                    'terminal_or_permanent_failure',
+                    'confirmed_obsolete',
+                    'evidence_preserved',
+                ],
+            },
+        },
+        'mutation_allowed': False,
+    }
+
+
+def _redrive_capability(
+    dlq_name: str,
+    dlq_row: Dict[str, Any],
+    source_names: Sequence[str],
+    sqs_rows: Dict[str, Dict[str, Any]],
+) -> Dict[str, Any]:
+    dlq_attrs = dlq_row.get('attributes') or {}
+    raw_allow_policy = dlq_attrs.get('RedriveAllowPolicy')
+    if raw_allow_policy is None:
+        allow_policy: Dict[str, Any] = {}
+        permission = 'allowAll'
+    elif isinstance(raw_allow_policy, dict):
+        allow_policy = raw_allow_policy
+        permission = allow_policy.get('redrivePermission') or 'unknown'
+    else:
+        allow_policy = {}
+        permission = 'unknown'
+    allowed_sources = {
+        str(arn).rsplit(':', 1)[-1]
+        for arn in allow_policy.get('sourceQueueArns') or []
+        if arn
+    }
+    sources = []
+    for source_name in source_names:
+        source_attrs = (sqs_rows.get(source_name) or {}).get('attributes') or {}
+        policy = source_attrs.get('RedrivePolicy') or {}
+        if not isinstance(policy, dict):
+            policy = {}
+        target_name = str(policy.get('deadLetterTargetArn') or '').rsplit(':', 1)[-1]
+        target_matches = target_name == dlq_name
+        source_allowed = (
+            permission == 'allowAll'
+            or (permission == 'byQueue' and source_name in allowed_sources)
+        )
+        sources.append({
+            'queue_name': source_name,
+            'target_matches': target_matches,
+            'allowed_by_dlq': source_allowed,
+            'max_receive_count': _safe_int(policy.get('maxReceiveCount')),
+        })
+
+    supported_sources = [
+        source
+        for source in sources
+        if source['target_matches'] and source['allowed_by_dlq']
+    ]
+    return {
+        'supported': bool(supported_sources),
+        'permission': permission,
+        'max_receive_count': (
+            supported_sources[0].get('max_receive_count')
+            if len(supported_sources) == 1
+            else None
+        ),
+        'sources': sources,
+        'interpretation': (
+            'Technical redrive capability only; not replay-safety evidence.'
+        ),
+    }
+
+
+def _consumer_contract(consumers: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    response_types = unique([
+        str(response_type)
+        for consumer in consumers
+        for response_type in consumer.get('function_response_types') or []
+        if response_type
+    ])
+    return {
+        'partial_batch_failure_reporting': (
+            'ReportBatchItemFailures' in response_types
+            if consumers
+            else None
+        ),
+        'function_response_types': response_types,
+        'interpretation': (
+            'Event-source response contract only; not consumer runtime health '
+            'or replay-safety evidence.'
+        ),
+    }
+
+
+def _live_queue_depth(queue_row: Dict[str, Any]) -> Optional[int]:
+    attrs = queue_row.get('attributes') or {}
+    keys = (
+        'ApproximateNumberOfMessages',
+        'ApproximateNumberOfMessagesNotVisible',
+        'ApproximateNumberOfMessagesDelayed',
+    )
+    if not all(key in attrs for key in keys):
+        return None
+    values = [_safe_int(attrs.get(key)) for key in keys]
+    if any(value is None for value in values):
+        return None
+    return sum(int(value) for value in values)
+
+
+def _no_action_recovery_decision() -> Dict[str, Any]:
+    return {
+        'disposition': 'no_action',
+        'missing_evidence': [],
+        'action_candidates': {
+            'hold_for_evidence': {'recommended': False},
+            'redrive': {'recommended': False},
+            'purge': {'recommended': False},
+        },
+        'mutation_allowed': False,
+    }
+
+
+def build_dlq_disposition(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    marker = data.get('dlq_backlog')
+    if not isinstance(marker, dict):
+        marker = (data.get('logs_insights') or {}).get('dlq_backlog')
+    if not isinstance(marker, dict):
+        return None
+
+    current = marker.get('current') or {}
+    if not current.get('marker_seen'):
+        return None
+    latest = current.get('latest_event')
+    recent = marker.get('recent_sample') or {}
+    sqs_rows = _sqs_rows_by_name(data.get('sqs_context'))
+
+    queue_evidence = []
+    for marker_queue in (latest or {}).get('queues') or []:
+        if not isinstance(marker_queue, dict):
+            continue
+        queue_name = str(marker_queue.get('queue_name') or '')
+        live_row = sqs_rows.get(queue_name) or {}
+        attrs = live_row.get('attributes') or {}
+        live_depth = _live_queue_depth(live_row)
+        confirmed_sources = [
+            str(name)
+            for name in live_row.get('dead_letter_source_queues') or []
+            if name
+        ]
+        inferred_source = (
+            queue_name[:-4]
+            if not confirmed_sources and queue_name.endswith('-dlq')
+            else None
+        )
+        source_names = confirmed_sources or (
+            [inferred_source] if inferred_source else []
+        )
+        consumers = []
+        consumer_lookup_status = []
+        for source_name in source_names:
+            source_row = sqs_rows.get(source_name) or {}
+            consumer_data = source_row.get('lambda_consumers') or {}
+            consumer_lookup_status.append({
+                'queue_name': source_name,
+                'status': consumer_data.get('status') or 'unavailable',
+            })
+            consumers.extend([
+                {
+                    'source_queue': source_name,
+                    'function_name': mapping.get('function_name'),
+                    'function_arn': mapping.get('function_arn'),
+                    'state': mapping.get('state'),
+                    'last_processing_result': mapping.get(
+                        'last_processing_result'
+                    ),
+                    'function_response_types': mapping.get(
+                        'function_response_types'
+                    ) or [],
+                }
+                for mapping in consumer_data.get('mappings') or []
+                if isinstance(mapping, dict)
+            ])
+        redrive_capability = _redrive_capability(
+            queue_name,
+            live_row,
+            source_names,
+            sqs_rows,
+        )
+        consumer_contract = _consumer_contract(consumers)
+        recovery_decision = (
+            _no_action_recovery_decision()
+            if live_depth == 0
+            else decide_queue_recovery({
+                'technical_redrive_supported': redrive_capability['supported'],
+                'failure_class': 'unknown',
+                'replay_safety': 'unknown',
+                'obsolescence': 'unknown',
+                'evidence_preserved': False,
+            })
+        )
+        queue_evidence.append({
+            'queue_name': queue_name,
+            'marker_depth': marker_queue.get('message_count'),
+            'depth': (
+                live_depth
+                if live_depth is not None
+                else marker_queue.get('message_count')
+            ),
+            'depth_source': (
+                'live_sqs_attributes'
+                if live_depth is not None
+                else 'marker_snapshot_fallback'
+            ),
+            'live_depth': live_depth,
+            'marker_visible': marker_queue.get('visible_message_count'),
+            'marker_not_visible': marker_queue.get(
+                'not_visible_message_count'
+            ),
+            'marker_delayed': marker_queue.get('delayed_message_count'),
+            'live_visible': _safe_int(
+                attrs.get('ApproximateNumberOfMessages')
+            ),
+            'live_not_visible': _safe_int(
+                attrs.get('ApproximateNumberOfMessagesNotVisible')
+            ),
+            'live_delayed': _safe_int(
+                attrs.get('ApproximateNumberOfMessagesDelayed')
+            ),
+            'source_queue_status': (
+                'confirmed'
+                if confirmed_sources
+                else 'inferred_from_dlq_name'
+                if inferred_source
+                else 'unavailable'
+            ),
+            'source_queues': source_names,
+            'lambda_consumers': consumers,
+            'consumer_lookup': consumer_lookup_status,
+            'redrive_capability': redrive_capability,
+            'consumer_contract': consumer_contract,
+            'recovery_decision': recovery_decision,
+        })
+
+    marker_message_count = _safe_int((latest or {}).get('message_count'))
+    if marker_message_count is None:
+        marker_message_count = _safe_int(
+            (latest or {}).get('calculated_message_count')
+        )
+    if marker_message_count is None:
+        marker_message_count = sum(
+            _safe_int(queue.get('message_count')) or 0
+            for queue in (latest or {}).get('queues') or []
+            if isinstance(queue, dict)
+        )
+    live_depths_known = bool(queue_evidence) and all(
+        queue.get('live_depth') is not None
+        for queue in queue_evidence
+    )
+    current_message_count = (
+        sum(int(queue.get('live_depth') or 0) for queue in queue_evidence)
+        if live_depths_known
+        else marker_message_count
+    )
+    current_queue_count = (
+        sum(1 for queue in queue_evidence if (queue.get('live_depth') or 0) > 0)
+        if live_depths_known
+        else _safe_int((latest or {}).get('queue_count')) or len(queue_evidence)
+    )
+    live_sqs_observed_empty = (
+        live_depths_known and current_message_count == 0
+    )
+    active_backlog = current_message_count > 0
+    judgment = 'no_action' if live_sqs_observed_empty else 'needs_fix'
+    disposition = (
+        'no_action' if live_sqs_observed_empty else 'hold_for_evidence'
+    )
+
+    parse_issues = current.get('parse_issues') or []
+    event_type = (
+        (latest or {}).get('event_type')
+        or (
+            parse_issues[0].get('event_type')
+            if parse_issues and isinstance(parse_issues[0], dict)
+            else None
+        )
+    )
+    marker_backlog_detected = (
+        event_type == 'DLQ_BACKLOG_DETECTED'
+        and marker_message_count > 0
+    )
+    missing_evidence = (
+        []
+        if live_sqs_observed_empty
+        else [
+            'message_outcome',
+            'side_effect_and_idempotency_safety',
+        ]
+    )
+    if not live_depths_known:
+        missing_evidence.append('live_queue_depths')
+    if not queue_evidence:
+        missing_evidence.append('queue_depths')
+    if active_backlog and any(
+        not item.get('source_queues') for item in queue_evidence
+    ):
+        missing_evidence.append('source_queue')
+    if active_backlog and any(
+        not item.get('lambda_consumers') for item in queue_evidence
+    ):
+        missing_evidence.append(
+            'consumer_identity_when_not_lambda_event_source'
+        )
+    monitor_lambda_health = _lambda_health_evidence(
+        data.get('lambda_context')
+    )
+    live_observed_at = (data.get('sqs_context') or {}).get('observed_at')
+    response_facts = {
+        'processing_status': judgment,
+        'backlog_status': (
+            'empty_in_live_snapshot'
+            if live_sqs_observed_empty
+            else 'active_backlog'
+        ),
+        'judgment': judgment,
+        'disposition': disposition,
+        'confirmed_signal': (
+            'live_sqs_snapshot_empty'
+            if live_sqs_observed_empty
+            else 'live_sqs_backlog_present'
+            if live_depths_known
+            else event_type or 'dlq_marker_unparsed'
+        ),
+        'underlying_failure_cause': 'unconfirmed',
+        'observed_at_kst': _format_kst(
+            live_observed_at or (latest or {}).get('observed_at')
+        ),
+        'marker_observed_at_kst': _format_kst(
+            (latest or {}).get('observed_at')
+        ),
+        'total_message_count': current_message_count,
+        'marker_message_count': marker_message_count,
+        'live_sqs_snapshot_complete': live_depths_known,
+        'current_state_unavailable_queues': [
+            queue.get('queue_name')
+            for queue in queue_evidence
+            if queue.get('live_depth') is None
+        ],
+        'live_sqs_observed_empty': live_sqs_observed_empty,
+        'inspection_issues': parse_issues,
+        'queues': [
+            {
+                'queue_name': queue.get('queue_name'),
+                'depth': queue.get('depth'),
+                'marker_depth': queue.get('marker_depth'),
+                'depth_source': queue.get('depth_source'),
+                'depth_is_approximate': True,
+                'source_queues': queue.get('source_queues') or [],
+                'consumers': [
+                    {
+                        'function_name': consumer.get('function_name'),
+                        'mapping_state': consumer.get('state'),
+                    }
+                    for consumer in queue.get('lambda_consumers') or []
+                ],
+                'redrive_capability': queue.get('redrive_capability'),
+                'consumer_contract': queue.get('consumer_contract'),
+                'recovery_decision': queue.get('recovery_decision'),
+                'consumer_runtime_metrics_collected': False,
+            }
+            for queue in queue_evidence
+        ],
+        'scope': (
+            'infra_common; project/campaign/user_journey unconfirmed'
+        ),
+        'recurrence_sample': {
+            'sample_is_complete_history': False,
+            'continuity_confirmed': False,
+            'persistence_duration_confirmed': False,
+            'event_count': recent.get('event_count_in_sample'),
+            'same_as_latest_snapshot_count': recent.get(
+                'same_as_latest_count'
+            ),
+            'distinct_snapshot_count': recent.get(
+                'distinct_snapshot_count'
+            ),
+            'sample_start_kst': _format_kst(
+                recent.get('first_observed_at_in_sample')
+            ),
+            'sample_end_kst': _format_kst(
+                recent.get('last_observed_at_in_sample')
+            ),
+        },
+        'monitor_lambda_health': monitor_lambda_health,
+        'customer_impact': 'unconfirmed',
+        'mutation_allowed': False,
+        'next_action': (
+            'No queue mutation. Continue scheduled monitoring.'
+            if live_sqs_observed_empty
+            else 'Confirm outcome and replay safety from existing consumer '
+            'logs and metrics. Payload inspection requires explicit approval '
+            'because receive_message changes visibility.'
+        ),
+    }
+
+    return {
+        'judgment': judgment,
+        'disposition': disposition,
+        'event_type': event_type,
+        'marker_status': (
+            'parsed'
+            if latest
+            else 'rejected'
+            if parse_issues
+            else 'missing_payload'
+        ),
+        'message_count': current_message_count,
+        'marker_message_count': marker_message_count,
+        'queue_count': current_queue_count,
+        'marker_queue_count': (latest or {}).get('queue_count'),
+        'live_sqs_snapshot_complete': live_depths_known,
+        'live_sqs_observed_empty': live_sqs_observed_empty,
+        'queues': queue_evidence,
+        'recurrence': {
+            'event_count_in_recent_sample': recent.get(
+                'event_count_in_sample'
+            ),
+            'same_as_latest_count': recent.get('same_as_latest_count'),
+            'distinct_snapshot_count': recent.get(
+                'distinct_snapshot_count'
+            ),
+            'first_observed_at_in_sample': recent.get(
+                'first_observed_at_in_sample'
+            ),
+            'last_observed_at_in_sample': recent.get(
+                'last_observed_at_in_sample'
+            ),
+        },
+        'customer_impact': (
+            'unconfirmed_backlog_present'
+            if active_backlog
+            else 'no_active_backlog_observed'
+            if live_sqs_observed_empty
+            else 'unconfirmed'
+        ),
+        'confirmed_cause': (
+            'Live SQS approximate attributes show a non-empty DLQ backlog.'
+            if active_backlog and live_depths_known
+            else 'A prior marker detected backlog, and the current SQS approximate snapshot reports zero messages.'
+            if live_sqs_observed_empty
+            else 'A structured marker confirmed a non-empty DLQ backlog.'
+            if marker_backlog_detected
+            else 'The DLQ inspection marker could not confirm queue contents.'
+        ),
+        'underlying_failure_cause': 'unconfirmed',
+        'monitor_lambda_health': monitor_lambda_health,
+        'alarm_ok_means_resolved': False,
+        'alarm_state_explanation': marker.get('alarm_state_note'),
+        'missing_evidence': unique(missing_evidence),
+        'action_candidates': {
+            'hold_for_evidence': {
+                'recommended': active_backlog,
+                'reason': (
+                    'Backlog is confirmed, but message outcome and replay '
+                    'side-effect safety are not.'
+                    if active_backlog
+                    else 'Live SQS attributes show no active backlog.'
+                ),
+            },
+            'redrive': {
+                'recommended': False,
+                'reason': 'Requires confirmed outcome and idempotent replay.',
+            },
+            'purge': {
+                'recommended': False,
+                'reason': 'Requires proof that every message is obsolete.',
+            },
+            'stream_replay': {
+                'recommended': False,
+                'reason': (
+                    'Requires source-record identity and downstream replay '
+                    'safety evidence.'
+                ),
+            },
+        },
+        'recommended_next_action': (
+            'No queue mutation. Continue scheduled monitoring.'
+            if live_sqs_observed_empty
+            else 'Confirm outcome and replay safety from consumer logs/metrics. '
+            'Payload inspection requires approval because receive_message '
+            'changes visibility. No redrive, purge, delete, or replay yet.'
+        ),
+        'response_guardrails': [
+            'Do not invent an underlying failure cause or call the messages stale.',
+            'Use exact queue and consumer identifiers; do not infer a product subtype.',
+            'Do not describe receive_message or payload inspection as read-only.',
+            'Do not call Lambda duration normal without an explicit baseline.',
+            'An Enabled event-source mapping is not consumer runtime-health evidence.',
+            'Do not call a bounded recent sample complete 7-day history or consecutive events.',
+            'Do not turn the sample start/end span into a persistence duration.',
+            'Do not assign an owner unless response_facts provides one.',
+            'Use provided KST fields verbatim; do not convert timestamps manually.',
+            'Use Korean only except exact technical identifiers.',
+        ],
+        'response_facts': response_facts,
+        'mutation_performed': False,
+        'parse_issues': parse_issues,
+    }
+
+
 def assess_helper_context(data: Dict[str, Any]) -> Dict[str, Any]:
     detected = data.get('detected') or {}
     alarm = data.get('alarm_summary') or {}
@@ -103,10 +737,13 @@ def assess_helper_context(data: Dict[str, Any]) -> Dict[str, Any]:
     scope = data.get('scope_attribution') or {}
     campaign_hints = data.get('campaign_scope_hints') or {}
     code_hits = data.get('repo_code_hits') or []
+    dlq_disposition = build_dlq_disposition(data)
 
     missing: List[Dict[str, Any]] = []
     followups: List[Dict[str, Any]] = []
     root_cause_evidence: List[str] = []
+    if dlq_disposition:
+        root_cause_evidence.append('dlq_backlog_marker')
 
     alarm_name = detected.get('alarm_name') or alarm.get('AlarmName')
     namespace = str((alarm or {}).get('Namespace') or '')
@@ -274,7 +911,12 @@ def assess_helper_context(data: Dict[str, Any]) -> Dict[str, Any]:
         )
 
     if sqs_shaped and (not isinstance(sqs, dict) or sqs.get('error')):
-        append_missing(missing, 'sqs_queue_context', 'SQS queue attributes/metrics are unavailable.')
+        append_missing(
+            missing,
+            'sqs_queue_context',
+            'SQS queue attributes/metrics are unavailable.',
+            severity='informational' if dlq_disposition else 'required',
+        )
         append_followup(
             followups,
             'describe_sqs_queue_context',
@@ -405,6 +1047,7 @@ def assess_helper_context(data: Dict[str, Any]) -> Dict[str, Any]:
             else 'run_only_listed_followups_then_finalize'
         ),
         'root_cause_evidence': root_cause_evidence,
+        'dlq_disposition': dlq_disposition,
         'missing_required_context': missing,
         'required_followups': selected_followups,
         'omitted_followup_count': max(0, len(followups) - len(selected_followups)),
@@ -500,6 +1143,197 @@ def _compact_logs(logs_summary: Any) -> Any:
     )
 
 
+def _compact_dlq_backlog(marker: Any) -> Any:
+    if not isinstance(marker, dict):
+        return None
+    current = marker.get('current') or {}
+    recent = marker.get('recent_sample') or {}
+    latest = current.get('latest_event') or {}
+    return {
+        'marker_seen': current.get('marker_seen'),
+        'event_type': latest.get('event_type'),
+        'observed_at': latest.get('observed_at'),
+        'region': latest.get('region'),
+        'message_count': latest.get('message_count'),
+        'calculated_message_count': latest.get(
+            'calculated_message_count'
+        ),
+        'count_consistent': latest.get('count_consistent'),
+        'queue_count': latest.get('queue_count'),
+        'queues': [
+            {
+                'queue_name': queue.get('queue_name'),
+                'message_count': queue.get('message_count'),
+                'visible_message_count': queue.get(
+                    'visible_message_count'
+                ),
+                'not_visible_message_count': queue.get(
+                    'not_visible_message_count'
+                ),
+                'delayed_message_count': queue.get(
+                    'delayed_message_count'
+                ),
+                'message_retention_period_seconds': queue.get(
+                    'message_retention_period_seconds'
+                ),
+            }
+            for queue in latest.get('queues') or []
+            if isinstance(queue, dict)
+        ],
+        'recent_sample': {
+            'event_count': recent.get('event_count_in_sample'),
+            'same_as_latest_count': recent.get('same_as_latest_count'),
+            'distinct_snapshot_count': recent.get(
+                'distinct_snapshot_count'
+            ),
+            'first_observed_at': recent.get(
+                'first_observed_at_in_sample'
+            ),
+            'last_observed_at': recent.get(
+                'last_observed_at_in_sample'
+            ),
+        },
+        'parse_issues': current.get('parse_issues') or [],
+        'alarm_state_note': marker.get('alarm_state_note'),
+    }
+
+
+def _compact_dlq_disposition(disposition: Any) -> Any:
+    if not isinstance(disposition, dict):
+        return None
+    response_facts = disposition.get('response_facts') or {}
+    compact_queues = []
+    for queue in response_facts.get('queues') or []:
+        if not isinstance(queue, dict):
+            continue
+        capability = queue.get('redrive_capability') or {}
+        contract = queue.get('consumer_contract') or {}
+        decision = queue.get('recovery_decision') or {}
+        compact_queues.append({
+            'queue_name': queue.get('queue_name'),
+            'depth': queue.get('depth'),
+            'marker_depth': queue.get('marker_depth'),
+            'depth_source': queue.get('depth_source'),
+            'depth_is_approximate': queue.get('depth_is_approximate'),
+            'source_queues': queue.get('source_queues') or [],
+            'consumers': queue.get('consumers') or [],
+            'technical_redrive_supported': capability.get('supported'),
+            'max_receive_count': capability.get('max_receive_count'),
+            'partial_batch_failure_reporting': contract.get(
+                'partial_batch_failure_reporting'
+            ),
+            'recovery_disposition': decision.get('disposition'),
+            'missing_recovery_evidence': decision.get(
+                'missing_evidence'
+            ) or [],
+            'mutation_allowed': decision.get('mutation_allowed'),
+        })
+    compact_response_facts = {
+        key: response_facts.get(key)
+        for key in (
+            'processing_status',
+            'backlog_status',
+            'judgment',
+            'disposition',
+            'confirmed_signal',
+            'underlying_failure_cause',
+            'observed_at_kst',
+            'marker_observed_at_kst',
+            'total_message_count',
+            'marker_message_count',
+            'live_sqs_snapshot_complete',
+            'current_state_unavailable_queues',
+            'live_sqs_observed_empty',
+            'inspection_issues',
+            'scope',
+            'recurrence_sample',
+            'monitor_lambda_health',
+            'customer_impact',
+            'mutation_allowed',
+            'next_action',
+        )
+    }
+    compact_response_facts['queues'] = compact_queues
+    return {
+        'judgment': disposition.get('judgment'),
+        'disposition': disposition.get('disposition'),
+        'event_type': disposition.get('event_type'),
+        'marker_status': disposition.get('marker_status'),
+        'message_count': disposition.get('message_count'),
+        'marker_message_count': disposition.get('marker_message_count'),
+        'queue_count': disposition.get('queue_count'),
+        'marker_queue_count': disposition.get('marker_queue_count'),
+        'live_sqs_snapshot_complete': disposition.get(
+            'live_sqs_snapshot_complete'
+        ),
+        'live_sqs_observed_empty': disposition.get(
+            'live_sqs_observed_empty'
+        ),
+        'customer_impact': disposition.get('customer_impact'),
+        'alarm_ok_means_resolved': disposition.get(
+            'alarm_ok_means_resolved'
+        ),
+        'alarm_state_explanation': disposition.get(
+            'alarm_state_explanation'
+        ),
+        'missing_evidence': disposition.get('missing_evidence') or [],
+        'response_guardrails': disposition.get(
+            'response_guardrails'
+        ) or [],
+        'response_facts': compact_response_facts,
+        'mutation_performed': disposition.get('mutation_performed'),
+        'parse_issues': disposition.get('parse_issues') or [],
+    }
+
+
+def _compact_sqs_context(sqs_context: Any) -> Any:
+    if not isinstance(sqs_context, dict):
+        return sqs_context
+    queues = []
+    for group in sqs_context.get('queues') or []:
+        if not isinstance(group, dict):
+            continue
+        related = []
+        for row in group.get('related_queues') or []:
+            if not isinstance(row, dict):
+                continue
+            attrs = row.get('attributes') or {}
+            related.append({
+                'queue_name': row.get('queue_name'),
+                'attributes': {
+                    key: attrs.get(key)
+                    for key in (
+                        'ApproximateNumberOfMessages',
+                        'ApproximateNumberOfMessagesNotVisible',
+                        'ApproximateNumberOfMessagesDelayed',
+                        'MessageRetentionPeriod',
+                        'VisibilityTimeout',
+                        'RedrivePolicy',
+                        'RedriveAllowPolicy',
+                    )
+                    if key in attrs
+                },
+                'dead_letter_source_queues': (
+                    row.get('dead_letter_source_queues') or []
+                ),
+                'lambda_consumers': row.get('lambda_consumers'),
+                'error': row.get('error'),
+            })
+        queues.append({
+            'detected_queue': group.get('detected_queue'),
+            'related_queues': related,
+        })
+    return {
+        'observed_at': sqs_context.get('observed_at'),
+        'days': sqs_context.get('days'),
+        'requested_queue_count': sqs_context.get('requested_queue_count'),
+        'collected_queue_count': sqs_context.get('collected_queue_count'),
+        'omitted_queue_names': sqs_context.get('omitted_queue_names') or [],
+        'queues': queues,
+        'note': sqs_context.get('note'),
+    }
+
+
 def _serialized_size(value: Any) -> int:
     return len(
         json.dumps(
@@ -509,6 +1343,136 @@ def _serialized_size(value: Any) -> int:
             default=str,
         ).encode('utf-8')
     )
+
+
+def _minimal_dlq_budget_output(
+    result: Dict[str, Any],
+    omitted: Sequence[str],
+) -> Dict[str, Any]:
+    disposition = result.get('dlq_disposition') or {}
+    facts = disposition.get('response_facts') or {}
+    queue_rows = []
+    recovery_overrides: Dict[str, List[str]] = {}
+    for queue in facts.get('queues') or []:
+        if not isinstance(queue, dict):
+            continue
+        row = {
+            'queue_name': queue.get('queue_name'),
+            'depth': queue.get('depth'),
+        }
+        if queue.get('marker_depth') != queue.get('depth'):
+            row['marker_depth'] = queue.get('marker_depth')
+        if queue.get('depth_source') != 'live_sqs_attributes':
+            row['depth_source'] = 'marker'
+        queue_rows.append(row)
+        queue_disposition = queue.get('recovery_disposition')
+        if (
+            queue_disposition
+            and queue_disposition != disposition.get('disposition')
+        ):
+            recovery_overrides.setdefault(queue_disposition, []).append(
+                str(queue.get('queue_name') or '')
+            )
+
+    minimal_facts = {
+        'processing_status': facts.get('processing_status'),
+        'backlog_status': facts.get('backlog_status'),
+        'total_message_count': facts.get('total_message_count'),
+        'marker_message_count': facts.get('marker_message_count'),
+        'live_sqs_snapshot_complete': facts.get(
+            'live_sqs_snapshot_complete'
+        ),
+        'live_sqs_observed_empty': facts.get('live_sqs_observed_empty'),
+        'queues': queue_rows,
+        'customer_impact': facts.get('customer_impact'),
+        'mutation_allowed': facts.get('mutation_allowed'),
+        'next_action': facts.get('next_action'),
+    }
+    if recovery_overrides:
+        minimal_facts['recovery_disposition_overrides'] = recovery_overrides
+
+    alarm = result.get('alarm') or {}
+    omitted_sections = sorted(
+        set([*omitted, 'nonessential_evidence', 'verbose_dlq_evidence'])
+    )
+    minimal = {
+        'can_answer_root_cause': result.get('can_answer_root_cause'),
+        'next_action': result.get('next_action'),
+        'dlq_disposition': {
+            'judgment': disposition.get('judgment'),
+            'disposition': disposition.get('disposition'),
+            'event_type': disposition.get('event_type'),
+            'message_count': disposition.get('message_count'),
+            'marker_message_count': disposition.get('marker_message_count'),
+            'queue_count': disposition.get('queue_count'),
+            'live_sqs_snapshot_complete': disposition.get(
+                'live_sqs_snapshot_complete'
+            ),
+            'live_sqs_observed_empty': disposition.get(
+                'live_sqs_observed_empty'
+            ),
+            'response_facts': minimal_facts,
+            'mutation_performed': disposition.get('mutation_performed'),
+        },
+        'alarm': {
+            'name': alarm.get('name'),
+            'state': alarm.get('state'),
+        },
+        'omitted_sections': omitted_sections,
+    }
+    if result.get('missing_required_context'):
+        minimal['missing_required_context'] = result['missing_required_context']
+    if result.get('required_followups'):
+        minimal['required_followups'] = result['required_followups']
+    if _serialized_size(minimal) <= COMPACT_OUTPUT_MAX_BYTES:
+        return minimal
+
+    queue_matrix = [
+        [
+            queue.get('queue_name'),
+            queue.get('depth'),
+            queue.get('marker_depth'),
+            {
+                'redrive_candidate': 'r',
+                'purge_candidate': 'p',
+                'hold_for_evidence': 'h',
+                'no_action': 'n',
+            }.get(queue.get('recovery_disposition'), '?'),
+            (
+                'l'
+                if queue.get('depth_source') == 'live_sqs_attributes'
+                else 'm'
+            ),
+        ]
+        for queue in facts.get('queues') or []
+        if isinstance(queue, dict)
+    ]
+    minimal['omitted_sections'] = [
+        'nonessential_evidence',
+        'verbose_dlq_evidence',
+    ]
+    minimal['dlq_disposition']['response_facts'] = {
+        'processing_status': facts.get('processing_status'),
+        'queue_fields': [
+            'queue_name',
+            'depth',
+            'marker_depth',
+            'recovery_disposition',
+            'depth_source',
+        ],
+        'queue_value_codes': {
+            'recovery_disposition': (
+                'r=redrive_candidate,p=purge_candidate,'
+                'h=hold_for_evidence,n=no_action,?=unknown'
+            ),
+            'depth_source': (
+                'l=live_sqs_attributes,m=marker_snapshot_fallback'
+            ),
+        },
+        'queues': queue_matrix,
+        'mutation_allowed': facts.get('mutation_allowed'),
+    }
+    return minimal
 
 
 def _fit_compact_budget(result: Dict[str, Any]) -> Dict[str, Any]:
@@ -562,32 +1526,39 @@ def _fit_compact_budget(result: Dict[str, Any]) -> Dict[str, Any]:
     if _serialized_size(result) <= COMPACT_OUTPUT_MAX_BYTES:
         return result
 
+    essential_keys = [
+        'can_answer_root_cause',
+        'next_action',
+        'missing_required_context',
+        'required_followups',
+        'omitted_followup_count',
+        'root_cause_evidence',
+        'dlq_backlog',
+        'dlq_disposition',
+        'alarm',
+        'scope_attribution',
+    ]
+    if not result.get('dlq_disposition'):
+        essential_keys.extend(['history', 'metric', 'logs'])
     essential = {
         key: result.get(key)
-        for key in (
-            'can_answer_root_cause',
-            'next_action',
-            'missing_required_context',
-            'required_followups',
-            'omitted_followup_count',
-            'root_cause_evidence',
-            'alarm',
-            'history',
-            'metric',
-            'logs',
-            'scope_attribution',
-        )
+        for key in essential_keys
     }
     essential['omitted_sections'] = sorted(
         set(omitted + ['nonessential_evidence'])
     )
-    return _bounded_value(
+    bounded = _bounded_value(
         essential,
-        max_depth=3,
-        max_items=2,
-        max_keys=16,
+        max_depth=7,
+        max_items=MAX_DLQ_MARKER_QUEUES,
+        max_keys=30,
         max_string=220,
     )
+    if _serialized_size(bounded) <= COMPACT_OUTPUT_MAX_BYTES:
+        return bounded
+    if result.get('dlq_disposition'):
+        return _minimal_dlq_budget_output(result, omitted)
+    return bounded
 
 
 def compact_output(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -602,6 +1573,10 @@ def compact_output(data: Dict[str, Any]) -> Dict[str, Any]:
         'missing_required_context': assessment.get('missing_required_context') or [],
         'required_followups': assessment.get('required_followups') or [],
         'omitted_followup_count': assessment.get('omitted_followup_count') or 0,
+        'dlq_backlog': _compact_dlq_backlog(data.get('dlq_backlog')),
+        'dlq_disposition': _compact_dlq_disposition(
+            assessment.get('dlq_disposition')
+        ),
         'detected': _bounded_value(data.get('detected')),
         'aws': _bounded_value(data.get('aws_caller_identity')),
         'alarm': {
@@ -659,7 +1634,7 @@ def compact_output(data: Dict[str, Any]) -> Dict[str, Any]:
         'logs': _compact_logs(logs_summary),
         'http': _bounded_value(data.get('http_context')),
         'five_xx': _bounded_value(data.get('five_xx_metrics')),
-        'sqs': _bounded_value(data.get('sqs_context')),
+        'sqs': _compact_sqs_context(data.get('sqs_context')),
         'lambda': _bounded_value(data.get('lambda_context')),
         'rds': _bounded_value(data.get('rds_context')),
         'rds_performance_insights': _bounded_value(

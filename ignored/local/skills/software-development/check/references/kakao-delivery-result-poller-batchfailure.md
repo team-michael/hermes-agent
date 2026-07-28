@@ -206,3 +206,17 @@ When the helper or `describe-alarms` returns `StateReasonData.recentDatapoints[]
 | 0 | Yes, `ThrottlingException` on `kakao_delivery_result_polling_state` DynamoDB table | On-demand adaptive capacity burst throttle during campaign batch | `no_action` |
 | 0 | Yes, `response batch is locked by another worker` (finalize lock contention, exact throw site not in local checkout) | Lock/TTL timing bug — can fire even with `ConcurrentExecutions=1`; not retried (`FunctionResponseTypes=[]`) | `no_action` isolated single event; `needs_fix` once a same-day dense cluster (e.g. 9+ in <2 min) recurs |
 | >0 | Unhandled exception / timeout | Runtime bug | `needs_fix` or `urgent` |
+
+## DLQ recovery safety
+
+- Default to `hold_for_evidence` for a queue-level backlog. Polling-state locks,
+  output checkpoints, and delivery-result upserts reduce duplicate work, but
+  they do not make every replay unconditionally idempotent.
+- Kinesis publication and failover/resend enqueue happen before their
+  checkpoints are saved. A failure in that gap can repeat a downstream side
+  effect. Terminal polling state is also deleted after finalization, so an old
+  task cannot be classified from queue age alone.
+- Redrive is only a candidate after the exact task still has compatible polling
+  state and the failed step is known to be safely retryable. Purge is only a
+  candidate after the task outcome is terminal/obsolete and evidence has been
+  preserved.

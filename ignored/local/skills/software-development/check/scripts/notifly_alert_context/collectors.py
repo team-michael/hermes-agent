@@ -63,6 +63,31 @@ def _collect_rds_performance_insights(ctx: CollectorContext) -> Any:
     )
 
 
+def queue_names_from_dlq_backlog(logs_insights: Any) -> List[str]:
+    if not isinstance(logs_insights, dict):
+        return []
+    current = (logs_insights.get('dlq_backlog') or {}).get('current') or {}
+    latest = current.get('latest_event') or {}
+    return unique([
+        str(queue.get('queue_name') or '')
+        for queue in latest.get('queues') or []
+        if isinstance(queue, dict) and queue.get('queue_name')
+    ])
+
+
+def _collect_sqs_context(ctx: CollectorContext) -> Any:
+    queue_names = unique([
+        *(ctx.queue_names or []),
+        *queue_names_from_dlq_backlog(ctx.results.get('logs_insights')),
+    ])
+    return collect_sqs_context(
+        ctx.session,
+        ctx.alarm,
+        queue_names,
+        days=ctx.days,
+    )
+
+
 def _collect_campaign_scope_hints(ctx: CollectorContext) -> Any:
     return collect_campaign_scope_hints(
         ctx.results.get('logs_insights'),
@@ -77,7 +102,7 @@ COLLECTOR_REGISTRY = (
     CollectorSpec('logs_insights', _collect_logs_insights),
     CollectorSpec('http_context', lambda ctx: collect_http_context(ctx.session, ctx.alarm, ctx.text, days=ctx.days)),
     CollectorSpec('five_xx_metrics', lambda ctx: collect_5xx_metrics(ctx.session, ctx.alarm, days=ctx.days)),
-    CollectorSpec('sqs_context', lambda ctx: collect_sqs_context(ctx.session, ctx.alarm, ctx.queue_names, days=ctx.days)),
+    CollectorSpec('sqs_context', _collect_sqs_context),
     CollectorSpec('lambda_context', lambda ctx: collect_lambda_context(ctx.session, ctx.alarm, ctx.lambda_names, days=ctx.days)),
     CollectorSpec('rds_performance_insights', _collect_rds_performance_insights),
     CollectorSpec('campaign_scope_hints', _collect_campaign_scope_hints),

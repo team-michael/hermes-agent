@@ -85,3 +85,16 @@ aws cloudwatch get-metric-statistics --region ap-northeast-2 \
 ## Remediation options
 
 Downgrade `console.error` to `console.warn` at `lib/utils.ts:51` when validation rejection is expected (e.g., missing `channel_id` due to poller re-enqueue with incomplete metadata). The batch is skipped normally; emitting at ERROR level only trips the metric.
+
+## DLQ recovery safety
+
+- Default to `hold_for_evidence`, not bulk redrive. The consumer calls the
+  external Kakao send API before result persistence, and API attempts use new
+  request IDs. A source-queue replay can therefore duplicate a send when the
+  original provider outcome is uncertain.
+- Successful provider calls can be followed by persistence or downstream-task
+  failures. Queue-level depth and Lambda mapping state cannot distinguish those
+  records from failures that happened before the provider call.
+- Message age alone is not proof of obsolescence. Purge is only a candidate
+  after the exact records are proven terminal/obsolete and evidence has been
+  preserved.

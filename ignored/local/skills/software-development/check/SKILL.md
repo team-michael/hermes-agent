@@ -1,7 +1,7 @@
 ---
 name: check
 description: Investigate Notifly Slack/Amazon Q/CloudWatch alerts from live data sources using the bundled deterministic helper, then return one concise Korean triage result.
-version: 1.3.3
+version: 1.4.2
 author: Hermes Agent
 license: MIT
 metadata:
@@ -122,6 +122,52 @@ Use the metric filter and exact current alarm-window trigger. Do not substitute 
 
 Use queue attributes, redrive policy, event-source mapping, Lambda Errors/Throttles/Duration, and bounded message inspection only when approved and necessary. Remember that `receive_message` changes visibility.
 
+When `dlq_backlog.event_type` is `DLQ_BACKLOG_DETECTED`, use the helper's
+`dlq_disposition` as the controlling decision:
+
+- Render only facts in `dlq_disposition.response_facts`; do not add another
+  cause, frequency claim, health conclusion, channel subtype, or timestamp
+  conversion.
+- Report every queue's current live SQS depth and marker depth. The marker is a
+  historical trigger snapshot; do not substitute it for current queue state.
+  In the extreme compact fallback, zip `response_facts.queue_fields` with each
+  array in `response_facts.queues`, then decode short values with
+  `response_facts.queue_value_codes`; do not omit any queue.
+- If `live_sqs_snapshot_complete` is false, identify each
+  `marker_snapshot_fallback` queue and do not call the aggregate a complete
+  current snapshot.
+- Treat a live non-empty backlog as `needs_fix` even if the log-derived alarm is
+  currently `OK`. Only `live_sqs_observed_empty: true`, not an alarm state
+  transition, permits the helper's current-snapshot `no_action` disposition.
+  SQS counts are approximate; do not claim historical message outcomes.
+- Use `hold_for_evidence` until message outcome and replay side-effect safety
+  are confirmed.
+- Treat each queue's `recovery_decision` independently. `redrive_candidate` or
+  `purge_candidate` is a recommendation candidate, never mutation approval.
+- A technically configured redrive path, an old-message age, or an `Enabled`
+  mapping is not replay-safety or obsolescence evidence.
+- Report source queues and consumers when the helper resolved them. An empty
+  Lambda mapping does not prove that no polling consumer exists.
+- Customer impact is `미확인` unless delivery outcome evidence proves impact
+  or proves that processing completed safely.
+- State only the confirmed backlog as the cause. Do not invent why the messages
+  reached the DLQ, call them stale, or translate queue names into an unsupported
+  product/channel subtype.
+- `receive_message` and payload inspection change message visibility. Never
+  describe them as read-only; require explicit approval before using them.
+- Report inspection-Lambda metric values only when present. Do not call
+  duration "normal" without an explicit baseline or threshold.
+- An event-source mapping state of `Enabled` confirms wiring only, not consumer
+  runtime health.
+- `recurrence_sample` is bounded sample evidence. Never call it complete
+  7-day history, call the sample-window span a persistence duration, or say
+  every sample is consecutive. Use its provided KST timestamps verbatim and
+  state that continuity is unconfirmed.
+- Do not assign an owner unless `response_facts` provides one.
+- Output Korean only except for exact technical identifiers.
+- Never recommend or perform redrive, purge, delete, or stream replay while the
+  disposition is `hold_for_evidence`.
+
 ### Lambda
 
 Resolve the real function name rather than assuming the alarm prefix equals it. Cross-check runtime Errors/Throttles/Duration. A `REPORT ... Status: timeout` may exist without an ERROR log line.
@@ -177,6 +223,19 @@ Do not modify skills or write one-off production scripts during the foreground a
 
 ## Known improvements
 
+- `v1.4.2`: DLQ disposition reconciles the trigger marker with current SQS
+  approximate attributes. Slack responses use the latest observed depth,
+  retain marker depth for history, and report `no_action` only when every
+  affected queue is observed empty in the current snapshot.
+- `v1.4.1`: DLQ output separates technical redrive capability from replay
+  safety and emits a queue-local recovery decision. Redrive requires a
+  transient failure plus idempotent replay; purge requires a terminal or
+  permanent failure plus confirmed obsolescence. Both require preserved
+  evidence and remain non-mutating recommendations.
+- `v1.4.0`: structured DLQ backlog markers are parsed before sanitization,
+  affected queues feed the read-only SQS/source-consumer collector, and the
+  helper emits a deterministic `needs_fix / hold_for_evidence` disposition
+  that does not treat an alarm `OK` transition as backlog resolution.
 - `v1.3.3`: compact helper output is capped at 10 KB, missing required
   context cannot be marked answerable, and automated alert turns are bounded
   to the helper plus at most two follow-up tool calls.

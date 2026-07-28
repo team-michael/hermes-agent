@@ -9,7 +9,11 @@ from .aws_collectors import (
     build_aws_session, call_sts, describe_alarm, collect_alarm_history, summarize_alarm,
     map_projects_via_dynamodb,
 )
-from .collectors import CollectorContext, run_collectors
+from .collectors import (
+    CollectorContext,
+    queue_names_from_dlq_backlog,
+    run_collectors,
+)
 from .scope import (
     merge_scope_detections, build_scope_attribution,
 )
@@ -64,6 +68,15 @@ def main() -> None:
     rds_performance_insights = collector_results.get('rds_performance_insights')
     metric_filters = collector_results.get('metric_filters')
     logs_insights = collector_results.get('logs_insights')
+    dlq_backlog = (
+        (logs_insights or {}).get('dlq_backlog')
+        if isinstance(logs_insights, dict)
+        else None
+    )
+    queue_names = unique([
+        *queue_names,
+        *queue_names_from_dlq_backlog(logs_insights),
+    ])
     http_context = collector_results.get('http_context')
     five_xx_metrics = collector_results.get('five_xx_metrics')
     sqs_context = collector_results.get('sqs_context')
@@ -121,6 +134,7 @@ def main() -> None:
         'rds_performance_insights': rds_performance_insights,
         'metric_filters': metric_filters,
         'logs_insights': logs_insights,
+        'dlq_backlog': dlq_backlog,
         'http_context': http_context,
         'five_xx_metrics': five_xx_metrics,
         'sqs_context': sqs_context,
@@ -141,6 +155,7 @@ def main() -> None:
         print_section('Metric datapoints', metric_datapoints)
         print_section('Metric filters', metric_filters)
         print_section('Logs Insights compact summary', logs_insights)
+        print_section('DLQ backlog marker', dlq_backlog)
         print_section('HTTP context', http_context)
         print_section('5xx metrics', five_xx_metrics)
         print_section('SQS context', sqs_context)

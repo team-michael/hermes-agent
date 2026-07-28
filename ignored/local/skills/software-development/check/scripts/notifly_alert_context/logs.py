@@ -7,7 +7,7 @@ from .text import (
 from .detect import (
     detect_project_ids, detect_campaign_ids, detect_project_campaign_pairs,
     detect_sharded_table_refs, detect_sharded_table_names, detect_user_journey_ids,
-    detect_user_journey_refs,
+    detect_user_journey_refs, summarize_dlq_backlog_rows,
 )
 from .aws_collectors import parse_datetime, parse_log_timestamp
 from concurrent.futures import ThreadPoolExecutor
@@ -953,6 +953,14 @@ fields @timestamp, @message, @logStream, @log
     current_top_signatures = top_log_signatures(current_rows)
     for item in current_top_signatures:
         item['count_in_current_alarm_window'] = item.pop('count_in_sample')
+    dlq_backlog = {
+        'current': summarize_dlq_backlog_rows(current_rows),
+        'recent_sample': summarize_dlq_backlog_rows(recent_rows),
+        'alarm_state_note': (
+            'An OK transition is not evidence that a detected DLQ backlog was '
+            'cleared; missing-data treatment may reset this log-derived alarm.'
+        ),
+    }
     current_error_details = current_error_details_from_contexts(current_trigger_contexts)
     current_detail_project_campaign_pairs = [
         pair
@@ -983,6 +991,7 @@ fields @timestamp, @message, @logStream, @log
         'current_top_signatures': current_top_signatures,
         'current_trigger_contexts': current_trigger_contexts,
         'current_error_details': current_error_details,
+        'dlq_backlog': dlq_backlog,
         'current_project_campaign_pairs': current_project_campaign_pairs,
         'project_campaign_pairs': recent_project_campaign_pairs,
         'top_signatures': top_signatures,
