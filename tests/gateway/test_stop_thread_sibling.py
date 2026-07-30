@@ -8,6 +8,8 @@ nothing and reply "no active task to stop".  Authorized users should be able to
 stop any run in the same thread.
 """
 
+from types import SimpleNamespace
+
 import pytest
 
 from gateway.run import GatewayRunner, _AGENT_PENDING_SENTINEL, _INTERRUPT_REASON_STOP
@@ -131,6 +133,33 @@ async def test_stop_interrupts_sibling_thread_run_when_authorized(monkeypatch):
     assert interrupted == [(key_b, _INTERRUPT_REASON_STOP, "stop_command_thread_sibling")]
     # EphemeralReply or str — both carry the "stopped" message, not "no_active".
     assert "no active" not in str(getattr(result, "text", result)).lower()
+
+
+@pytest.mark.asyncio
+async def test_stop_uses_profile_command_response_override(monkeypatch):
+    runner = object.__new__(GatewayRunner)
+    key_a = _per_user_key("userA")
+    key_b = _per_user_key("userB")
+    runner._running_agents = {key_b: _FakeAgent()}
+    runner.session_store = _FakeStore(key_a)
+    runner.config = SimpleNamespace(
+        command_responses={
+            "stop": {"stopped": ":sleep_mokoko: Stopped."},
+        }
+    )
+
+    async def _fake_interrupt(*args, **kwargs):
+        return None
+
+    runner._interrupt_and_clear_session = _fake_interrupt
+    runner._is_user_authorized = lambda source: True
+
+    event = MessageEvent(
+        text="/stop", message_type=MessageType.TEXT, source=_thread_source("userA")
+    )
+    result = await runner._handle_stop_command(event)
+
+    assert getattr(result, "text", result) == ":sleep_mokoko: Stopped."
 
 
 @pytest.mark.asyncio

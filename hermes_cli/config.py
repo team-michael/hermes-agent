@@ -3127,6 +3127,14 @@ DEFAULT_CONFIG = {
     # Gateway settings — control how messaging platforms (Telegram, Discord,
     # Slack, etc.) deliver agent-produced files as native attachments.
     "gateway": {
+        # Optional profile-specific static command reply overrides. Entries
+        # omitted here continue to use the active language catalog.
+        # Example:
+        # command_responses:
+        #   stop:
+        #     stopped: ":custom-emoji: Stopped."
+        "command_responses": {},
+
         # Durable delivery-obligation ledger: final agent responses are
         # recorded in state.db around the platform send, and a gateway that
         # died between finalize and platform ACK redelivers the stored

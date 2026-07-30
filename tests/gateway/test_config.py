@@ -388,6 +388,9 @@ class TestGatewayConfigRoundtrip:
             },
             reset_triggers=["/new"],
             quick_commands={"limits": {"type": "exec", "command": "echo ok"}},
+            command_responses={
+                "stop": {"stopped": ":sleep_mokoko: Stopped."},
+            },
             group_sessions_per_user=False,
             thread_sessions_per_user=True,
             systemd_watchdog_seconds=120,
@@ -399,6 +402,9 @@ class TestGatewayConfigRoundtrip:
         assert restored.platforms[Platform.TELEGRAM].token == "tok_123"
         assert restored.reset_triggers == ["/new"]
         assert restored.quick_commands == {"limits": {"type": "exec", "command": "echo ok"}}
+        assert restored.command_responses == {
+            "stop": {"stopped": ":sleep_mokoko: Stopped."},
+        }
         assert restored.group_sessions_per_user is False
         assert restored.thread_sessions_per_user is True
         assert restored.systemd_watchdog_seconds == 120
@@ -631,6 +637,26 @@ class TestLoadGatewayConfig:
         config = load_gateway_config()
 
         assert config.quick_commands == {"limits": {"type": "exec", "command": "echo ok"}}
+
+    def test_bridges_nested_command_responses_from_config_yaml(
+        self, tmp_path, monkeypatch
+    ):
+        hermes_home = tmp_path / ".hermes"
+        hermes_home.mkdir()
+        (hermes_home / "config.yaml").write_text(
+            "gateway:\n"
+            "  command_responses:\n"
+            "    stop:\n"
+            "      stopped: ':sleep_mokoko: Stopped.'\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+
+        config = load_gateway_config()
+
+        assert config.command_responses == {
+            "stop": {"stopped": ":sleep_mokoko: Stopped."},
+        }
 
     def test_slack_disable_dms_config_sets_env_bridge(self, tmp_path, monkeypatch):
         hermes_home = tmp_path / ".hermes"

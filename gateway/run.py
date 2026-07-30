@@ -11493,7 +11493,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     invalidation_reason="stop_command",
                 )
                 logger.info("STOP for session %s — agent interrupted, session lock released", _quick_key)
-                return EphemeralReply(t("gateway.stop.stopped"))
+                return EphemeralReply(
+                    self._command_response("stop", "stopped", "gateway.stop.stopped")
+                )
 
             if _cmd_def_inner and _cmd_def_inner.name == "mute":
                 return await self._handle_mute_command(event)

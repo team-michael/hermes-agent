@@ -889,6 +889,11 @@ class GatewayConfig:
 
     # User-defined quick commands (slash commands that bypass the agent loop)
     quick_commands: Dict[str, Any] = field(default_factory=dict)
+
+    # Optional profile-specific text for deterministic command replies.
+    # Shape: {"stop": {"stopped": "...", "stopped_pending": "..."}}.
+    # Missing or blank entries fall back to the bundled i18n catalog.
+    command_responses: Dict[str, Any] = field(default_factory=dict)
     
     # Storage paths
     sessions_dir: Path = field(default_factory=lambda: get_hermes_home() / "sessions")
@@ -1060,6 +1065,7 @@ class GatewayConfig:
             },
             "reset_triggers": self.reset_triggers,
             "quick_commands": self.quick_commands,
+            "command_responses": self.command_responses,
             "sessions_dir": str(self.sessions_dir),
             "write_sessions_json": self.write_sessions_json,
             "always_log_local": self.always_log_local,
@@ -1118,6 +1124,9 @@ class GatewayConfig:
         quick_commands = data.get("quick_commands", {})
         if not isinstance(quick_commands, dict):
             quick_commands = {}
+        command_responses = data.get("command_responses", {})
+        if not isinstance(command_responses, dict):
+            command_responses = {}
 
         stt_enabled = data.get("stt_enabled")
         if stt_enabled is None:
@@ -1196,6 +1205,7 @@ class GatewayConfig:
             reset_by_platform=reset_by_platform,
             reset_triggers=data.get("reset_triggers", ["/new", "/reset"]),
             quick_commands=quick_commands,
+            command_responses=command_responses,
             sessions_dir=sessions_dir,
             write_sessions_json=_coerce_bool(data.get("write_sessions_json"), True),
             always_log_local=_coerce_bool(data.get("always_log_local"), True),
@@ -1320,6 +1330,19 @@ def load_gateway_config() -> GatewayConfig:
                         "Ignoring invalid quick_commands in config.yaml "
                         "(expected mapping, got %s)",
                         type(qc).__name__,
+                    )
+
+            command_responses = yaml_cfg.get("command_responses")
+            if command_responses is None and isinstance(gateway_section, dict):
+                command_responses = gateway_section.get("command_responses")
+            if command_responses is not None:
+                if isinstance(command_responses, dict):
+                    gw_data["command_responses"] = command_responses
+                else:
+                    logger.warning(
+                        "Ignoring invalid command_responses in config.yaml "
+                        "(expected mapping, got %s)",
+                        type(command_responses).__name__,
                     )
 
             stt_cfg = yaml_cfg.get("stt")

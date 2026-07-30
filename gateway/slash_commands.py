@@ -103,6 +103,26 @@ class GatewaySlashCommandsMixin:
 
     async_session_store: AsyncSessionStore
 
+    def _command_response(
+        self,
+        command: str,
+        outcome: str,
+        fallback_i18n_key: str,
+    ) -> str:
+        """Return a profile override for a static command reply, if configured."""
+        responses = getattr(getattr(self, "config", None), "command_responses", {})
+        command_responses = (
+            responses.get(command, {}) if isinstance(responses, dict) else {}
+        )
+        value = (
+            command_responses.get(outcome)
+            if isinstance(command_responses, dict)
+            else None
+        )
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return t(fallback_i18n_key)
+
     def _typed_command_prefix_for(self, platform) -> str:
         """Return the prefix users can always type to reach Hermes commands.
 
@@ -1366,7 +1386,13 @@ class GatewaySlashCommandsMixin:
                 invalidation_reason="stop_command_pending",
             )
             logger.info("STOP (pending) for session %s — sentinel cleared", session_key)
-            return EphemeralReply(t("gateway.stop.stopped_pending"))
+            return EphemeralReply(
+                self._command_response(
+                    "stop",
+                    "stopped_pending",
+                    "gateway.stop.stopped_pending",
+                )
+            )
         if agent:
             # Force-clean the session lock so a truly hung agent doesn't
             # keep it locked forever.
@@ -1376,7 +1402,9 @@ class GatewaySlashCommandsMixin:
                 interrupt_reason=_INTERRUPT_REASON_STOP,
                 invalidation_reason="stop_command_handler",
             )
-            return EphemeralReply(t("gateway.stop.stopped"))
+            return EphemeralReply(
+                self._command_response("stop", "stopped", "gateway.stop.stopped")
+            )
 
         # No run under the caller's own session key.  In a per-user thread
         # (thread_sessions_per_user=True) each participant is isolated even
@@ -1399,7 +1427,9 @@ class GatewaySlashCommandsMixin:
                 len(sibling_keys),
                 ", ".join(sibling_keys),
             )
-            return EphemeralReply(t("gateway.stop.stopped"))
+            return EphemeralReply(
+                self._command_response("stop", "stopped", "gateway.stop.stopped")
+            )
 
         # No running agent anywhere for this scope. A platform status
         # indicator can still be stuck — e.g. Slack's persistent
