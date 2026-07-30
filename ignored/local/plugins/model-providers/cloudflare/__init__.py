@@ -43,6 +43,8 @@ def _format_account_url(template: str) -> str:
 
 def _normalize_reasoning_effort(
     reasoning_config: dict | None,
+    *,
+    model: str | None = None,
 ) -> str | None:
     if not isinstance(reasoning_config, dict):
         return None
@@ -56,10 +58,16 @@ def _normalize_reasoning_effort(
         "minimal": "low",
         "min": "low",
         "x-high": "xhigh",
-        "max": "xhigh",
-        "maximum": "xhigh",
+        "maximum": "max",
     }
-    return aliases.get(effort, effort) or None
+    effort = aliases.get(effort, effort)
+
+    model_name = str(model or "").strip().lower()
+    if "moonshotai/kimi-" in model_name and effort in {"xhigh", "max"}:
+        return "max"
+    if effort == "max":
+        return "xhigh"
+    return effort or None
 
 
 class CloudflareWorkersAIProfile(ProviderProfile):
@@ -68,8 +76,10 @@ class CloudflareWorkersAIProfile(ProviderProfile):
     def build_api_kwargs_extras(
         self, *, reasoning_config: dict | None = None, **context: Any
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        del context
-        effort = _normalize_reasoning_effort(reasoning_config)
+        effort = _normalize_reasoning_effort(
+            reasoning_config,
+            model=context.get("model"),
+        )
         return ({}, {"reasoning_effort": effort}) if effort else ({}, {})
 
     def fetch_models(
