@@ -81,6 +81,42 @@ class TestInlineFormatting:
         blob = str(blocks)
         assert "https://example.com/x" in blob
 
+    def test_bold_markdown_link_in_quote_is_link_not_literal_markers(self):
+        blocks = render_blocks(
+            "> • **[Digest item](https://example.com/x)** — readable summary"
+        )
+        quote = blocks[0]["elements"][0]
+        elements = quote["elements"]
+        links = [el for el in elements if el["type"] == "link"]
+        assert links == [
+            {
+                "type": "link",
+                "url": "https://example.com/x",
+                "text": "Digest item",
+                "style": {"bold": True},
+            }
+        ]
+        assert "**" not in "".join(el.get("text", "") for el in elements)
+
+    def test_bold_slack_link_in_quote_is_link_not_literal_mrkdwn(self):
+        blocks = render_blocks(
+            "> • **<https://example.com/x|Digest item>** — readable summary"
+        )
+        quote = blocks[0]["elements"][0]
+        elements = quote["elements"]
+        links = [el for el in elements if el["type"] == "link"]
+        assert links == [
+            {
+                "type": "link",
+                "url": "https://example.com/x",
+                "text": "Digest item",
+                "style": {"bold": True},
+            }
+        ]
+        rendered_text = "".join(el.get("text", "") for el in elements)
+        assert "<https://example.com/x|Digest item>" not in rendered_text
+        assert "**" not in rendered_text
+
     def test_bulleted_bold_is_styled(self):
         blocks = render_blocks("- this is **bold** text")
         rich = [b for b in blocks if b["type"] == "rich_text"][0]

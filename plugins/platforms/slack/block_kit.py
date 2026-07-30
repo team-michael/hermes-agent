@@ -74,7 +74,13 @@ def _indent_level(spaces: str) -> int:
 
 # Order matters: code first (opaque), then links, then emphasis.
 _INLINE_CODE_RE = re.compile(r"`([^`]+)`")
-_LINK_RE = re.compile(r"(?<!!)\[([^\]]+)\]\(([^()\s]+(?:\([^()]*\)[^()\s]*)*)\)")
+_MARKDOWN_URL_PATTERN = r"[^()\s]+(?:\([^()]*\)[^()\s]*)*"
+_INLINE_LINK_TOKEN_RE = re.compile(
+    rf"(?P<bold_md>(?:\*\*|__)\[(?P<bold_md_label>[^\]]+)\]\((?P<bold_md_url>{_MARKDOWN_URL_PATTERN})\)(?:\*\*|__))"
+    r"|(?P<bold_slack>(?:\*\*|__)<(?P<bold_slack_url>(?:https?|mailto|tel):[^>|\s\n]+)(?:\|(?P<bold_slack_label>[^>\n]*))?>(?:\*\*|__))"
+    rf"|(?P<md>(?<!!)\[(?P<md_label>[^\]]+)\]\((?P<md_url>{_MARKDOWN_URL_PATTERN})\))"
+    r"|(?P<slack><(?P<slack_url>(?:https?|mailto|tel):[^>|\s\n]+)(?:\|(?P<slack_label>[^>\n]*))?>)"
+)
 _BOLD_RE = re.compile(r"(?:\*\*|__)(.+?)(?:\*\*|__)")
 _ITALIC_RE = re.compile(r"(?<![\*_])(?:\*|_)(?![\*_\s])(.+?)(?<![\*_\s])(?:\*|_)(?![\*_])")
 _STRIKE_RE = re.compile(r"~~(.+?)~~")
@@ -113,11 +119,26 @@ def _inline_elements(text: str) -> List[Dict[str, Any]]:
 
     def _walk_links(s: str, style: Dict[str, bool]) -> None:
         pos = 0
-        for m in _LINK_RE.finditer(s):
+        for m in _INLINE_LINK_TOKEN_RE.finditer(s):
             _walk_emphasis(s[pos:m.start()], style)
-            link_el: Dict[str, Any] = {"type": "link", "url": m.group(2), "text": m.group(1)}
-            if style:
-                link_el["style"] = dict(style)
+            link_style = dict(style)
+            if m.group("bold_md"):
+                url = m.group("bold_md_url")
+                label = m.group("bold_md_label")
+                link_style["bold"] = True
+            elif m.group("bold_slack"):
+                url = m.group("bold_slack_url")
+                label = m.group("bold_slack_label") or url
+                link_style["bold"] = True
+            elif m.group("md"):
+                url = m.group("md_url")
+                label = m.group("md_label")
+            else:
+                url = m.group("slack_url")
+                label = m.group("slack_label") or url
+            link_el: Dict[str, Any] = {"type": "link", "url": url, "text": label}
+            if link_style:
+                link_el["style"] = link_style
             elements.append(link_el)
             pos = m.end()
         _walk_emphasis(s[pos:], style)
