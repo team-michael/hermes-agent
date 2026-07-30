@@ -10,13 +10,13 @@ Vendor/MSP tickets: no internal refs; cause-only/minimal; paste-ready plain text
 §
 CS/SaaS: source-only; public docs/review counts; facts≠estimates; preserve sheet visuals; MCP discovery.
 §
-Docs/UX: KR humanized; facts≠inference; examples=actual values·semantics·vendor syntax; ambiguous UI는 구현 전 options; research MD=요약→사례→작업→링크.
+Docs/UX: KR humanized; facts≠inference; 실제값 예시; ambiguous UI는 구현 전 options; research MD=요약→사례→작업→링크; Notion 도식=Mermaid.
 §
 GFSA 외부심사: 내부 ID/PR/티켓/SHA/Slack 링크 제외; 기능·KR 진행률·근거만.
 §
 Linear: 신규=Todo, 진행=In Progress. Done 전 issue criteria→PR/main·test·live matrix 대조; project Done 누락도 확인.
 §
-코드: 기존/stdlib·최소 diff; 추측 abstraction/중복 guard 금지; architecture=contract; 테이블명 _records/_table/_rows 금지; merge review=current head.
+코드: 기존/stdlib·최소 diff; 추측 abstraction/중복 guard 금지; architecture=contract; 전역 메시지 테이블=active_messages(message_id/status core); merge review=current head.
 §
 독립 작업은 병렬·origin/main PR. workflow_dispatch는 deploy/upload/update/apply 부재 확인 전 금지; notifly lambda_ci_cd dispatch는 prod deploy.
 §

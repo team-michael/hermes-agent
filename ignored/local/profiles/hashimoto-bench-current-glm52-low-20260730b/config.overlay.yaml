@@ -1,0 +1,121 @@
+model:
+  default: '@cf/zai-org/glm-5.2'
+  provider: cloudflare
+  base_url: ''
+  context_length: 262144
+fallback_model: []
+lsp:
+  enabled: false
+agent:
+  gateway_notify_interval: 0
+  reasoning_effort: low
+  service_tier: fast
+  max_turns: 300
+  api_max_retries: 8
+terminal:
+  env_passthrough:
+  - GITHUB_TOKEN
+  - SLACK_BOT_TOKEN
+display:
+  busy_input_mode: queue
+  interim_assistant_messages: false
+  platforms:
+    slack:
+      streaming: false
+      tool_progress: 'off'
+      show_reasoning: false
+  tool_progress: 'off'
+  show_reasoning: false
+approvals:
+  mode: 'off'
+session_reset:
+  mode: none
+platform_toolsets:
+  cli:
+  - browser
+  - clarify
+  - code_execution
+  - cronjob
+  - delegation
+  - file
+  - image_gen
+  - memory
+  - messaging
+  - session_search
+  - skills
+  - terminal
+  - todo
+  - tts
+  - vision
+  - web
+  slack:
+  - browser
+  - clarify
+  - code_execution
+  - cronjob
+  - delegation
+  - file
+  - image_gen
+  - memory
+  - messaging
+  - session_search
+  - skills
+  - terminal
+  - todo
+  - tts
+  - vision
+  - web
+update:
+  local_patch_branch: main
+skills:
+  external_dirs:
+  - /home/ubuntu/.hermes/hermes-agent/ignored/local/profiles/hashimoto/skills
+  - /home/ubuntu/.hermes/hermes-agent/ignored/local/skills
+slack:
+  allow_bots: all
+  free_response_channels: C04KT7EH5RQ,C07LCLRS79T
+  message_subscriptions:
+  - name: amazon-q-monitoring
+    channels:
+    - C04KT7EH5RQ
+    - C07LCLRS79T
+    subtypes:
+    - bot_message
+    bot_names:
+    - Amazon Q
+    - Amazon Q Developer
+    reactions: true
+    final_reaction: processing_status
+    execution:
+      max_iterations: 6
+      max_tool_calls: 3
+      terminal_timeout: 30
+      max_tool_output_chars: 12000
+  channel_prompts:
+    C04KT7EH5RQ: Monitoring alert received. Use the check skill to investigate and
+      return a concise Korean analysis.
+    C07LCLRS79T: Monitoring alert received. Use the check skill to investigate and
+      return a concise Korean analysis.
+  channel_skill_bindings:
+  - id: C04KT7EH5RQ
+    skills:
+    - check
+  - id: C07LCLRS79T
+    skills:
+    - check
+onboarding:
+  seen:
+    busy_input_prompt: true
+bedrock:
+  region: us-east-1
+auxiliary:
+  compression:
+    provider: bedrock
+    model: us.anthropic.claude-haiku-4-5-20251001-v1:0
+platforms:
+  slack:
+    extra:
+      rich_blocks: true
+plugins:
+  enabled:
+  - cloudflare

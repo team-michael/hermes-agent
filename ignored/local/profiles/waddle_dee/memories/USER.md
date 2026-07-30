@@ -1,12 +1,12 @@
 Notifly GitHub/PR: ConvCommits; always include PR link; clix-so-bot; no humans unless named; codebase>bot; preserve goal; report after PR+local checks; CI/preview pending OK.
 §
-Remote/infra: verify live target/config/code/data; separate quota/bottleneck; no rerun/requeue/resend/recovery w/o approval; preserve evidence.
+Remote/infra: user expects live target/config/code/data verified; quota≠bottleneck; no rerun/requeue/resend/recovery w/o approval; after approval prefers safest executable path over instructions; preserve evidence.
 §
 Notifly RCA/debug: terse KR, evidence first; observed≠inferred; verify live server code/data/timing before SDK blame; no signOut/deleteToken w/o timestamp; FCM404≠401.
 §
 In DMs, user wants infra explanations tailored to Mobile/iOS+SDK Eng background: use analogies only when mechanisms match; flag SDK implications for contracts/retries/offline/telemetry/DX.
 §
-Standup `standup 초안(date)`, src C03PTG3AELA, plain lines, omit Daily Sync/확인, done→today; if today empty, derive real next tasks from ongoing work, not `없음`.
+Standup `standup 초안(date)`, src C03PTG3AELA, plain lines; omit Daily Sync/확인/declined events; done→today; if today empty derive real NBT/etc tasks, not `없음`.
 §
 Vendor/MSP tickets: no internal refs; cause-only/minimal; paste-ready plain text, no code fences.
 §

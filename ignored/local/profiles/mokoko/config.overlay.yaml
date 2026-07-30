@@ -423,6 +423,10 @@ model_catalog:
 network:
   force_ipv4: false
 gateway:
+  command_responses:
+    stop:
+      stopped: ':sleep_mokoko: 작업을 멈췄어. 이 대화는 계속 이어갈 수 있어.'
+      stopped_pending: ':sleep_mokoko: 시작 전 작업을 멈췄어. 이 대화는 계속 이어갈 수 있어.'
   media_delivery_allow_dirs: []
   trust_recent_files: true
   trust_recent_files_seconds: 600

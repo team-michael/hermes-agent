@@ -6,7 +6,7 @@ Notifly RCA: terse KR/current case; 원인은 live logs/data로 증명. 상관·
 §
 DM infra explanations: tailor to Mobile/iOS+SDK Eng; only matching analogies; flag SDK contract/retry/offline/telemetry/DX implications. Persona/app descriptions: broad core-engineering > overly SDK-specific.
 §
-Slack: KR terse/no tables. 현재 thread는 주입 문맥 우선·재조회 금지. 링크 thread는 끝까지 조회; API 금지면 허용 요청, 허용 후 replies 조회. `not_in_channel`은 봇 초대 요청; 첨부 확인.
+Slack: KR terse/no tables. 링크/채널 이력은 API/helper 우선; browser/tool 부재≠접근불가. scope/token/member/runtime 구분; missing_scope 없이 reinstall 금지. not_in_channel=봇 초대; 첨부 확인.
 §
 Vendor/MSP tickets: no internal refs; cause-only/minimal; paste-ready plain text, no code fences.
 §

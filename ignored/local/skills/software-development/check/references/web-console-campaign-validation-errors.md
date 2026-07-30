@@ -78,3 +78,19 @@ These strings exist in compiled chunks, not in source-level code paths we can di
 
 - Downgrade the log level from `ERROR` to `WARN` for handled validation rejections in `CampaignService.upsertCampaign` or the channel-specific `transform` layer, or
 - Pre-validate the constraints client-side so the invalid state never reaches the server ERROR path.
+
+## Fourth pattern: dangling `csv` segment `uploaded_filename` (MCP/API-created campaign, no S3 existence check)
+
+**Alarm**: same `.../web-console/sentry alert` proxy. Sentry issue title `NoSuchKey`, `transaction: "POST /api/s3/get_segment_data"`.
+
+Distinct from the three handled-rejection patterns above — this is a genuine dangling reference, not a benign business rejection:
+
+- `campaign.segment.details.uploadedFilename` (Postgres `campaigns_<project_id>.ui_state_json` / `view_state`, `segment.mode = "csv"`) points at an S3 key `csv-segment/<project_id>/<uploadedFilename>` that does not exist.
+- Web-console's own upload flow (`/api/s3/upload_segment_data`, `multerS3`) always writes `${projectId}/${uuidv4()}.csv` and returns that generated name — so a console-originated campaign can never have a dangling filename.
+- The public API/MCP `create_campaign` contract (`CsvSegmentDetailsSchema` in `lib/types/public-api-schemas.js`, `uploaded_filename: z.string().min(1)`) only checks the string is non-empty. It does **not** verify the S3 object exists before persisting the campaign. So an MCP/API-created csv-segment campaign whose caller supplied an arbitrary/typo'd/never-uploaded filename saves successfully, then 500s with `NoSuchKey` every time a human opens it in web-console (`mode=edit` or `mode=clone`) because `readSegmentCsvFileFromS3` → `GetObjectCommand` fails.
+- Confirm via access logs on the alarm window: repeated `POST /api/s3/get_segment_data` 500s with `Referer: .../console/products/<productId>/campaign/create?...&id=<campaignId>&mode=edit` from the affected customer, while other concurrent `get_segment_data` calls for other campaigns return 200 — proves it's one specific campaign/file, not a service-wide S3 problem.
+- Map `productId` → project via DynamoDB `project` GSI `product_id-project_id-index`; read `campaigns_<project_id>` row by the URL's `id` for `creator`/`ui_state_json`/`view_state.segment.details.uploadedFilename`; confirm absence with `aws s3api list-objects-v2 --bucket csv-segment --prefix '<project_id>/'` (no lifecycle expiry configured on this bucket, so absence means never-uploaded/wrong-name, not expired).
+
+**Customer impact**: real, not benign — the customer cannot open or edit that campaign at all; every attempt 500s. Treat as `needs_fix` (tracked, non-urgent unless the customer reports being blocked urgently), not `no_action`, and not `urgent` unless it's blocking an imminent scheduled send.
+
+**Fix direction**: add an S3 existence check (`HeadObjectCommand`) for `csv-segment/<projectId>/<uploadedFilename>` in the `csv` branch of segment-mode validation in `services/server/api-service/lib/api/v1/projects/services/campaignService.js` (near the `SEGMENT_MODE_MATRIX` validation block), returning a 400 `INVALID_ARGUMENT` at creation/replace time instead of letting web-console 500 later. Do not patch only the console call site — the dangling data can still exist for already-created campaigns.

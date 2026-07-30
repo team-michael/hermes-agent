@@ -17,7 +17,6 @@ from local_state import (
     git_output,
     maintenance_lock,
     require_main,
-    require_no_core_worktree_changes,
     require_no_staged_changes,
     stage_existing_state_files,
 )
@@ -45,7 +44,6 @@ def main() -> int:
         with maintenance_lock(args.lock_timeout):
             require_main(repo)
             require_no_staged_changes(repo)
-            require_no_core_worktree_changes(repo)
 
             git(
                 repo,

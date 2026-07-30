@@ -15,6 +15,7 @@ approvals:
 command_allowlist:
 - script execution via -e/-c flag
 - execute_code
+- script execution via heredoc
 - overwrite project env/config via redirection
 security:
   redact_secrets: true
