@@ -747,6 +747,7 @@ def assess_helper_context(data: Dict[str, Any]) -> Dict[str, Any]:
     alarm = data.get('alarm_summary') or {}
     history = data.get('alarm_history') or {}
     metric = data.get('metric_datapoints') or {}
+    hermes_observability = data.get('hermes_observability') or {}
     logs = data.get('logs_insights') or {}
     rds = data.get('rds_context')
     pi_data = data.get('rds_performance_insights')
@@ -831,6 +832,32 @@ def assess_helper_context(data: Dict[str, Any]) -> Dict[str, Any]:
             ['metric'],
             'Final answer needs the breached metric/threshold context.',
         )
+
+    hermes_shaped = metric_name == 'HermesServiceHealthy'
+    if hermes_shaped:
+        pressure_incidents = (
+            hermes_observability.get('pressure_incidents')
+            if isinstance(hermes_observability, dict)
+            else None
+        ) or []
+        if pressure_incidents:
+            root_cause_evidence.append('hermes_profile_pressure_events')
+            if any(incident.get('session_context') for incident in pressure_incidents):
+                root_cause_evidence.append('hermes_session_attribution')
+        elif not isinstance(hermes_observability, dict) or hermes_observability.get('status') == 'error':
+            append_missing(
+                missing,
+                'hermes_observability_context',
+                'Hermes profile-pressure events or local session attribution are unavailable.',
+            )
+            append_followup(
+                followups,
+                'collect_hermes_profile_pressure_context',
+                'Hermes observability log and profile state.db',
+                'Query the fixed profile_pressure window and resolve the indexed session prefix/tool interval.',
+                ['hermes_observability.pressure_incidents', 'hermes_observability.report_facts'],
+                'Host-health responses should name the profile and full parent/subagent sessions when available.',
+            )
 
     log_shaped = bool(logs or detected.get('log_groups') or data.get('metric_filters') or 'aws/logs' in namespace.lower())
     rds_shaped = bool(
@@ -1013,7 +1040,11 @@ def assess_helper_context(data: Dict[str, Any]) -> Dict[str, Any]:
         )
 
     scope_has_specific_project = bool(scope.get('project_count'))
-    scope_is_common = bool(scope.get('service_indicators') or scope.get('infra_indicators'))
+    scope_is_common = bool(
+        scope.get('service_indicators')
+        or scope.get('infra_indicators')
+        or hermes_shaped
+    )
     if not scope_has_specific_project and not scope_is_common and not project_ids:
         append_missing(missing, 'scope_basis', 'No specific project scope or service/infra-wide basis was established.')
         append_followup(
@@ -1603,6 +1634,7 @@ def _fit_compact_budget(result: Dict[str, Any]) -> Dict[str, Any]:
         'scope_attribution',
         'current_error_facts',
         'current_code_locations',
+        'hermes_observability',
     ]
     if not result.get('dlq_disposition'):
         essential_keys.extend(['history', 'metric', 'logs'])
@@ -1697,6 +1729,13 @@ def compact_output(data: Dict[str, Any]) -> Dict[str, Any]:
                 max_items=4,
             ),
         },
+        'hermes_observability': _bounded_value(
+            data.get('hermes_observability'),
+            max_depth=7,
+            max_items=8,
+            max_keys=24,
+            max_string=420,
+        ),
         'metric_filters': _bounded_value(data.get('metric_filters')),
         'logs': _compact_logs(logs_summary),
         'http': _bounded_value(data.get('http_context')),

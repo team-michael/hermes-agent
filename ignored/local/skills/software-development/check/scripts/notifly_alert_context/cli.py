@@ -90,6 +90,7 @@ def main() -> None:
         days=7,
     ))
     metric_datapoints = collector_results.get('metric_datapoints')
+    hermes_observability = collector_results.get('hermes_observability')
     rds_context = collector_results.get('rds_context')
     rds_performance_insights = collector_results.get('rds_performance_insights')
     metric_filters = collector_results.get('metric_filters')
@@ -190,6 +191,7 @@ def main() -> None:
         'alarm_summary': summarize_alarm(alarm) if isinstance(alarm, dict) else alarm,
         'alarm_history': history,
         'metric_datapoints': metric_datapoints,
+        'hermes_observability': hermes_observability,
         'rds_context': rds_context,
         'rds_performance_insights': rds_performance_insights,
         'metric_filters': metric_filters,
@@ -216,6 +218,7 @@ def main() -> None:
         print_section('Alarm summary', data['alarm_summary'])
         print_section('Alarm history', history)
         print_section('Metric datapoints', metric_datapoints)
+        print_section('Hermes host observability', hermes_observability)
         print_section('Metric filters', metric_filters)
         print_section('Logs Insights compact summary', logs_insights)
         print_section('DLQ backlog marker', dlq_backlog)

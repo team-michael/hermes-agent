@@ -1,7 +1,7 @@
 ---
 name: check
 description: Investigate Notifly Slack/Amazon Q/CloudWatch alerts from live data sources using the bundled deterministic helper, then return one concise Korean triage result.
-version: 1.4.5
+version: 1.4.6
 author: Hermes Agent
 license: MIT
 metadata:
@@ -56,6 +56,7 @@ Rules:
    - `required_followups`
    - `alarm`, `history`, and current alarm window
    - datasource-specific evidence (`logs`, `rds_performance_insights`, `sqs`, `lambda`, `http`)
+   - `hermes_observability` for `HermesServiceHealthy` host alarms
    - `scope_attribution` / `projects`
    - `code`
 4. If `can_answer_root_cause: true`, answer immediately. Do not repeat helper-covered CloudWatch, RDS, PI, Logs Insights, SQS, Lambda, DynamoDB, or source queries.
@@ -190,6 +191,31 @@ Resolve the real function name rather than assuming the alarm prefix equals it. 
 
 Verify the namespace first. A `ConsoleErrors` log-derived 4xx alarm is not automatically an ALB/API Gateway metric. Distinguish handled client/business rejection from service failure.
 
+### Hermes Agent host health
+
+When `MetricName` is `HermesServiceHealthy`, use the helper's
+`hermes_observability` result instead of stopping at the instance-level gauge:
+
+- Use `alarm_trigger` to distinguish an observed unhealthy gauge from a
+  `TreatMissingData=breaching` transition with no observed breaching value.
+- Use `report_facts.parent_session` and `report_facts.active_session` verbatim
+  as `@session:<profile>/<full-id>` links. Never report only the 12-character
+  collector prefix when the helper resolved a full session.
+- Under the `원인` bullet, include nested evidence lines for the parent session,
+  directly active subagent/session, task excerpt, tool start/end time, tool
+  batch summary, pressure-open read rate, and recovery time when present.
+- For `execute_code`, render `batch_item_count`, `operations`, and
+  `execution_mode` from the helper. Do not inspect or quote the raw code in the
+  Slack response.
+- Include `related_same_parent_incidents` when the same parent caused another
+  pressure/recovery cycle in the alarm cluster.
+- Preserve the helper's attribution boundary: the active session/tool is
+  correlated with profile-level cgroup IO; bytes are not metered per process.
+  Say `직접 실행 중이던 session/tool` rather than claiming byte-perfect process
+  accounting.
+- If session attribution is unavailable, say so. Do not guess a full ID or use
+  archived session replay as evidence.
+
 ## Slack response contract
 
 For subscription alerts:
@@ -212,6 +238,11 @@ Visible format, in this exact order:
 - 고객 영향도: <failure/delay/data-loss/no-impact evidence>
 - 즉시 조치 필요 여부: <필요|불필요|추적 필요 + reason>
 ```
+
+For `HermesServiceHealthy`, the `원인` item may contain the nested session and
+pressure evidence required by the Hermes Agent host-health rules above. Keep
+the same five top-level bullets; nested evidence lines do not add new top-level
+fields.
 
 Add `- 액션 아이템:` only for `needs_fix` or `urgent`, and name a concrete
 code/SQL/Terraform target. Include an owner only when the relevant response
@@ -239,6 +270,11 @@ Do not modify skills or write one-off production scripts during the foreground a
 
 ## Known improvements
 
+- `v1.4.6`: `HermesServiceHealthy` collection resolves profile-pressure events
+  to full parent/subagent session links, active tool intervals, bounded task
+  excerpts, sequential `execute_code` batch size, read rate, and recovery time.
+  The Slack contract renders these as nested cause evidence while preserving
+  profile-cgroup versus process-level attribution boundaries.
 - `v1.4.4`: DLQ compact facts provide one safe frequency sentence and omit
   monitoring-Lambda metrics that the model previously attributed to consumers.
 - `v1.4.3`: DLQ response facts precompute the immediate-action label and block

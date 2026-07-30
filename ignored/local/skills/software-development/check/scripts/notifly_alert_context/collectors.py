@@ -13,6 +13,7 @@ from .aws_collectors import (
 )
 from .logs import describe_metric_filters, collect_logs_insights_summary
 from .scope import collect_campaign_scope_hints
+from .hermes_observability import collect_hermes_observability_context
 
 
 @dataclass
@@ -97,6 +98,14 @@ def _collect_campaign_scope_hints(ctx: CollectorContext) -> Any:
 
 COLLECTOR_REGISTRY = (
     CollectorSpec('metric_datapoints', lambda ctx: collect_metric_datapoints(ctx.session, ctx.alarm, days=ctx.days)),
+    CollectorSpec(
+        'hermes_observability',
+        lambda ctx: collect_hermes_observability_context(
+            ctx.session,
+            ctx.alarm,
+            ctx.history,
+        ),
+    ),
     CollectorSpec('rds_context', lambda ctx: describe_rds_context(ctx.session, ctx.alarm)),
     CollectorSpec('metric_filters', _collect_metric_filters),
     CollectorSpec('logs_insights', _collect_logs_insights),
