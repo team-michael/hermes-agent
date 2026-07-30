@@ -756,6 +756,8 @@ def assess_helper_context(data: Dict[str, Any]) -> Dict[str, Any]:
     scope = data.get('scope_attribution') or {}
     campaign_hints = data.get('campaign_scope_hints') or {}
     code_hits = data.get('repo_code_hits') or []
+    current_error_facts = data.get('current_error_facts') or []
+    current_code_locations = data.get('current_code_locations') or []
     dlq_disposition = build_dlq_disposition(data)
 
     missing: List[Dict[str, Any]] = []
@@ -893,6 +895,33 @@ def assess_helper_context(data: Dict[str, Any]) -> Dict[str, Any]:
             )
         else:
             root_cause_evidence.append('current_alarm_log_context')
+
+        if current_error_facts:
+            root_cause_evidence.append('current_sentry_error_facts')
+            has_code_location = any(
+                isinstance(location, dict)
+                and (
+                    isinstance(location.get('error_location'), dict)
+                    or isinstance(location.get('page'), dict)
+                )
+                for location in current_code_locations
+            )
+            if has_code_location:
+                root_cause_evidence.append('current_sentry_code_location')
+            else:
+                append_missing(
+                    missing,
+                    'current_sentry_code_location',
+                    'Sentry issue facts were parsed but no stack frame or matching page route was resolved.',
+                )
+                append_followup(
+                    followups,
+                    'resolve_sentry_code_location',
+                    'Sentry stack trace or local notifly-event repository',
+                    'Fetch the latest Sentry event stack frame, or match its transaction to a Next.js page and rendered component.',
+                    ['current_code_locations'],
+                    'The final cause should distinguish the matched page from the exact throwing function.',
+                )
 
     if rds_shaped:
         if not isinstance(rds, dict) or rds.get('error') or not (rds.get('instance') or rds.get('instances')):
@@ -1571,6 +1600,8 @@ def _fit_compact_budget(result: Dict[str, Any]) -> Dict[str, Any]:
         'dlq_disposition',
         'alarm',
         'scope_attribution',
+        'current_error_facts',
+        'current_code_locations',
     ]
     if not result.get('dlq_disposition'):
         essential_keys.extend(['history', 'metric', 'logs'])
@@ -1679,6 +1710,20 @@ def compact_output(data: Dict[str, Any]) -> Dict[str, Any]:
         ),
         'scope_attribution': _bounded_value(data.get('scope_attribution')),
         'projects': _bounded_value(data.get('project_mappings')),
+        'current_error_facts': _bounded_value(
+            data.get('current_error_facts'),
+            max_depth=5,
+            max_items=3,
+            max_keys=24,
+            max_string=500,
+        ),
+        'current_code_locations': _bounded_value(
+            data.get('current_code_locations'),
+            max_depth=5,
+            max_items=4,
+            max_keys=20,
+            max_string=400,
+        ),
         'code': _bounded_value(data.get('repo_code_hits')),
         'root_cause_evidence': assessment.get('root_cause_evidence') or [],
         'helper_notes': [

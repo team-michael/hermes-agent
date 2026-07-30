@@ -11,6 +11,115 @@ from .detect import (
 )
 from .aws_collectors import parse_datetime, parse_log_timestamp
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urlsplit
+
+
+def _bool_tag(value: Any) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    normalized = str(value or '').strip().lower()
+    if normalized in {'yes', 'true', '1'}:
+        return True
+    if normalized in {'no', 'false', '0'}:
+        return False
+    return None
+
+
+def _sentry_stack_frames(value: Any) -> List[Dict[str, Any]]:
+    frames: List[Dict[str, Any]] = []
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            if key == 'frames' and isinstance(nested, list):
+                frames.extend(frame for frame in nested if isinstance(frame, dict))
+            else:
+                frames.extend(_sentry_stack_frames(nested))
+    elif isinstance(value, list):
+        for nested in value:
+            frames.extend(_sentry_stack_frames(nested))
+    return frames
+
+
+def _sentry_stack_location(alert: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    frames = _sentry_stack_frames(alert)
+    if not frames:
+        return None
+    in_app = [frame for frame in frames if frame.get('in_app') is True]
+    frame = (in_app or frames)[-1]
+    file_name = frame.get('filename') or frame.get('abs_path') or frame.get('module')
+    function = frame.get('function') or frame.get('function_name')
+    if not file_name and not function:
+        return None
+    return {
+        'file': truncate(str(file_name or ''), 300) or None,
+        'function': truncate(str(function or ''), 160) or None,
+        'line': frame.get('lineno') or frame.get('line'),
+        'column': frame.get('colno') or frame.get('column'),
+        'in_app': frame.get('in_app'),
+        'evidence': 'sentry_stack_frame',
+    }
+
+
+def parse_sentry_error_fact(
+    message: str,
+    *,
+    timestamp: Optional[str] = None,
+    log_group: Optional[str] = None,
+    log_stream: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Extract bounded RCA fields from a structured Sentry log before truncation."""
+    try:
+        payload = json.loads(message)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    alert = payload.get('sentryAlert')
+    if not isinstance(alert, dict):
+        return None
+    issue = alert.get('issue') if isinstance(alert.get('issue'), dict) else {}
+    request = alert.get('request') if isinstance(alert.get('request'), dict) else {}
+    tags = alert.get('tags') if isinstance(alert.get('tags'), dict) else {}
+    url_candidates = [
+        str(value)
+        for value in (request.get('url'), tags.get('url'))
+        if value
+    ]
+    request_url = max(
+        url_candidates,
+        key=lambda value: (
+            '…' not in value and not value.rstrip().endswith('...'),
+            len(value),
+        ),
+        default='',
+    )
+    try:
+        request_path = urlsplit(request_url).path or None
+    except ValueError:
+        request_path = None
+    product_match = re.search(r'/products/([^/?#]+)', request_path or '')
+    journey_match = re.search(r'/user-journey/([^/?#]+)', request_path or '')
+    fact = {
+        'source': 'sentry',
+        'issue_id': truncate(str(issue.get('id') or ''), 80) or None,
+        'title': truncate(str(issue.get('title') or ''), 200) or None,
+        'message': truncate(str(issue.get('message') or ''), 500) or None,
+        'transaction': truncate(str(issue.get('transaction') or ''), 300) or None,
+        'request_path': truncate(request_path or '', 400) or None,
+        'product_id': product_match.group(1) if product_match else None,
+        'user_journey_id': journey_match.group(1) if journey_match else None,
+        'handled': _bool_tag(tags.get('handled')),
+        'environment': truncate(str(tags.get('environment') or ''), 80) or None,
+        'status': truncate(str(alert.get('status') or ''), 120) or None,
+        'level': truncate(str(alert.get('level') or ''), 40) or None,
+        'timestamp': timestamp,
+        'log_group': log_group,
+        'log_stream': log_stream,
+        'stack_location': _sentry_stack_location(alert),
+    }
+    if not any(fact.get(key) for key in ('issue_id', 'title', 'message', 'transaction')):
+        return None
+    return fact
+
 
 def describe_metric_filters(session, log_groups: Sequence[str], alarm: Optional[Dict[str, Any]], keywords: Sequence[str]) -> Optional[List[Dict[str, Any]]]:
     if session is None:
@@ -631,6 +740,12 @@ fields @timestamp, @message
             # be attributed to the current trigger unless they explicitly appear in the trigger
             # line itself or in explicit project_campaign_pairs.
             raw_scope_source = trigger_message
+            sentry_error_fact = parse_sentry_error_fact(
+                trigger_message,
+                timestamp=ts.isoformat(),
+                log_group=group,
+                log_stream=stream,
+            )
             contexts.append({
                 'timestamp': ts.isoformat(),
                 'log_group': group,
@@ -638,6 +753,7 @@ fields @timestamp, @message
                 'trigger': sanitize_log_line(trigger_message),
                 'surrounding_lines': centered['lines'],
                 'error_blocks': error_blocks,
+                'sentry_error_fact': sentry_error_fact,
                 'context_anchor': centered.get('anchor_line'),
                 'context_anchor_shifted': centered.get('anchor_shifted'),
                 'project_ids': detect_project_ids(raw_scope_source)[:10],
@@ -742,6 +858,7 @@ def current_error_details_from_contexts(
                 'log_group': ctx.get('log_group'),
                 'log_stream': ctx.get('log_stream'),
                 'trigger': ctx.get('trigger'),
+                'sentry_error_fact': ctx.get('sentry_error_fact'),
                 'likely_error': trigger_line,
                 'project_ids': unique([
                     *detect_project_ids(trigger_line),
@@ -788,6 +905,7 @@ def current_error_details_from_contexts(
             'log_group': ctx.get('log_group'),
             'log_stream': ctx.get('log_stream'),
             'trigger': ctx.get('trigger'),
+            'sentry_error_fact': ctx.get('sentry_error_fact'),
             'likely_error': likely_error,
             'project_ids': unique([
                 *explicit_project_ids,

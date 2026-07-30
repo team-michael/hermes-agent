@@ -17,7 +17,7 @@ from .collectors import (
 from .scope import (
     merge_scope_detections, build_scope_attribution,
 )
-from .repo import repo_search
+from .repo import repo_search, trace_sentry_code_locations
 from .assessment import print_section, assess_helper_context, compact_output
 
 def main() -> None:
@@ -99,7 +99,40 @@ def main() -> None:
     payment_product_names = scope_detections.get('payment_product_names', [])
     project_mappings = map_projects_via_dynamodb(session, project_ids)
 
+    current_error_facts = []
+    seen_error_facts = set()
+    if isinstance(logs_insights, dict):
+        fact_sources = [
+            *(logs_insights.get('current_error_details') or []),
+            *(logs_insights.get('current_trigger_contexts') or []),
+        ]
+        for source in fact_sources:
+            fact = source.get('sentry_error_fact') if isinstance(source, dict) else None
+            if not isinstance(fact, dict):
+                continue
+            key = (
+                fact.get('issue_id'),
+                fact.get('timestamp'),
+                fact.get('log_stream'),
+            )
+            if key in seen_error_facts:
+                continue
+            seen_error_facts.add(key)
+            current_error_facts.append(fact)
+            if len(current_error_facts) >= 3:
+                break
+    current_code_locations = trace_sentry_code_locations(
+        Path(args.repo),
+        current_error_facts,
+    )
+
     repo_tokens = [alarm_name or '', *keywords, *service_names]
+    for fact in current_error_facts:
+        repo_tokens.extend([
+            str(fact.get('title') or ''),
+            str(fact.get('message') or ''),
+            str(fact.get('transaction') or ''),
+        ])
     repo_tokens.extend([*queue_names, *lambda_names])
     if isinstance(alarm, dict):
         repo_tokens.extend([str(alarm.get('MetricName') or ''), str(alarm.get('AlarmDescription') or '')])
@@ -142,6 +175,8 @@ def main() -> None:
         'campaign_scope_hints': campaign_scope_hints,
         'project_mappings': project_mappings,
         'scope_attribution': build_scope_attribution(detected, alarm, project_mappings, rds_performance_insights),
+        'current_error_facts': current_error_facts,
+        'current_code_locations': current_code_locations,
         'repo_code_hits': code_hits,
     }
     data['helper_assessment'] = assess_helper_context(data)
@@ -164,6 +199,8 @@ def main() -> None:
         print_section('RDS Performance Insights', rds_performance_insights)
         print_section('Campaign scope hints', campaign_scope_hints)
         print_section('Project mappings', project_mappings)
+        print_section('Current error facts', current_error_facts)
+        print_section('Current code locations', current_code_locations)
         print_section('Repo code hits', code_hits)
     else:
         print(json.dumps(compact_output(data), ensure_ascii=False, indent=2, default=str))

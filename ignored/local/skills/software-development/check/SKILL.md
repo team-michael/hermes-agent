@@ -118,6 +118,8 @@ Use helper alarm metadata, metric datapoints, topology, and Performance Insights
 
 Use the metric filter and exact current alarm-window trigger. Do not substitute a historical signature when current trigger evidence is missing. Load the specific matching reference only after identifying the trigger family.
 
+For structured Sentry alerts, use `current_error_facts` for the issue, message, transaction, request path, project/product slug, and handled status. Use `current_code_locations.page` for the exact Next.js route page. Treat `error_location` as the exact throwing function only when its evidence is `sentry_stack_frame`; `function_candidates` are route-rendered components, not proven throw sites. Preserve `trace_status` so a missing stack frame is reported as unavailable rather than guessed.
+
 ### SQS / DLQ
 
 Use queue attributes, redrive policy, event-source mapping, Lambda Errors/Throttles/Duration, and bounded message inspection only when approved and necessary. Remember that `receive_message` changes visibility.
