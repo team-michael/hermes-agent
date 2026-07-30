@@ -345,6 +345,9 @@ def cron_create(args):
         name=getattr(args, "name", None),
         deliver=getattr(args, "deliver", None),
         repeat=getattr(args, "repeat", None),
+        # Typing the exact schedule in the CLI is explicit user confirmation.
+        # The model-facing cronjob tool still requires a separate confirmation.
+        confirm_high_frequency=True,
         skill=getattr(args, "skill", None),
         skills=_normalize_skills(getattr(args, "skill", None), getattr(args, "skills", None)),
         script=getattr(args, "script", None),

@@ -734,11 +734,6 @@ def cronjob(
             if not schedule:
                 return tool_error("schedule is required for create", success=False)
             parsed_schedule = parse_schedule(schedule)
-            if (
-                _requires_high_frequency_confirmation(parsed_schedule, repeat)
-                and not confirm_high_frequency
-            ):
-                return tool_error(_high_frequency_confirmation_error(), success=False)
             canonical_skills = _canonical_skills(skill, skills)
             _no_agent = bool(no_agent)
             # Job-shape validation differs by mode:
@@ -783,6 +778,12 @@ def cronjob(
                             "Use cronjob(action='list') to see available jobs.",
                             success=False,
                         )
+
+            if (
+                _requires_high_frequency_confirmation(parsed_schedule, repeat)
+                and not confirm_high_frequency
+            ):
+                return tool_error(_high_frequency_confirmation_error(), success=False)
 
             job = create_job(
                 prompt=prompt or "",

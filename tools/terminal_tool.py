@@ -2250,10 +2250,14 @@ def terminal_tool(
 
         # Reject foreground commands where the model explicitly requests
         # a timeout above FOREGROUND_MAX_TIMEOUT — nudge it toward background.
-        if not background and effective_timeout > FOREGROUND_MAX_TIMEOUT:
+        if (
+            not background
+            and timeout is not None
+            and timeout > FOREGROUND_MAX_TIMEOUT
+        ):
             return json.dumps({
                 "error": (
-                    f"Foreground timeout {effective_timeout}s exceeds the maximum of "
+                    f"Foreground timeout {timeout}s exceeds the maximum of "
                     f"{FOREGROUND_MAX_TIMEOUT}s. Use background=true with "
                     f"notify_on_complete=true for long-running commands."
                 ),

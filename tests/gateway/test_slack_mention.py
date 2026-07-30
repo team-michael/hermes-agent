@@ -78,6 +78,9 @@ def _make_adapter(require_mention=None, strict_mention=None, free_response_chann
     adapter.config = PlatformConfig(enabled=True, extra=extra)
     adapter._bot_user_id = BOT_USER_ID
     adapter._team_bot_user_ids = {}
+    adapter._bot_message_ts = set()
+    adapter._mentioned_threads = set()
+    adapter._muted_threads = set()
     return adapter
 
 
