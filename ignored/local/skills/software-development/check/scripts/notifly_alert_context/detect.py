@@ -6,6 +6,7 @@ def detect_alarm_name(text: str, override: Optional[str]) -> Optional[str]:
         return override
     patterns = [
         r'CloudWatch Alarm\s*\|\s*(.*?)\s*\|\s*[a-z]{2}-[a-z]+-\d\s*\|\s*Account',
+        r'CloudWatch Alarm\s*\|\s*([^|\r\n]+?)\s*\|\s*[a-z]{2}-[a-z]+-\d(?:\s*\||\s*$)',
         r'"AlarmName"\s*:\s*"([^"]+)"',
         r'AlarmName\s*[:=]\s*([^\n]+)',
     ]

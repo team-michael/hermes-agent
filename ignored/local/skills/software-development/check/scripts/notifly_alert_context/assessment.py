@@ -1592,6 +1592,7 @@ def _fit_compact_budget(result: Dict[str, Any]) -> Dict[str, Any]:
     essential_keys = [
         'can_answer_root_cause',
         'next_action',
+        'input_integrity',
         'missing_required_context',
         'required_followups',
         'omitted_followup_count',
@@ -1635,6 +1636,7 @@ def compact_output(data: Dict[str, Any]) -> Dict[str, Any]:
     result = {
         'can_answer_root_cause': assessment.get('can_answer_root_cause'),
         'next_action': assessment.get('next_action'),
+        'input_integrity': _bounded_value(data.get('input_integrity')),
         'missing_required_context': assessment.get('missing_required_context') or [],
         'required_followups': assessment.get('required_followups') or [],
         'omitted_followup_count': assessment.get('omitted_followup_count') or 0,

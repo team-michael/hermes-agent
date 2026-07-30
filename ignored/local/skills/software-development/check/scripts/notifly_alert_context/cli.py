@@ -20,6 +20,30 @@ from .scope import (
 from .repo import repo_search, trace_sentry_code_locations
 from .assessment import print_section, assess_helper_context, compact_output
 
+
+def resolve_alert_input(
+    explicit_text: str,
+    explicit_alarm_name: Optional[str],
+) -> tuple[str, Optional[str], Dict[str, Any]]:
+    supplied_alarm_name = detect_alarm_name(explicit_text, explicit_alarm_name)
+    session_text = read_session_subscription_text()
+    if session_text:
+        session_alarm_name = detect_alarm_name(session_text, None)
+        if session_alarm_name:
+            return session_text, session_alarm_name, {
+                'source': 'hermes_session',
+                'corrected': session_alarm_name != supplied_alarm_name,
+                'supplied_alarm_name': supplied_alarm_name,
+                'resolved_alarm_name': session_alarm_name,
+            }
+    return explicit_text, supplied_alarm_name, {
+        'source': 'arguments',
+        'corrected': False,
+        'supplied_alarm_name': supplied_alarm_name,
+        'resolved_alarm_name': supplied_alarm_name,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description='Collect first-pass live alert context for Notifly incidents using Hermes profile/global .env-backed data sources.')
     parser.add_argument('--text', help='Pasted alert or thread text')
@@ -33,8 +57,10 @@ def main() -> None:
     args = parser.parse_args()
 
     load_env_files()
-    text = read_text_arg(args)
-    alarm_name = detect_alarm_name(text, args.alarm_name)
+    text, alarm_name, input_integrity = resolve_alert_input(
+        read_text_arg(args),
+        args.alarm_name,
+    )
     region = detect_region(text, args.region)
     log_groups = detect_log_groups(text)
     project_ids = detect_project_ids(text)
@@ -158,6 +184,7 @@ def main() -> None:
     }
 
     data = {
+        'input_integrity': input_integrity,
         'detected': detected,
         'aws_caller_identity': sts,
         'alarm_summary': summarize_alarm(alarm) if isinstance(alarm, dict) else alarm,
@@ -182,6 +209,7 @@ def main() -> None:
     data['helper_assessment'] = assess_helper_context(data)
 
     if args.format == 'sections':
+        print_section('Input integrity', input_integrity)
         print_section('Detected artifacts', detected)
         print_section('AWS caller identity', sts)
         print_section('Helper assessment', data['helper_assessment'])

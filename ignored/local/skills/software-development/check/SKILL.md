@@ -1,7 +1,7 @@
 ---
 name: check
 description: Investigate Notifly Slack/Amazon Q/CloudWatch alerts from live data sources using the bundled deterministic helper, then return one concise Korean triage result.
-version: 1.4.4
+version: 1.4.5
 author: Hermes Agent
 license: MIT
 metadata:
@@ -35,6 +35,10 @@ python <absolute path to scripts/collect_notifly_alert_context.py> \
 
 Rules:
 
+- In a Hermes Slack subscription turn, the helper re-reads the persisted inbound
+  alert and treats its exact alarm name as authoritative. If
+  `input_integrity.corrected=true`, use `resolved_alarm_name`; do not retry with
+  the shortened model-supplied value or replace the helper with manual AWS calls.
 - Never construct this path with `~`, `$HOME`, `${HERMES_HOME}`, or by appending `/profiles/<name>`.
 - Never run `find /home`, `find ~/.hermes`, `ls`, `grep`, or repeated path guesses after a miss.
 - Do not trust a negative filename search by itself; profile skill directories may be symlinks.
@@ -46,6 +50,7 @@ Rules:
 1. Extract the exact alarm name, region, account, metric/log group, and Slack event timestamp from the supplied alert.
 2. Run the helper once with the exact alarm name when available. Use a 30-second terminal timeout.
 3. Inspect only these result boundaries first:
+   - `input_integrity`
    - `can_answer_root_cause`
    - `missing_required_context`
    - `required_followups`

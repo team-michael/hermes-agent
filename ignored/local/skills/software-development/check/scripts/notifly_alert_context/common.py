@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import time
@@ -23,7 +24,7 @@ GLOBAL_HERMES_ENV = Path.home() / '.hermes' / '.env'
 def load_env_file(path: Path) -> None:
     if not path.exists():
         return
-    for raw in path.read_text().splitlines():
+    for raw in path.read_text(encoding='utf-8').splitlines():
         line = raw.strip()
         if not line or line.startswith('#') or '=' not in line:
             continue
@@ -49,10 +50,57 @@ def read_text_arg(args: argparse.Namespace) -> str:
     if args.text:
         return args.text
     if args.text_file:
-        return Path(args.text_file).read_text()
+        return Path(args.text_file).read_text(encoding='utf-8')
     if args.stdin:
         return sys.stdin.read()
     raise SystemExit('Provide --text, --text-file, or --stdin')
+
+
+def read_session_subscription_text(
+    *,
+    home: Optional[Path] = None,
+    session_key: Optional[str] = None,
+) -> Optional[str]:
+    """Read the trusted Slack subscription payload for the current turn."""
+    resolved_key = session_key or os.environ.get('HERMES_SESSION_KEY')
+    if not resolved_key:
+        return None
+
+    db_path = (home or hermes_home()) / 'state.db'
+    if not db_path.exists():
+        return None
+
+    db = None
+    try:
+        db = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
+        row = db.execute(
+            '''
+            SELECT m.content
+            FROM messages AS m
+            JOIN sessions AS s ON s.id = m.session_id
+            WHERE s.session_key = ?
+              AND m.role = 'user'
+              AND m.active = 1
+            ORDER BY m.id DESC
+            LIMIT 1
+            ''',
+            (resolved_key,),
+        ).fetchone()
+    except (OSError, sqlite3.Error):
+        return None
+    finally:
+        if db is not None:
+            db.close()
+
+    content = str(row[0] or '') if row else ''
+    marker = '[Slack subscription context]'
+    marker_index = content.rfind(marker)
+    if marker_index < 0:
+        return None
+    subscription_text = content[marker_index:]
+    if 'CloudWatch Alarm' not in subscription_text:
+        return None
+    return subscription_text
 
 def unique(seq: Iterable[str]) -> List[str]:
     seen = set()
