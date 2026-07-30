@@ -264,6 +264,38 @@ class TestUnifiedCronjobTool:
         assert listing["jobs"][0]["name"] == "Server Check"
         assert listing["jobs"][0]["state"] == "scheduled"
 
+    def test_indefinite_high_frequency_requires_confirmation(self):
+        result = json.loads(
+            cronjob(action="create", prompt="probe", schedule="every 5m")
+        )
+        assert result["success"] is False
+        assert "explicit user confirmation" in result["error"]
+        assert json.loads(cronjob(action="list"))["count"] == 0
+
+    def test_finite_high_frequency_is_allowed(self):
+        result = json.loads(
+            cronjob(
+                action="create",
+                prompt="probe",
+                schedule="every 5m",
+                repeat=2,
+            )
+        )
+        assert result["success"] is True
+        assert result["repeat"] == "2 times"
+
+    def test_confirmed_indefinite_high_frequency_is_allowed(self):
+        result = json.loads(
+            cronjob(
+                action="create",
+                prompt="monitor",
+                schedule="*/5 * * * *",
+                confirm_high_frequency=True,
+            )
+        )
+        assert result["success"] is True
+        assert result["repeat"] == "forever"
+
     def test_list_handles_partial_legacy_job_records(self):
         from cron.jobs import save_jobs
 
@@ -605,7 +637,12 @@ class TestLocalDeliveryNotice:
 
     def test_omitted_deliver_no_origin_emits_notice(self):
         created = json.loads(
-            cronjob(action="create", prompt="Output the time", schedule="every 2m")
+            cronjob(
+                action="create",
+                prompt="Output the time",
+                schedule="every 2m",
+                repeat=1,
+            )
         )
         assert created["success"] is True
         # Omitted deliver from a session with no origin downgrades to local.
@@ -616,7 +653,11 @@ class TestLocalDeliveryNotice:
     def test_explicit_origin_no_origin_emits_notice(self):
         created = json.loads(
             cronjob(
-                action="create", prompt="x", schedule="every 2m", deliver="origin"
+                action="create",
+                prompt="x",
+                schedule="every 2m",
+                repeat=1,
+                deliver="origin",
             )
         )
         assert created["deliver"] == "origin"
@@ -626,7 +667,11 @@ class TestLocalDeliveryNotice:
         # The user explicitly asked for local — no surprise to flag.
         created = json.loads(
             cronjob(
-                action="create", prompt="x", schedule="every 2m", deliver="local"
+                action="create",
+                prompt="x",
+                schedule="every 2m",
+                repeat=1,
+                deliver="local",
             )
         )
         assert created["deliver"] == "local"
@@ -639,6 +684,7 @@ class TestLocalDeliveryNotice:
                 action="create",
                 prompt="x",
                 schedule="every 2m",
+                repeat=1,
                 deliver="telegram:123",
             )
         )
@@ -652,7 +698,12 @@ class TestLocalDeliveryNotice:
 
         set_session_vars(platform="telegram", chat_id="999")
         created = json.loads(
-            cronjob(action="create", prompt="x", schedule="every 2m")
+            cronjob(
+                action="create",
+                prompt="x",
+                schedule="every 2m",
+                repeat=1,
+            )
         )
         assert created["deliver"] == "origin"
         assert "local-only cron job" not in created["message"]

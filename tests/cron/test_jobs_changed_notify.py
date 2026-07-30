@@ -71,6 +71,7 @@ def test_builtin_notify_is_harmless(monkeypatch):
 def test_tool_create_notifies_provider(temp_home, monkeypatch):
     """Creating a job via the cronjob tool path invokes on_jobs_changed."""
     import cron.scheduler as sched
+    from cron.jobs import use_cron_store
     calls = []
     monkeypatch.setattr(sched, "_notify_provider_jobs_changed",
                         lambda: calls.append("changed"))
@@ -78,7 +79,16 @@ def test_tool_create_notifies_provider(temp_home, monkeypatch):
     from tools.cronjob_tools import cronjob
     import json
 
-    out = json.loads(cronjob(action="create", prompt="echo hi", schedule="every 5m", name="w"))
+    with use_cron_store(temp_home):
+        out = json.loads(
+            cronjob(
+                action="create",
+                prompt="echo hi",
+                schedule="every 5m",
+                name="w",
+                repeat=1,
+            )
+        )
     assert out["success"] is True
     assert calls == ["changed"]
 
@@ -86,16 +96,26 @@ def test_tool_create_notifies_provider(temp_home, monkeypatch):
 def test_tool_remove_notifies_provider(temp_home, monkeypatch):
     """Removing a job via the tool path invokes on_jobs_changed."""
     import json
+    from cron.jobs import use_cron_store
     from tools.cronjob_tools import cronjob
 
-    created = json.loads(cronjob(action="create", prompt="x", schedule="every 5m", name="r"))
-    jid = created["job_id"]
+    with use_cron_store(temp_home):
+        created = json.loads(
+            cronjob(
+                action="create",
+                prompt="x",
+                schedule="every 5m",
+                name="r",
+                repeat=1,
+            )
+        )
+        jid = created["job_id"]
 
-    import cron.scheduler as sched
-    calls = []
-    monkeypatch.setattr(sched, "_notify_provider_jobs_changed",
-                        lambda: calls.append("changed"))
+        import cron.scheduler as sched
+        calls = []
+        monkeypatch.setattr(sched, "_notify_provider_jobs_changed",
+                            lambda: calls.append("changed"))
 
-    out = json.loads(cronjob(action="remove", job_id=jid))
+        out = json.loads(cronjob(action="remove", job_id=jid))
     assert out["success"] is True
     assert calls == ["changed"]

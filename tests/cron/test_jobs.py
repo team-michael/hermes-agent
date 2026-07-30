@@ -2047,6 +2047,29 @@ class TestLateEnvRepointScopesStore:
         # ...and the import-time file is byte-identical to the sentinel.
         assert old_file.read_text(encoding="utf-8") == sentinel
 
+    def test_test_mode_rejects_stale_store_outside_active_home(
+        self, tmp_path, monkeypatch
+    ):
+        """A stale import-time path cannot mutate another profile in tests."""
+        import cron.jobs as jobs
+
+        active_home = tmp_path / "active-test-home"
+        stale_home = tmp_path / "simulated-live-profile"
+        stale_store = jobs._CronStorePaths(
+            stale_home / "cron",
+            stale_home / "cron" / "jobs.json",
+            stale_home / "cron" / "output",
+        )
+        monkeypatch.setenv("HERMES_HOME", str(active_home))
+        monkeypatch.setenv("HERMES_TEST_MODE", "1")
+        monkeypatch.setenv("HERMES_TEST_ISOLATED_HOME", "1")
+        monkeypatch.setattr(jobs, "_current_cron_store", lambda: stale_store)
+
+        with pytest.raises(RuntimeError, match="outside the active isolated"):
+            jobs._save_jobs_unlocked([])
+
+        assert not stale_store.jobs_file.exists()
+
 
 # =========================================================================
 # UTF-8 BOM on jobs.json (Windows Notepad / PowerShell 5.1)

@@ -1021,7 +1021,9 @@ def load_jobs() -> List[Dict[str, Any]]:
 
 def _save_jobs_unlocked(jobs: List[Dict[str, Any]]):
     """Save all jobs to storage. Caller must hold _jobs_lock()."""
-    jobs_file = _current_cron_store().jobs_file
+    store = _current_cron_store()
+    jobs_file = store.jobs_file
+    _assert_test_cron_store_isolated(store)
     ensure_dirs()
     # Snapshot the current owner BEFORE the atomic replace so a privileged
     # writer (root CLI in Docker) can hand ownership back to the gateway user
@@ -1051,6 +1053,39 @@ def _save_jobs_unlocked(jobs: List[Dict[str, Any]]):
         except OSError:
             pass
         raise
+
+
+def _assert_test_cron_store_isolated(store: _CronStorePaths) -> None:
+    """Reject implicit writes outside the active isolated test home."""
+    in_test = (
+        os.environ.get("HERMES_TEST_MODE", "").strip().lower()
+        in {"1", "true", "yes", "on"}
+        or "PYTEST_CURRENT_TEST" in os.environ
+    )
+    if not in_test:
+        return
+
+    # Explicit test-scoped stores and deliberately patched compatibility
+    # constants are established test APIs and are safe by construction.
+    if _cron_store_override.get() is not None:
+        return
+    if _CronStorePaths(CRON_DIR, JOBS_FILE, OUTPUT_DIR) != _IMPORT_STORE:
+        return
+
+    if os.environ.get("HERMES_TEST_ISOLATED_HOME") != "1":
+        raise RuntimeError(
+            "Refusing to write cron jobs from a test without an isolated "
+            "HERMES_HOME. Use scripts/run_tests.sh and use_cron_store(tmp_path)."
+        )
+
+    active_home = get_hermes_home().expanduser().resolve()
+    try:
+        store.jobs_file.expanduser().resolve().relative_to(active_home)
+    except ValueError as exc:
+        raise RuntimeError(
+            "Refusing to write cron jobs outside the active isolated test "
+            f"home: {store.jobs_file}"
+        ) from exc
 
 
 def save_jobs(jobs: List[Dict[str, Any]]):

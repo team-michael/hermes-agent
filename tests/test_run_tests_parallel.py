@@ -225,6 +225,55 @@ def _run_runner(probe_dir: Path, *extra: str) -> subprocess.CompletedProcess:
     )
 
 
+def test_runner_isolates_hermes_home_before_collection(tmp_path: Path) -> None:
+    """Each pytest child starts with a disposable HERMES_HOME."""
+    probe_dir = tmp_path / "home-probe"
+    probe_dir.mkdir()
+    handoff = tmp_path / "home-probe.json"
+    probe = probe_dir / "test_home_probe.py"
+    probe.write_text(
+        textwrap.dedent(
+            f"""
+            import json
+            import os
+            from pathlib import Path
+
+            IMPORT_HOME = os.environ.get("HERMES_HOME")
+            IMPORT_HOME_EXISTS = bool(IMPORT_HOME and Path(IMPORT_HOME).is_dir())
+            IMPORT_TEST_MODE = os.environ.get("HERMES_TEST_MODE")
+            IMPORT_ISOLATED = os.environ.get("HERMES_TEST_ISOLATED_HOME")
+
+            def test_records_home():
+                Path({str(handoff)!r}).write_text(json.dumps({{
+                    "import_home": IMPORT_HOME,
+                    "runtime_home": os.environ.get("HERMES_HOME"),
+                    "import_home_exists": IMPORT_HOME_EXISTS,
+                    "import_test_mode": IMPORT_TEST_MODE,
+                    "import_isolated": IMPORT_ISOLATED,
+                    "test_mode": os.environ.get("HERMES_TEST_MODE"),
+                    "isolated": os.environ.get("HERMES_TEST_ISOLATED_HOME"),
+                }}))
+            """
+        ).strip()
+        + "\n"
+    )
+
+    parent_home = os.environ.get("HERMES_HOME")
+    proc = _run_runner(probe_dir, "-q")
+    assert proc.returncode == 0, proc.stdout
+
+    observed = json.loads(handoff.read_text())
+    assert observed["import_home"]
+    assert observed["import_home_exists"] is True
+    assert observed["import_test_mode"] == "1"
+    assert observed["import_isolated"] == "1"
+    assert observed["test_mode"] == "1"
+    assert observed["isolated"] == "1"
+    assert observed["import_home"] != parent_home
+    assert observed["runtime_home"] != parent_home
+    assert not Path(observed["import_home"]).exists()
+
+
 def test_bare_q_flag_passes_through(tmp_path: Path) -> None:
     """A bare ``-q`` (no ``--``) runs clean instead of erroring out."""
     probe_dir = _make_probe_dir(tmp_path)

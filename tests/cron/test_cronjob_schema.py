@@ -39,3 +39,12 @@ def test_cronjob_schema_required_array_unchanged():
     from tools.cronjob_tools import CRONJOB_SCHEMA
 
     assert CRONJOB_SCHEMA["parameters"]["required"] == ["action"]
+
+
+def test_high_frequency_confirmation_requires_explicit_user_confirmation():
+    from tools.cronjob_tools import CRONJOB_SCHEMA
+
+    prop = CRONJOB_SCHEMA["parameters"]["properties"]["confirm_high_frequency"]
+    assert prop["type"] == "boolean"
+    assert prop["default"] is False
+    assert "explicitly confirms" in prop["description"]

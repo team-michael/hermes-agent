@@ -656,6 +656,50 @@ def _execute_job_now(job: Dict[str, Any]) -> Dict[str, Any]:
         return {"claimed": True, "success": False, "error": str(e)}
 
 
+def _is_high_frequency_schedule(parsed_schedule: Dict[str, Any]) -> bool:
+    """Return whether a recurring schedule can fire less than 10m apart."""
+    kind = parsed_schedule.get("kind")
+    if kind == "interval":
+        return int(parsed_schedule.get("minutes") or 0) < 10
+    if kind != "cron":
+        return False
+
+    try:
+        from datetime import datetime, timezone
+        from croniter import croniter
+
+        iterator = croniter(parsed_schedule["expr"], datetime.now(timezone.utc))
+        previous = iterator.get_next(datetime)
+        for _ in range(8):
+            current = iterator.get_next(datetime)
+            if (current - previous).total_seconds() < 10 * 60:
+                return True
+            previous = current
+    except Exception:
+        # parse_schedule() remains the source of truth for validation. If a
+        # valid provider-specific cron shape cannot be sampled here, do not
+        # turn the confirmation guard into a compatibility break.
+        return False
+    return False
+
+
+def _requires_high_frequency_confirmation(
+    parsed_schedule: Dict[str, Any],
+    repeat: Optional[int],
+) -> bool:
+    infinite = repeat is None or repeat <= 0
+    return infinite and _is_high_frequency_schedule(parsed_schedule)
+
+
+def _high_frequency_confirmation_error() -> str:
+    return (
+        "An indefinitely recurring schedule that can fire less than 10 minutes "
+        "apart requires explicit user confirmation. Ask the user to confirm the "
+        "exact interval, then retry with confirm_high_frequency=true, or set a "
+        "finite repeat count."
+    )
+
+
 def cronjob(
     action: str,
     job_id: Optional[str] = None,
@@ -663,6 +707,7 @@ def cronjob(
     schedule: Optional[str] = None,
     name: Optional[str] = None,
     repeat: Optional[int] = None,
+    confirm_high_frequency: bool = False,
     deliver: Optional[str] = None,
     include_disabled: bool = False,
     skill: Optional[str] = None,
@@ -688,6 +733,12 @@ def cronjob(
         if normalized == "create":
             if not schedule:
                 return tool_error("schedule is required for create", success=False)
+            parsed_schedule = parse_schedule(schedule)
+            if (
+                _requires_high_frequency_confirmation(parsed_schedule, repeat)
+                and not confirm_high_frequency
+            ):
+                return tool_error(_high_frequency_confirmation_error(), success=False)
             canonical_skills = _canonical_skills(skill, skills)
             _no_agent = bool(no_agent)
             # Job-shape validation differs by mode:
@@ -960,6 +1011,21 @@ def cronjob(
                 if job.get("state") != "paused":
                     updates["state"] = "scheduled"
                     updates["enabled"] = True
+            if schedule is not None or repeat is not None:
+                effective_schedule = updates.get("schedule", job.get("schedule") or {})
+                effective_repeat = updates.get("repeat", job.get("repeat") or {})
+                effective_repeat_count = effective_repeat.get("times")
+                if (
+                    _requires_high_frequency_confirmation(
+                        effective_schedule,
+                        effective_repeat_count,
+                    )
+                    and not confirm_high_frequency
+                ):
+                    return tool_error(
+                        _high_frequency_confirmation_error(),
+                        success=False,
+                    )
             if not updates:
                 return tool_error("No updates provided.", success=False)
             updated = update_job(job_id, updates)
@@ -1018,6 +1084,11 @@ Important safety rule: cron-run sessions should not recursively schedule more cr
             "repeat": {
                 "type": "integer",
                 "description": "Optional repeat count. Omit for defaults (once for one-shot, forever for recurring)."
+            },
+            "confirm_high_frequency": {
+                "type": "boolean",
+                "default": False,
+                "description": "Required only for a new or updated indefinitely recurring schedule that can fire less than 10 minutes apart. Set true only after the user explicitly confirms the exact interval. Prefer a finite repeat for tests and probes."
             },
             "deliver": {
                 "type": "string",
@@ -1133,6 +1204,7 @@ registry.register(
         schedule=args.get("schedule"),
         name=args.get("name"),
         repeat=args.get("repeat"),
+        confirm_high_frequency=args.get("confirm_high_frequency", False),
         deliver=args.get("deliver"),
         include_disabled=args.get("include_disabled", True),
         skill=args.get("skill"),

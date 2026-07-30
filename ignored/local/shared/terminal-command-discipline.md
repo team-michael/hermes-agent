@@ -13,6 +13,12 @@ Avoid terminal command shapes that trigger avoidable approval prompts while pres
 - Use full `https://` URLs. Do not pass schemeless URLs to download or execution commands.
 - Keep real approval prompts for genuinely risky operations such as destructive file deletion, `git reset --hard`, force push, database writes/truncation, service restarts, or commands that mutate infrastructure.
 
+## Hermes test and cron safety
+
+- In the Hermes checkout, never invoke `pytest` directly. Always use `scripts/run_tests.sh`, which creates a disposable `HERMES_HOME` before test collection.
+- Cron tests must use `use_cron_store(tmp_path)` and a finite `repeat`. Never use a live profile's cron store for a test or probe.
+- Never create a recurring cron in a live profile merely to test behavior. For an indefinitely recurring schedule shorter than 10 minutes, require an explicit user request for that exact interval before creating it.
+
 Safe examples:
 
 ```bash
