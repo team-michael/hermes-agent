@@ -1,11 +1,11 @@
 model:
-  default: '@cf/moonshotai/kimi-k2.6'
+  default: '@cf/moonshotai/kimi-k2.7-code'
   provider: cloudflare
   base_url: ''
   context_length: 262144
 agent:
   gateway_notify_interval: 0
-  reasoning_effort: none
+  reasoning_effort: low
   service_tier: fast
 terminal:
   env_passthrough:

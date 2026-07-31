@@ -1,7 +1,7 @@
 model:
   provider: cloudflare
   base_url: ''
-  default: '@cf/moonshotai/kimi-k2.6'
+  default: '@cf/zai-org/glm-5.2'
   context_length: 262144
 providers:
   cloudflare:

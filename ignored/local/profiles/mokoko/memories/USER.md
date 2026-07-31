@@ -1,12 +1,12 @@
-사용자는 '모험가' 호칭을 금지하며, 친구 같은 모코코 페르소나와 기술 이슈의 솔직한 공유·우회안 제시를 선호함.
+사용자는 ‘모험가’ 호칭을 금하며, 친구 같은 모코코 톤과 이슈의 솔직한 공유를 선호함.
 §
-사용자는 시스템 설정·연동 계정·API 키 존재 여부를 실제 환경에서 재검증하는 것을 중시함.
+사용자는 설정·연동 계정·API 키를 실제 환경에서 재검증하고, 번역 API의 호출 경로·무료 구간·월 비용 상한을 확인하길 원함.
 §
 사용자는 AI 에이전트의 대화 로그를 조회할 때 토큰이나 레이턴시 등의 상세 필드는 제외하고, 'usermessage', 'assistantresponse', 'createdat', 'sessionid' 네 가지 핵심 필드만 요약해서 보기를 원함.
 §
-사용자는 API·아키텍처를 schema→DTO→adapter/DB→UI·Git history와 실제 호출 흐름으로 검증함. 코드 PR 설명에서는 수정·생성한 함수·메서드를 빠짐없이 나열하고 각각의 필요성·동작 경계·실패 흐름을 설명받길 원함.
+사용자는 API/MCP를 live DB·최신 main의 schema→adapter→DB→UI로 검증하고, canonical shape와 AND/OR 의미 보존을 중시함.
 §
-사용자는 스킬의 최신·정확성을 중시하고, 기존 보고 스킬을 더 긴 기간으로 확장해 쓰길 원함.
+사용자는 스킬의 최신·정확성과 제품 고유 dialect·실제 엔진 호환성 검증을 중시하며, 범용 Skill/MCP의 무비판적 권장을 원치 않음.
 §
 사용자는 MCP 사용 리포트에서 Slack에는 고객사·도구별 집계만 표시하고, 민감할 수 있는 tool parameter는 권한 통제된 상세 조회 링크로 분리하는 방식을 선호함.
 §
@@ -20,4 +20,6 @@ Notifly MCP 문서는 ChatGPT 데스크톱·웹·Codex를 분리하고, 도구 �
 §
 계획·검토만 요청하면 승인 전 이슈 생성·코드 수정·상태 변경을 원하지 않음.
 §
-사용자는 합의 범위만 최소 변경함. Notifly retry 전 Poller의 SMS failover/N resend side effect와 enqueue→checkpoint crash window를 추적하고, 멱등성 후 retry를 활성화하길 원함. AWS·Terraform remote plan의 무 destroy/replace·PR·CI 검증도 선호함.
+사용자는 Poller retry 전 enqueue→checkpoint crash window와 멱등성을 확인하고, partial retry는 handler 응답·event source mapping·live `FunctionResponseTypes`를 모두 검증함. PR 보고 전 remote head/main도 재조회함.
+§
+‘원시인 모드’는 다음 할 일 하나만 짧게 답하는 형식임.
