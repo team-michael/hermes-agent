@@ -21,3 +21,5 @@ Kyungseo Jeong is male.
 Notifly 다국어: 프로젝트 설정 없음. 캠페인·비제어 variant는 message/localized_messages 상호배타, 제어군만 둘 다 null; UJ node도 동일. map default 필수, locale 선택 후 exact→base→default. Push는 1개만 SQS 전달. 팝업·UJ 팝업은 /user-state에서 user language로 1개 resolve해 기존 message로 전달하고 SDK가 segment를 로컬 평가하므로 SDK 변경 불필요. 팝업은 locale별 기존 템플릿 선택, 자동번역 X.
 §
 Stage api-service는 prod Redis 설정을 사용하므로 SSE smoke/load는 고유 synthetic channel만 사용한다.
+§
+복구 제안은 고객에게 별도 PG 화면·DevTools 같은 비정상 UX를 요구하지 않고, 앱 접근과 PG 자격증명 복구를 분리하며 live 검증 전 성공을 단정하지 않길 원함.

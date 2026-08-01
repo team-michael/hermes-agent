@@ -28,4 +28,4 @@ Notifly Liquid: project:{id}; tag=ctx.environments.project?.id; Catalog provider
 §
 Notifly 인증: users_products.certified_at=product source; Cognito custom runtime 미사용; admin bypass; UI는 campaign/UJ SMS selector·sender profile만, side effect는 server guard; legacy 이전 double-apply(custom:phone 제외).
 §
-Braze Catalog API: official 17-route input; v1 `{data,error}` output(list plural+next_cursor+links, single resource, no-resource mutation null, validation details); API unscheduled. CDI=UTC `*/N`; Sync Now keeps schedule.
+Catalog API: 17 routes; v1 `{data,error}`; list has next_cursor/links; mutations 200+null; API unscheduled; rate limiting uses shared api-service contract (no Catalog limiter). CDI UTC `*/N`; Sync Now preserves schedule.

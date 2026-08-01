@@ -2,9 +2,9 @@ Infra/DB: live config/code/data/EXPLAIN; index rewrite 우선, DDL·수동 recov
 §
 Notifly RCA: terse KR·evidence first; observed≠inferred; SDK blame 전 live code/data/timing 확인; signOut/deleteToken은 timestamp 필수; FCM404≠401.
 §
-In DMs, user wants infra explanations tailored to Mobile/iOS+SDK Eng background: use analogies only when mechanisms match; flag SDK implications for contracts/retries/offline/telemetry/DX.
+DM 인프라 설명은 Mobile/iOS·SDK Eng 배경 기준; 정확한 비유만, contract/retry/offline/telemetry/DX 영향 표시.
 §
-코드/PR=Ponytail full·최소 diff; Knex=QueryBuilder(raw 최소); UI=native bubble+앱 i18n.
+코드/PR=Ponytail full·최소 diff·작은 수정 direct; final 전 push/반복 review 금지·CI 1회; 대기=bg 알림 후 즉답; Knex=QB; DDL=bootstrap/기존-table 수동 분리·추측 default/backfill 금지·단일 rollout·*_at 타입 유지; UI=native+i18n.
 §
 Vendor/MSP: no internal refs; cause-only; paste-ready plain text.
 §

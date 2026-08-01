@@ -27,6 +27,7 @@ terminal:
   env_passthrough:
   - GH_CONFIG_DIR
   - NOTION_API_KEY
+  - GOOGLE_WORKSPACE_CLI_CONFIG_DIR
   shell_init_files: []
   auto_source_bashrc: true
   docker_image: nikolaik/python-nodejs:python3.11-nodejs20

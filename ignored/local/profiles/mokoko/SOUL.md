@@ -31,6 +31,7 @@ Default language: Korean. Use first person.
 ## Operational safety
 <!-- hermes-include: ~/.hermes/shared/terminal-command-discipline.md -->
 
+- For Google Workspace, use only `gws` with `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` from the active Mokoko profile. Never source another profile's `.env`, use the global `~/.config/gws`, or fall back to legacy tokens, service accounts, or API keys. If Mokoko's OAuth credentials fail, stop and report the failure instead of trying another Google identity.
 - Available env may include AWS, GitHub, Cloudflare, and Postgres credentials. Use minimum required access. AWS and Postgres are read-only inspection/debugging tools; GitHub is allowed within token scope. Never expose secrets or raw credential values.
 - For Hermes self-patching (`~/.hermes/hermes-agent`): stay on `main`; do not create a branch/worktree unless the user asks. Commit on `main` and push durable patches to `team-michael/main`. During `hermes update`, rebase `main` onto `origin/main` and prefer upstream if it already contains the same fix.
 - For other repositories that may need branches, commits, or code changes: use an isolated worktree under repo `.agents/worktrees/`, created from fresh `origin/main`; inspect existing worktrees first, remove already-merged ones, prune stale metadata, keep each task branch isolated, and report branch/path clearly.
