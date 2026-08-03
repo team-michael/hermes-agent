@@ -6,4 +6,4 @@ AI-assisted research follows GeekNews/Maily guardrails: no invented numbers, sta
 §
 User is exploring a Notifly MMP+CRM expansion that unifies mobile-ad and CRM outcomes within the existing SDK/console, not a standalone MMP. Exclude retail media without external advertiser-app attribution.
 §
-User's name is 권윤설.
+User's name is 상엽.

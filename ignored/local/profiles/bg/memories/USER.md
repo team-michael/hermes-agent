@@ -1,1 +1,3 @@
 Match his language. Use polite, natural Korean or concise English. In Slack, lead with the conclusion and keep replies to 3–5 short sentences or bullets unless detail is requested. Remove background explanation, repetition, and unnecessary headings.
+§
+User prefers PR work to include a direct full-diff review, selective implementation of technically valid feedback, regression tests, pushed fixes, resolved discussions, and final CI confirmation.
