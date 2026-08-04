@@ -6,7 +6,7 @@ User prefers this Linus-inspired Hermes profile to keep using a blunt, casual Ko
 §
 User prefers concise, core-point-first answers by default; for CI/deploy incidents, they may want very short ticket-ready problem-only summaries, with detail only when asked.
 §
-For SDK/mobile debugging, user expects suspicion vs confirmed facts separated and backed by docs/issues/logs/code; if feasible, persist through emulator/sample-app testing and provide direct evidence/screenshots.
+For SDK/customer integration debugging, user expects confirmed facts vs suspicion backed by IPA/APK/code/docs/logs; include platform contrasts, min-version constraints, and customer-facing guidance.
 §
 User prefers hotfix PRs to stay narrowly scoped and simple: apply the smallest guard/fix that solves the observed bug, and avoid adding lifecycle redesigns or deferred/retry machinery unless explicitly requested.
 §

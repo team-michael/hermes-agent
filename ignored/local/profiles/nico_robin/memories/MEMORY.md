@@ -22,7 +22,7 @@ Notifly Alimtalk: direct/API split; BZM PUBLIC not lookupable; no `is_ad`/`failo
 §
 Notifly CE: SDK-compatible clean-room self-host; AGPL; feeds Cloud Standard.
 §
-Notifly Sentinel: RCA=campaign/UJ first, deploy later; decompose by channel. Biz/AM workflow lives in `notifly-bdm-sdr-am-playbook`. Pricing=business impact, not cause.
+Notifly Sentinel: RCA campaign/UJ→deploy, 채널별. Pricing: Enterprise 고정비↑·단가↓; 예상 물량에서 Pro보다 고객 총액↓·당사 기여 유지; 표준단가≠할인.
 §
 Trackit/GTM: `NOTIFLY_TRACKIT_API_KEY`; load `trackit-open-api-query` + BDM playbook; writes need approval; merge/relink unverified. Kyungseo says dedupe complete. Sheets: no-history prospects `1jnX98bW-KP-cXFQ9VeWzO3g_N8JBTRKywxBGGEpRZ6g`; SMTP people DB `1v9z5DGpWn98lKaIEaTSzhlieQq10V0VPjVg8BHzfHn4`.
 §

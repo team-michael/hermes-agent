@@ -338,6 +338,7 @@ timezone: ''
 slack:
   require_mention: true
   reactions: true
+  success_reaction: none
   free_response_channels: ''
   allowed_channels: ''
   channel_prompts: {}

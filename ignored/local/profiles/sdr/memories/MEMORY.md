@@ -12,8 +12,8 @@ Notifly pricing context for the sdr profile, including non-public Plus-plan hand
 §
 Trackit Open API uses `NOTIFLY_TRACKIT_API_KEY` for Notifly GTM reads/writes. Verified reads: objects/records/groups/entries/attribute-values/options/members. Verified scoped writes: `PUT /v1/objects/{object}/records` with `filter:{id:[record_id]}` + `allowMultiple:false` for single-record field updates, and `POST /v1/objects/{object}/records/delete` for safe shell deletes; no public merge/relink API verified.
 §
-Notifly product_id corrections: atease-cafe24=아디즈 inner-beauty D2C; sione-cafe24=시오네 bodycare; swap=The Swing mobility; vibeplus=Cafe24 wellness-food; okpos=오늘얼마 OKPOS sales ledger; cmong=댓글몽 AI review replies; fresheasy=허닭 only.
+Notifly product_id mappings: atease-cafe24=아디즈; sione-cafe24=시오네; swap=The Swing; vibeplus=Cafe24 wellness-food; okpos=오늘얼마; cmong=댓글몽; fresheasy=허닭 only.
 §
 Notifly 고객 회신에서 캠페인 전략·타겟 설계·문안 작성·대행 세팅 등 컨설팅을 제공한다고 표현하지 않는다. 브랜드가 직접 설정·운영하며, Notifly 지원 범위는 제품 사용법·연동·오류·카카오 템플릿 등록/반려 사유 등 운영 가이드다; 최종 템플릿 승인은 카카오가 결정한다.
 §
-Sales-meeting analyses use the agreed concise 7-part format.
+People identity rule: Trackit English names must not be transliterated into Korean without a direct source.
