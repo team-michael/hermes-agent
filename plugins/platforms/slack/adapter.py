@@ -6045,16 +6045,35 @@ class SlackAdapter(BasePlatformAdapter):
                 thread_ts,
             )
             return
-        unmute_for_this_profile = inline_command_name == "unmute" and (
-            not inline_command_targets or inline_targets_this_bot
-        )
-        if (
+        thread_is_muted = bool(
             thread_ts
             and self.is_thread_muted(
                 channel_id,
                 thread_ts,
                 team_id=team_id,
             )
+        )
+        unmute_for_this_profile = inline_command_name == "unmute" and (
+            inline_targets_this_bot
+            or (
+                not inline_command_targets
+                and (channel_type == "im" or thread_is_muted)
+            )
+        )
+        if (
+            inline_command_name == "unmute"
+            and not inline_command_targets
+            and not unmute_for_this_profile
+        ):
+            logger.debug(
+                "[Slack] Ignoring untargeted unmute for an unmuted shared thread %s:%s:%s",
+                team_id,
+                channel_id,
+                thread_ts,
+            )
+            return
+        if (
+            thread_is_muted
             and not unmute_for_this_profile
         ):
             logger.debug(

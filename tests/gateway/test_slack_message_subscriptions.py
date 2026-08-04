@@ -455,6 +455,75 @@ def test_muted_thread_ignores_messages_but_allows_unmute() -> None:
         assert message.text == "/unmute"
 
 
+def test_shared_thread_ignores_bare_unmute_when_profile_is_not_muted() -> None:
+    adapter = _adapter(allow_bots="none")
+    event = {
+        "type": "message",
+        "channel": CHANNEL_ID,
+        "channel_type": "channel",
+        "team": TEAM_ID,
+        "ts": "1710000001.000200",
+        "thread_ts": MESSAGE_TS,
+        "user": "U_HUMAN",
+        "client_msg_id": "client-message",
+        "text": "!unmute",
+    }
+
+    asyncio.run(adapter._handle_slack_message(event))
+
+    adapter.handle_message.assert_not_awaited()
+
+
+def test_shared_muted_thread_allows_bare_unmute() -> None:
+    with tempfile.TemporaryDirectory(dir=TMP_ROOT) as raw:
+        adapter = _adapter(allow_bots="none")
+        adapter._muted_threads_path = Path(raw) / "slack_muted_threads.json"
+        adapter._muted_threads = set()
+        adapter.mute_thread(CHANNEL_ID, MESSAGE_TS, team_id=TEAM_ID)
+        adapter._has_active_session_for_thread = MagicMock(return_value=True)
+        event = {
+            "type": "message",
+            "channel": CHANNEL_ID,
+            "channel_type": "channel",
+            "team": TEAM_ID,
+            "ts": "1710000001.000200",
+            "thread_ts": MESSAGE_TS,
+            "user": "U_HUMAN",
+            "client_msg_id": "client-message",
+            "text": "!unmute",
+        }
+
+        asyncio.run(adapter._handle_slack_message(event))
+
+        adapter.handle_message.assert_awaited_once()
+        message = adapter.handle_message.await_args.args[0]
+        assert message.message_type == MessageType.COMMAND
+        assert message.text == "/unmute"
+
+
+def test_shared_thread_allows_explicitly_targeted_unmute_when_not_muted() -> None:
+    adapter = _adapter(allow_bots="none")
+    adapter._has_active_session_for_thread = MagicMock(return_value=True)
+    event = {
+        "type": "message",
+        "channel": CHANNEL_ID,
+        "channel_type": "channel",
+        "team": TEAM_ID,
+        "ts": "1710000001.000200",
+        "thread_ts": MESSAGE_TS,
+        "user": "U_HUMAN",
+        "client_msg_id": "client-message",
+        "text": "<@U_HERMES> !unmute",
+    }
+
+    asyncio.run(adapter._handle_slack_message(event))
+
+    adapter.handle_message.assert_awaited_once()
+    message = adapter.handle_message.await_args.args[0]
+    assert message.message_type == MessageType.COMMAND
+    assert message.text == "/unmute"
+
+
 def test_gateway_mute_and_unmute_commands() -> None:
     from gateway.run import GatewayRunner
 
