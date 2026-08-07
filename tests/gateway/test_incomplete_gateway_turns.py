@@ -121,7 +121,7 @@ def _make_event() -> MessageEvent:
     )
 
 
-def test_incomplete_codex_warning_is_not_surfaced_as_chat_text():
+def test_incomplete_codex_turn_surfaces_safe_retry_message():
     agent_result = _make_incomplete_result()
 
     # Mirror the gateway pipeline: the hidden-turn detector blanks the
@@ -136,7 +136,11 @@ def test_incomplete_codex_warning_is_not_surfaced_as_chat_text():
         history_len=4,
     )
 
-    assert response == ""
+    assert response == (
+        "⚠️ No reply: the model returned no visible response after retries. "
+        "Try again or switch model/provider."
+    )
+    assert "Codex response remained incomplete" not in response
 
 
 def test_real_answer_alongside_incomplete_error_is_never_suppressed():
@@ -157,7 +161,9 @@ def test_interrupted_or_failed_turns_are_not_classified_hidden():
 
 
 @pytest.mark.asyncio
-async def test_incomplete_codex_turn_stays_out_of_slack_transcript(monkeypatch, tmp_path):
+async def test_incomplete_codex_turn_warns_slack_without_persisting_assistant(
+    monkeypatch, tmp_path
+):
     adapter = CaptureSlackAdapter()
     runner = _make_runner(adapter)
 
@@ -175,7 +181,12 @@ async def test_incomplete_codex_turn_stays_out_of_slack_transcript(monkeypatch, 
     event = _make_event()
     await adapter._process_message_background(event, build_session_key(event.source))
 
-    assert adapter.sent == []
+    assert len(adapter.sent) == 1
+    assert adapter.sent[0]["content"] == (
+        "⚠️ No reply: the model returned no visible response after retries. "
+        "Try again or switch model/provider."
+    )
+    assert "Codex response remained incomplete" not in adapter.sent[0]["content"]
     assert runner.session_store.update_session.called
 
     transcript_roles = [

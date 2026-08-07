@@ -3226,7 +3226,10 @@ def _normalize_empty_agent_response(
         return response
     if api_calls > 0:
         if _is_gateway_hidden_reasoning_incomplete_turn(agent_result):
-            return ""
+            return (
+                "⚠️ No reply: the model returned no visible response after retries. "
+                "Try again or switch model/provider."
+            )
         if agent_result.get("partial"):
             err = agent_result.get("error", "processing incomplete")
             return f"⚠️ Processing stopped: {str(err)[:200]}. Try again."
@@ -14361,8 +14364,8 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             # ("Codex response remained incomplete after 3 continuation
             # attempts") doubles as final_response, so it would be delivered
             # verbatim into the channel — where peer agents can ingest it as a
-            # completed assistant turn (#51628). Blank it here so the normal
-            # empty-response handling (and the suppression below) applies.
+            # completed assistant turn (#51628). Blank it here so empty-response
+            # normalization can replace it with a user-safe retry message.
             if _is_gateway_hidden_reasoning_incomplete_turn(agent_result):
                 response = ""
             try:
@@ -14639,8 +14642,8 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 )
             elif hidden_reasoning_incomplete:
                 logger.warning(
-                    "Suppressing hidden-reasoning-only incomplete gateway turn "
-                    "for session %s: %s",
+                    "Hidden-reasoning-only incomplete gateway turn for session %s; "
+                    "surfaced safe retry message without persisting assistant output: %s",
                     session_entry.session_id,
                     agent_result.get("error", "processing incomplete"),
                 )
