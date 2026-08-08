@@ -19,6 +19,13 @@ Avoid terminal command shapes that trigger avoidable approval prompts while pres
 - Cron tests must use `use_cron_store(tmp_path)` and a finite `repeat`. Never use a live profile's cron store for a test or probe.
 - Never create a recurring cron in a live profile merely to test behavior. For an indefinitely recurring schedule shorter than 10 minutes, require an explicit user request for that exact interval before creating it.
 
+## Production database safety
+
+- Never use `fetchall()` against a production database. Use a server-side cursor and bounded `fetchmany()` batches, aggregating and filtering in SQL before rows cross the network.
+- Never enumerate every tenant table and combine them with a generated `UNION`/`UNION ALL`. Query only explicitly scoped tenants and time ranges; use a read replica or analytics warehouse for fleet-wide analysis.
+- Every production query must run read-only with `statement_timeout`. Local terminal subprocesses receive a 120-second default timeout.
+- Stop fetching when either `HERMES_DB_MAX_RESULT_ROWS` (default 100,000) or `HERMES_DB_MAX_RESULT_BYTES` (default 128 MiB) is reached. Track both limits while streaming results; do not first materialize rows and measure afterward.
+
 Safe examples:
 
 ```bash

@@ -1,0 +1,7 @@
+model:
+  provider: openai-codex
+  base_url: ''
+  default: gpt-5.6-terra
+agent:
+  reasoning_effort: high
+  service_tier: fast

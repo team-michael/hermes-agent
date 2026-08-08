@@ -177,6 +177,16 @@ def require_no_staged_changes(repo: Path) -> None:
         )
 
 
+def require_no_staged_core_changes(repo: Path) -> None:
+    core_paths = sorted(path for path in staged_paths(repo) if not is_state_path(path))
+    if core_paths:
+        formatted = "\n".join(f"  - {path}" for path in core_paths)
+        raise LocalStateError(
+            "refusing to absorb pre-existing staged core/source changes:\n"
+            + formatted
+        )
+
+
 def require_no_core_worktree_changes(repo: Path) -> None:
     paths = tracked_worktree_paths(repo) + untracked_paths(repo)
     core_paths = sorted({path for path in paths if not is_state_path(path)})
@@ -415,26 +425,23 @@ def stage_existing_state_files(repo: Path) -> list[str]:
     for start in range(0, len(files), 200):
         git(repo, "add", "-f", "--", *files[start : start + 200])
 
-    deleted = git_output(
-        repo,
-        "diff",
-        "--name-only",
-        "--diff-filter=D",
-    ).splitlines()
-    deleted.extend(
-        git_output(
-            repo,
-            "diff",
-            "--cached",
-            "--name-only",
-            "--diff-filter=D",
-        ).splitlines()
+    deleted_state = sorted(
+        {
+            path
+            for path in git_output(
+                repo,
+                "diff",
+                "--cached",
+                "--name-only",
+                "--diff-filter=D",
+            ).splitlines()
+            if path and is_state_path(path)
+        }
     )
-    deleted_state = sorted({path for path in deleted if path and is_state_path(path)})
     if deleted_state:
         formatted = "\n".join(f"  - {path}" for path in deleted_state)
         raise LocalStateError(
-            "state deletions require explicit review and were not staged:\n" + formatted
+            "staged state deletions require explicit review:\n" + formatted
         )
 
     staged = staged_paths(repo)

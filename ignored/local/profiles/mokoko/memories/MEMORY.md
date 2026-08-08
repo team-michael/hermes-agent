@@ -1,29 +1,23 @@
-사용자는 Notifly 엔지니어이며 근거 기반·실관측 해결을 선호함. 개인 `notifly-kokomo`에서 prod Payple 동일카드 재등록을 재현하고 DDB·Payple 실조회·transaction·결제일을 함께 검증함.
+사고문서: tech docs incidents/Draft, 설명→타임라인→영향→5 Whys→원인→교훈→조치. 확인 사실만 쓰고 미확정은 ‘작성 필요’. 복구·롤백·완료 migration은 Resolution/Timeline, Action Items는 정책/체크리스트가 아닌 시스템 강제형 재발방지만 둠.
 §
-사용자는 미팅 메모를 ‘요약·배경·논의·후속’으로 구조화하고, 서비스 배경 조사와 기술적 제약을 명시하길 선호함.
+카카오 직접/NHN Brand 경계 엄격. gap=requested_at cohort accepted↔checkpoint-persisted collected. 실측은 project/product/dev 귀속 확인, 내부 test≠고객 baseline. settle≠retry budget; 표본 부족 시 민감 정책→실관측 조정.
 §
-User has set the 'Mokoko Bot' Notion page (ID: 3971f02665f1803995b7ef168097a253) as the default root page where the agent should create any new documents in the future.
-§
-사용자는 Brand Message direct Poller의 불변 PAYLOAD/가변 STATE 분리를 알림톡 responseAll Poller·NHN Collector와 명확히 구분하고, provider 멱등성과 Poller 복구·partial batch·retry/concurrency/alarm은 별도 재발방지로 다루며 exactly-once 과설계를 경계함.
-§
-사용자는 설계·코드·배포·실관측을 구분하고 운영 이슈를 live mapping/DB/metric으로 ‘현재 발생’과 ‘잠재 결함’으로 나눠 답하길 원함. 배포 검증은 merge SHA→artifact, 전후 동일 구간 지표, lifecycle EMF·DB·queue/DLQ를 연결하며 검증 조회 비용을 분리함. Athena는 완료 파티션의 건수·scan bytes·planning/total time·pruning을 실측하고 개인정보 없는 집계·P1 blocker·미해결 Draft PR을 선호함.
+사용자는 설계·코드·배포·실관측을 구분함. tenant DDL은 read-only→canary→전체. migration은 검증된 V0 중앙 ledger→version/checksum→onboarding·배포 gate를 선호함. 배포는 SHA→artifact→runtime·queue/DLQ·로그/checkpoint를 검증함. 비용은 유사 traffic 기준.
 §
 사용자는 AI Agent usage를 완료된 14일 KST 기준 대시보드·일별·프로젝트/모델/MCP·Top4 대화·Raw 탭으로 선호함.
 §
-사용자는 ID·스키마·시스템 정보 확인 시 코드 검색보다 DynamoDB/DB를 직접 조회해 메커니즘을 검증하길 선호함.
+Notifly 조회는 고객사↔project ID를 먼저 매핑하고, DDB에 없으면 Git history·UUIDv5·offboarding 이력으로 식별함. PG 변수는 POSTGRES_*.
 §
-Notifly 조회는 고객사↔UUID/해시 project ID를 먼저 매핑하며, PG 접속 변수는 RDS_*가 아니라 POSTGRES_*로 주입됨.
+Payple 접근 정책: 공유 키 O(n) scan·명시적 race. 확정 무효만 web-console 7일 유예 후 차단, 미확인 오류는 영구 fail-open·marker 유지. 저장 후 transient는 0/1/3/10초 status-only 재확인하며 key 재발급 금지. blocked-origin 잠금은 blocked 관측이 아니라 사용자가 recovery를 시작한 때부터 유지함.
 §
-사용자는 Payple 키를 공유 참조로 보고 동기 삭제·고아 키를 경계하며 공식 수명주기를 확인함. 소규모 payments는 별도 참조 테이블보다 O(n) scan을 선호하되 scan→삭제 race를 명시하길 원함.
-§
-GitHub PR Assignee는 `TheClevers`. 사용자는 합의 범위만 최소 변경하고 push 전 remote head를 확인하며 타인 force-push를 덮지 않길 원함. 폐기한 구현은 미병합 PR 종료에 그치지 않고 병합 코드·Terraform 리소스까지 안전하게 되돌려 정리하길 원함. Linear 이슈는 본인에게 배정하고 PR과 상호 링크하길 선호함.
+PR Assignee `TheClevers`; 인증≠commit author. 최소 변경·remote head·타인 변경 비덮기·scaffolding 제거 선호. 모든 리뷰어 확인→답변·resolve·재검토, push 직후 CI 대기 없이 알림. Linear는 본인 할당·PR 상호 링크, PR 설명은 배경→동작→기준→검증과 다른 PR의 Linear 표기 형식 선호.
 §
 사용자는 Notifly MCP 연결 문서에서 ChatGPT 데스크톱·웹·Codex·Claude 설정을 구분하고 설치·인증·도구 갱신에 집중하길 원함. 변경 중엔 게시 App보다 live Custom MCP를 선호하며 연결 폼 스크린샷 1장이면 충분하다고 봄.
 §
-사용자는 locale을 request→view_state→activation adapter→project별 PG materialization으로 검증하며, default 기반 빈 필드 번역 시 기존 입력 보존을 선호함.
+Locale 정책: 유저 속성 우선, 없으면 지원 신규 SDK 기기값; exact→base→default. title/body/imageUrl/link는 locale별, importance/disableBadge/customizedMessageData/isAd는 전 locale 동기화. 다국어 설정은 메시지 설정 1번 항목이며 tooltip은 사용자 최신 커밋 문구가 기준.
 §
-사용자는 DB read routing을 함수·파일의 인접성이 아니라 같은 데이터에 대한 실제 read-after-write 호출 관계로 판정하고, 결합이 없으면 전용 reader를 쓰는 방식을 선호함.
+사용자는 legacy read의 실제 실행 SQL을 추적해 prod가 `users_` only면 죽은 `user_`/shadow helper를 제거함. 비암호화 read는 `executeQuery`로 직접 전환하고, 변경은 Lambda/ECS 배포·관측 단위 PR로 나누며 write·복호화 경로는 섞지 않음.
 §
-사용자는 MCP 입력 계약(timezone·형식·경계)을 tool/parameter description에, 반환 timezone·조건부 freshness(응답에 없음↔도구 미제공)·빈 결과 해석과 totals↔top_resources 구분을 outputSchema field에도 노출하길 원함. 비유도 prompt로 args/raw result를 검증하며 불가능한 성공은 preview SHA·MCP URL·도구 재발견을 확인함.
+사용자는 MCP 계약(timezone·형식·경계·freshness·빈 결과·집계)을 schema/description에 명시하고 실패 payload를 동일 parser/tool schema로 재현한 뒤 교정 payload의 실제 통과까지 검증함. 생성 리소스는 web-console Zod 기준 public→view_state→detail/edit 왕복을 맞추며 무의미한 래퍼·UI fallback을 싫어함. writer/backfill을 분리하고 OpenAPI·MCP ref도 검증함. AI Assistant는 내부 tool명만 숨기고 공개 API/SDK명은 유지하며 결과·필요 입력만 사용자 관점으로 말하길 원함.
 §
-사용자는 유저프로퍼티 metadata에서 일반 이벤트와 `set_user_properties`를 구분함. KDS hot path DDB 대신 전체 프로젝트 Athena 로그 checkpoint 증분 집계와 직접 writer용 PG fallback을 선호함.
+사용자는 핵심 위험 계약의 극소수 테스트만 선호함. API/MCP는 create→save→detail 왕복·adapter 변환만 남기고 내부구조·중복 assertion·UI exact-match/mock spec을 피함.

@@ -22,6 +22,4 @@ Stage api-service는 prod Redis 설정을 사용하므로 SSE smoke/load는 고�
 §
 복구 제안은 고객에게 별도 PG 화면·DevTools 같은 비정상 UX를 요구하지 않고, 앱 접근과 PG 자격증명 복구를 분리하며 live 검증 전 성공을 단정하지 않길 원함.
 §
-PR requester identity map is maintained in skill `github-pr-assignee-policy` at `references/slack-github-requester-map.md`. Unknown Slack IDs remain unassigned until confirmed; confirmed new pairs are added to that map.
-§
-연구노트 자동화 인스턴스는 모든 사용자가 공용 Ubuntu `ubuntu` 계정으로 접근하므로, OS UID·공용 Keyring을 개인별 보안 경계로 간주할 수 없다.
+GitHub PR 정책: clix-so-bot은 Assignee로 절대 지정하지 않는다. 세션에서 작업 요청자를 식별하고 검증된 GitHub 계정을 Assignee로 지정한다. 매핑이 불명확하면 추정하지 말고 질문하며, 식별 전에는 Assignee를 비워둔다. PR 생성 후 GitHub에서 Assignee를 재조회해 검증한다.

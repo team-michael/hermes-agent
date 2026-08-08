@@ -898,7 +898,13 @@ def assess_helper_context(data: Dict[str, Any]) -> Dict[str, Any]:
             )
         current_contexts = logs.get('current_trigger_contexts') or []
         current_error_details = logs.get('current_error_details') or []
-        if not current_contexts:
+        current_top_signatures = logs.get('current_top_signatures') or []
+
+        if current_top_signatures:
+            root_cause_evidence.append('current_alarm_log_signature')
+            if current_error_details:
+                root_cause_evidence.append('current_alarm_error_detail')
+        elif not current_contexts:
             append_missing(missing, 'current_trigger_contexts', 'No CloudWatch log context was found in the current alarm window.')
             append_followup(
                 followups,
@@ -922,6 +928,22 @@ def assess_helper_context(data: Dict[str, Any]) -> Dict[str, Any]:
             )
         else:
             root_cause_evidence.append('current_alarm_log_context')
+
+        if log_shaped and not current_top_signatures and not current_contexts:
+            append_missing(
+                missing,
+                'current_alarm_signature',
+                'Log-derived alarm but no current alarm-window signature or context was produced. The metric filter may be too narrow or the log events may still be ingesting.',
+                severity='required',
+            )
+            append_followup(
+                followups,
+                'fallback_current_signature_query',
+                'AWS CloudWatch Logs Insights',
+                'Re-query the current alarm window with a broader ERROR/Exception filter to capture the concrete triggering message.',
+                ['logs.current_top_signatures', 'logs.current_error_details'],
+                'The final cause must start with the exact trigger signature; frequency/state are not sufficient.',
+            )
 
         if current_error_facts:
             root_cause_evidence.append('current_sentry_error_facts')

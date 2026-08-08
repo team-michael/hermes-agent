@@ -17,7 +17,7 @@ This is a **helper-first, bounded investigation**. Do not replay archived Hermes
 
 ## Critical fast path
 
-Run the bundled helper before any manual AWS query.
+Run the bundled helper before any manual AWS query. Prefer the `sections` format on the first invocation so that `current_error_facts`, `current_trigger_contexts`, and `Logs Insights compact summary` are available; only fall back to `compact-json` when token size requires it.
 
 ### Path rule — mandatory
 
@@ -30,7 +30,7 @@ python <absolute path to scripts/collect_notifly_alert_context.py> \
   --text '<alert text>' \
   --alarm-name '<exact CloudWatch alarm name>' \
   --region ap-northeast-2 \
-  --format compact-json
+  --format sections
 ```
 
 Rules:
@@ -47,19 +47,21 @@ Rules:
 
 ## One-pass workflow
 
-1. Extract the exact alarm name, region, account, metric/log group, and Slack event timestamp from the supplied alert.
-2. Run the helper once with the exact alarm name when available. Use a 30-second terminal timeout.
+1. Extract the exact alarm name, region, account, metric/log group, and Slack event timestamp from the supplied alert. If the user supplies a Slack permalink, also read the referenced message/thread with `conversations.replies` using `SLACK_BOT_TOKEN` from the active Hermes environment before claiming the alert context is unavailable.
+2. Run the helper once with the exact alarm name when available. Use `--format sections` first and a 35-second terminal timeout. Do not start with `compact-json` unless the response is oversized.
 3. Inspect only these result boundaries first:
    - `input_integrity`
    - `can_answer_root_cause`
    - `missing_required_context`
    - `required_followups`
    - `alarm`, `history`, and current alarm window
-   - datasource-specific evidence (`logs`, `rds_performance_insights`, `sqs`, `lambda`, `http`)
+   - `current_error_facts`, `current_trigger_contexts`, `logs`
+   - `logs` → `current_top_signatures` / `current_trigger_contexts` if `current_error_facts` is empty
+   - datasource-specific evidence (`rds_performance_insights`, `sqs`, `lambda`, `http`)
    - `hermes_observability` for `HermesServiceHealthy` host alarms
    - `scope_attribution` / `projects`
    - `code`
-4. If `can_answer_root_cause: true`, answer immediately. Do not repeat helper-covered CloudWatch, RDS, PI, Logs Insights, SQS, Lambda, DynamoDB, or source queries.
+4. If `can_answer_root_cause: true`, answer immediately **only after** the concrete cause (error signature + throwing stack/function + mechanism) is established. Do not finalize with frequency/status metadata alone.
 5. If required context is missing, execute only the listed read-only follow-ups that affect a mandatory final field. Execute no more than two follow-up tool calls.
 6. After those two calls, finalize with the strongest available evidence and state any remaining field as unavailable. Do not start another investigation branch.
 7. If a datasource is unavailable (`NotAuthorizedException`, expired ECS stream, ingestion lag), mark it unavailable and continue with the strongest remaining evidence. Do not retry the same failed operation with alternate syntax unless the failure explicitly identifies a correctable parameter.
@@ -123,6 +125,17 @@ Use helper alarm metadata, metric datapoints, topology, and Performance Insights
 ### ECS / log-derived alarms
 
 Use the metric filter and exact current alarm-window trigger. Do not substitute a historical signature when current trigger evidence is missing. Load the specific matching reference only after identifying the trigger family.
+
+If `current_error_facts` and `current_trigger_contexts` are empty for a log-derived ECS alarm, perform one bounded Logs Insights fallback query over the exact alarm window (`logs.current_alarm_window.start` ... `end`) before finalizing. Use only these filter terms:
+
+```sql
+fields @timestamp, @message
+| filter @message like /ERROR/ or @message like /Exception/
+| sort @timestamp desc
+| limit 20
+```
+
+Then report the exact returned message as the trigger signature in `원인:`. Do not fall back to alarm-frequency metadata when a concrete ERROR line exists.
 
 For structured Sentry alerts, use `current_error_facts` for the issue, message, transaction, request path, project/product slug, and handled status. Use `current_code_locations.page` for the exact Next.js route page. Treat `error_location` as the exact throwing function only when its evidence is `sentry_stack_frame`; `function_candidates` are route-rendered components, not proven throw sites. Preserve `trace_status` so a missing stack frame is reported as unavailable rather than guessed.
 
@@ -220,6 +233,7 @@ When `MetricName` is `HermesServiceHealthy`, use the helper's
 
 For subscription alerts:
 
+- Call the `terminal` tool with the helper command first. Do not output the command as a Slack code block; do not describe what you will do before doing it. The only valid final response is the Korean triage bullets below plus the status directive.
 - Execute silently and return exactly one final assistant response; do not call `send_message`.
 - Korean only.
 - No acknowledgement, progress report, investigation diary, internal draft, or reasoning text.
@@ -239,6 +253,53 @@ Visible format, in this exact order:
 - 즉시 조치 필요 여부: <필요|불필요|추적 필요 + reason>
 ```
 
+### Cause-first requirement
+
+The `원인:` bullet must contain the exact trigger signature when one exists. It is not acceptable to lead with the alarm name, metric namespace, or a generic service description when a concrete log line, SQL error, or exception message has been observed.
+
+Required order inside `원인:`:
+1. Exact error signature / message / exception class from the current alarm window.
+2. Immediate mechanism in plain language (which code path, external provider, validation rule, etc.).
+3. Throwing function, repository file, or SQL fingerprint when visible.
+4. Only if none of the above are available: state that the concrete signature is unavailable and what was checked instead.
+
+Frequency and alarm metadata belong in the `빈도:` bullet, never in place of the concrete cause.
+
+**Common failure mode**: treating "concise" as "omit the concrete error message". Concise means removing filler, not removing the trigger signature. The user asks "what error" exactly because the metric name (e.g. `/aws/ecs/.../web-console console error`) is not informative. Always answer that question with the real log line first, then summarize scope/frequency/impact.
+
+### Two-step fallback for empty helper signatures
+
+If `current_error_facts` and `current_trigger_contexts` are empty for a log-derived alarm, the final response is not allowed until one of the following succeeds:
+1. A bounded Logs Insights query over the exact alarm window returns one or more ERROR/Exception lines. Report the exact returned message(s).
+2. A `filter-log-events` call over the exact alarm window returns one or more ERROR/Exception lines. Report the exact returned message(s).
+3. Both fail due to ingestion lag or authorization. In that case the `원인:` bullet must explicitly say the concrete signature could not be retrieved and name the fallback that was attempted.
+
+Never answer with only frequency, alarm state, or a generic service description when the alarm has a concrete log-derived cause.
+
+### Verification gate before responding
+
+Before emitting the final Slack response, perform this self-check against the draft `원인:` bullet:
+
+1. Does it start with an exact error string, exception class, SQL error, or validation message from the **current alarm window**?
+2. Are the following high-signal fields preserved unless truly unavailable?
+   - exact error message / constraint name / table name
+   - row count / affected records
+   - Lambda duration / HTTP status / request ID
+   - project ID / product slug
+   - campaign ID when visible in the trigger event
+3. Is the `빈도:` bullet the only place that contains alarm counts/state transitions?
+4. If the concrete signature is "unavailable", does the `원인:` bullet explicitly say which fallback was attempted and why it failed?
+
+If any check fails, do not emit the response. Re-run the appropriate fallback or add an explicit "signature unavailable" note.
+
+When a concrete signature is present, the `원인:` bullet must take one of these shapes:
+- `ECS/Lambda: <service> <timestamp> <log stream> <exact ERROR line>`
+- `DB: <table/constraint> <exact SQL error> <affected rows>`
+- `External API: <provider> <exact rejection message> <request path>`
+- `Timeout: <function> REPORT Duration: <value> ms Status: timeout`
+
+Then add one plain-language sentence of mechanism, not before.
+
 For `HermesServiceHealthy`, the `원인` item may contain the nested session and
 pressure evidence required by the Hermes Agent host-health rules above. Keep
 the same five top-level bullets; nested evidence lines do not add new top-level
@@ -255,6 +316,10 @@ Status directive:
 - `[[hermes:processing_status=urgent]]`: immediate outage, customer impact, data-loss risk, cascading failure, or runaway cost/load.
 
 A `no_action` answer has exactly five visible bullets and no `액션 아이템:` line.
+
+## Slack permalink handling
+
+If the user provides a Slack permalink to an alert or thread, read it via Slack API (`conversations.replies` for threads, `conversations.history` for single messages) using the environment's `SLACK_BOT_TOKEN` before invoking the helper. Parse the CloudWatch alarm name and timestamp from the retrieved message and treat them as authoritative. Do not tell the user that you cannot read Slack links when the token is present.
 
 ## Safety
 

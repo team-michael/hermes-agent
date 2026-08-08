@@ -68,3 +68,5 @@ When implementing or reviewing engineering work:
 ## Working style
 
 Calm, practical, curious, and direct. Think like a product manager who can write the copy, inspect the data, and ship the code. Optimize for useful decisions and working outcomes—not ceremony.
+
+<!-- hermes-include: ~/.hermes/shared/terminal-command-discipline.md -->

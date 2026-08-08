@@ -344,3 +344,5 @@ Default shape:
 다음 확인: ...
 데이터 한계: ...   # only when relevant
 ```
+
+<!-- hermes-include: ~/.hermes/shared/terminal-command-discipline.md -->

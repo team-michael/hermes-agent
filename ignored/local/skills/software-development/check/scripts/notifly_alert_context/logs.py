@@ -840,7 +840,10 @@ def current_error_details_from_contexts(
             elif is_context:
                 context_lines.append(line)
         trigger_line = sanitize_log_line(str(ctx.get('trigger') or ''), limit=360)
-        concrete_trigger = bool(trigger_line) and error_context_score(trigger_line) < 700
+        concrete_trigger = bool(trigger_line) and (
+            error_context_score(trigger_line) < 700
+            or bool(re.search(r'(?i)\b(ERROR|Exception|Failed|failed to|timeout|timed out|rejected|denied|deadlock|violates|duplicate key)\b', trigger_line))
+        )
         if concrete_trigger and not signal_lines:
             trigger_pairs = merge_project_campaign_pairs([
                 *detect_project_campaign_pairs(trigger_line),
@@ -1098,6 +1101,65 @@ fields @timestamp, @message, @logStream, @log
         day = row.get('bin(1d)') or row.get('@timestamp') or row.get('timestamp') or row.get('date')
         count = row.get('count') or row.get('c') or row.get('count()')
         compact_daily.append({'day': day, 'count': count})
+
+    if (
+        current_alarm_window
+        and groups
+        and not current_top_signatures
+        and not current_error_details
+    ):
+        window_start_fb = parse_datetime(current_alarm_window.get('start'))
+        window_end_fb = parse_datetime(current_alarm_window.get('end'))
+        if window_start_fb and window_end_fb:
+            fallback_start = window_start_fb - timedelta(minutes=2)
+            fallback_end = window_end_fb + timedelta(minutes=2)
+            fallback_query = """
+fields @timestamp, @message, @logStream, @log
+| filter @message not like /"_aws"/
+| filter @message like /(?i)ERROR/ or @message like /(?i)Exception/
+| sort @timestamp desc
+| limit 50
+""".strip()
+            fallback_samples = run_logs_insights_query_window_groups(
+                session,
+                groups,
+                fallback_query,
+                start=fallback_start,
+                end=fallback_end,
+                limit=50,
+            )
+            fallback_rows = fallback_samples.get('rows') or []
+            fallback_contexts = collect_surrounding_log_contexts(session, groups, fallback_rows)
+            fallback_signatures = top_log_signatures(fallback_rows)
+            for item in fallback_signatures:
+                item['count_in_current_alarm_window'] = item.pop('count_in_sample')
+            fallback_error_details = current_error_details_from_contexts(fallback_contexts)
+            if fallback_signatures or fallback_error_details:
+                current_top_signatures = fallback_signatures
+                current_trigger_contexts = fallback_contexts
+                current_error_details = fallback_error_details
+                current_samples = fallback_samples
+                for row in fallback_rows:
+                    message = row.get('@message') or row.get('message') or ''
+                    detected_project_ids.extend(detect_project_ids(message))
+                    detected_project_ids.extend([
+                        ref['project_id']
+                        for ref in detect_sharded_table_refs(message)
+                        if isinstance(ref, dict) and ref.get('project_id')
+                    ])
+                    detected_campaign_ids.extend(detect_campaign_ids(message))
+                    detected_user_journey_ids.extend(detect_user_journey_ids(message))
+                    detected_user_journey_refs.extend(detect_user_journey_refs(message))
+                current_row_project_campaign_pairs = project_campaign_pair_counts(fallback_rows)
+                current_project_campaign_pairs = (
+                    current_row_project_campaign_pairs
+                    or merge_project_campaign_pairs([
+                        pair
+                        for detail in fallback_error_details
+                        if isinstance(detail, dict)
+                        for pair in detail.get('project_campaign_pairs') or []
+                    ])
+                )
 
     return {
         'log_groups': groups,

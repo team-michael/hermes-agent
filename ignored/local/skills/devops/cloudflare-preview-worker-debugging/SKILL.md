@@ -223,10 +223,15 @@ In `web-console`, Cloudflare preview env drift included these categories:
   - `SLACK_NOTIFLY_OPS_BOT_TOKEN`
   - `SLACK_NOTIFLY_OPS_JOB_REPORT_CHANNEL_ID`
 
-- **Present in `cf_deploy.yml` but missing from worker-to-container passthrough**:
+- **Historical passthrough gap (verify against the checked-out revision before citing)**:
   - `KAKAO_BZM_CENTER_API_URL`
   - `KAKAO_BZM_CENTER_UPLOAD_API_URL`
   - `KAKAO_BZM_CENTER_PARTNER_KEY`
+
+Current `web-console/worker/index.ts` revisions may dynamically copy every string Worker binding into Container `envVars`. In that design, a binding can be present yet empty because `${{ secrets.NAME }}` resolved to an empty string in GitHub Actions; this is an upstream secret-availability failure, not a Worker-to-Container omission. Inspect the deployed Worker version using name/type/empty metadata only, never raw values, and distinguish:
+- absent binding → generated Wrangler config/deploy gap,
+- present empty binding → GitHub secret/input/source gap,
+- present non-empty binding but absent Container env → passthrough/runtime gap.
 
 This kind of drift is a real bug, even when it is not the direct cause of the immediate health-check failure.
 
@@ -298,7 +303,28 @@ See `references/notifly-cf-container-redis-manager-stale-client.md` when fresh s
 See `references/notifly-preview-redis-singleton-vs-fresh-client.md` when Worker bindings and the Redis tunnel are healthy but the app still returns Redis `unavailable`; it captures the stale RedisManager singleton vs fresh standalone `ioredis` split, bounded tunnel readiness fix, and cleanup requirement for temporary diagnostic endpoints/logs.
 See `references/notifly-preview-redis-diagnostics-cleanup.md` after such an investigation: remove temporary Worker/Next diagnostic endpoints, redacted env summaries, tunnel PID/health logs, and Redis diagnostics exports while preserving the functional Redis/tunnel readiness fix; verify removed routes return 404 with Access service-token headers.
 
-## 10. High-confidence diagnosis rules
+## 11. AWS Secrets Manager → Worker secrets sync
+
+For one-way CI sync, do not copy AWS secret values into GitHub Actions Secrets or workflow outputs. Run the whole transfer inside one trusted job:
+
+1. authenticate to AWS (prefer GitHub OIDC with `GetSecretValue` limited to one dedicated preview secret ARN),
+2. read the `SecretString` without logging it,
+3. apply an explicit AWS-key → Worker-binding allowlist and reject missing/empty values,
+4. mask each selected value,
+5. update only those bindings with `wrangler secret bulk --name <worker>` or `PATCH /accounts/{account}/workers/scripts/{script}/secrets-bulk`,
+6. verify names/types only (`secret_text`); Cloudflare does not return secret values.
+
+Important contracts:
+
+- Never mirror an entire shared production JSON secret into PR Workers. Prefer a dedicated preview-scoped AWS secret; arbitrary same-repository PR code can otherwise exfiltrate every injected value.
+- Default to upsert-only. Cloudflare bulk patch preserves omitted secrets; delete only with an explicit `null` mapping.
+- Remove the same binding name from Wrangler `vars` first. Otherwise a later code deploy can replace the secret binding with `plain_text` (possibly empty).
+- A new preview Worker must be deployed before `wrangler secret bulk`; run sync after deploy and before health checks. `wrangler secret bulk` creates/deploys another Worker version, so health-check that resulting version.
+- Pinned Wrangler `4.59.2` supports `secret bulk` from a JSON/.env file or stdin, but its `deploy` command does not support `--secrets-file`. Newer Wrangler versions support `deploy --secrets-file`, which can upload code and secrets in one operation; verify the pinned CLI before selecting that atomic path.
+- A reusable workflow must not return secret values as outputs. Prefer a composite action that fetches AWS and writes Cloudflare itself; optionally wrap the same action in `workflow_dispatch` for manual rotation sync.
+- Do not run a privileged sync against untrusted PR code. Require an internal/trusted source and, for production credentials, a protected GitHub Environment or an equivalent approval boundary.
+
+## 12. High-confidence diagnosis rules
 
 Use these rules:
 

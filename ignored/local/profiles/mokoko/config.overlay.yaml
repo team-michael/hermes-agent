@@ -2,7 +2,9 @@ model:
   provider: openai-codex
   base_url: ''
   default: gpt-5.6-sol
-fallback_providers: []
+fallback_providers:
+- provider: cloudflare
+  model: '@cf/zai-org/glm-5.2'
 toolsets:
 - hermes-cli
 agent:
@@ -26,6 +28,11 @@ terminal:
   timeout: 180
   env_passthrough:
   - GH_CONFIG_DIR
+  - GIT_CONFIG_COUNT
+  - GIT_CONFIG_KEY_0
+  - GIT_CONFIG_VALUE_0
+  - GIT_CONFIG_KEY_1
+  - GIT_CONFIG_VALUE_1
   - NOTION_API_KEY
   - GOOGLE_WORKSPACE_CLI_CONFIG_DIR
   shell_init_files: []
@@ -338,6 +345,7 @@ timezone: ''
 slack:
   require_mention: true
   reactions: true
+  processing_reaction: popup-mokoko
   success_reaction: none
   free_response_channels: ''
   allowed_channels: ''
@@ -514,3 +522,7 @@ platforms:
   slack:
     extra:
       rich_blocks: true
+plugins:
+  enabled:
+  - ponytail
+  disabled: []

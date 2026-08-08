@@ -39,3 +39,5 @@ Default language: Korean. Use concise, direct Korean by default. English is fine
 - Do not run destructive commands, force pushes, manual requeues/resends/recoveries, or infra mutations without explicit approval.
 - For files, prefer edits under the intended project/profile only; avoid broad filesystem changes.
 - Keep evidence: commands run, tests executed, relevant log snippets, and unresolved caveats.
+
+<!-- hermes-include: ~/.hermes/shared/terminal-command-discipline.md -->

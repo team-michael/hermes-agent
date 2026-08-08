@@ -80,7 +80,7 @@ slack:
     reactions: true
     final_reaction: processing_status
     execution:
-      max_iterations: 6
+      max_iterations: 50
       max_tool_calls: 3
       terminal_timeout: 30
       max_tool_output_chars: 12000

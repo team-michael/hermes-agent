@@ -24,3 +24,5 @@ For changes to this Hermes checkout (`~/.hermes/hermes-agent`), stay on `main`. 
 Use `main` as the local patch branch, commit there, and push durable patches to `team-michael/main`. During `hermes update`, rebase `main` onto `origin/main`, resolve conflicts on `main`, and prefer upstream `origin/main` when it already contains the same fix or feature.
 
 This exception only applies to Hermes self-patching; use the normal branch/worktree workflow for other repositories.
+
+<!-- hermes-include: ~/.hermes/shared/terminal-command-discipline.md -->

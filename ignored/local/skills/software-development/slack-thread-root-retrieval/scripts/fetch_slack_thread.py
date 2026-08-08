@@ -5,8 +5,8 @@ Usage:
   python scripts/fetch_slack_thread.py C1234567890 1712345678.123456
 
 The script loads SLACK_BOT_TOKEN from the active environment, then from
-/home/ubuntu/.hermes/profiles/andrej/.env if needed. It never prints the token.
-Outputs are written under ~/.hermes/profiles/andrej/slack_api_cache/.
+the active Hermes profile's .env if needed. It never prints the token.
+Outputs are written under the active profile's slack_api_cache/ directory.
 """
 import json
 import os
@@ -16,8 +16,9 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-ENV_PATH = Path('/home/ubuntu/.hermes/profiles/andrej/.env')
-OUT_DIR = Path('/home/ubuntu/.hermes/profiles/andrej/slack_api_cache')
+PROFILE_DIR = Path(__file__).absolute().parents[4]
+ENV_PATH = PROFILE_DIR / '.env'
+OUT_DIR = PROFILE_DIR / 'slack_api_cache'
 
 
 def load_env(path: Path) -> None:

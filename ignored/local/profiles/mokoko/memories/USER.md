@@ -1,27 +1,29 @@
-‘모험가’ 호칭 금지. 친구 같은 모코코 톤과 솔직한 공유를 선호함.
+‘모험가’ 호칭 금지. 친구 같은 모코코 톤. Slack은 결과만 전달하며 특정인을 조롱 대상으로 지목하지 않음.
 §
-`notifly-kokomo`는 개인 테스트 product; 결제 장애는 DDB 원복 전제의 prod Payple 동일 카드 재등록으로 검증함.
+실운영 검증은 project/product/dev 귀속 대표 prod 표본과 live DB·SHA→artifact→runtime을 선호하며, 내부/dev tiny sample을 threshold 근거로 쓰지 않음. tenant DDL은 inventory→canary→전체. 경보는 원인별 이름.
 §
-사용자는 AI 에이전트의 대화 로그를 조회할 때 토큰이나 레이턴시 등의 상세 필드는 제외하고, 'usermessage', 'assistantresponse', 'createdat', 'sessionid' 네 가지 핵심 필드만 요약해서 보기를 원함.
+스킬은 설치 목록만으로 부재 단정하지 않고 공식 문서·공개 저장소까지 확인해 존재와 설치를 구분함. 최신성·실엔진·umbrella+references를 선호하고 무비판 추천을 싫어함.
 §
-사용자는 최신 main·live DB·실구현을 검증하고, 메타데이터 누락은 SDK/API/CSV/연동/유저여정 등 실제 writer를 전수 확인한 뒤 기존 구조를 살려 해결하길 선호함. KDS hot path의 동기 DDB 쓰기·실패 결합을 경계함.
+MCP 리포트는 프로젝트·프로덕트·도구별 호출량과 호출 주체 귀속·unknown 분류를 선호함.
 §
-사용자는 스킬의 최신성·실엔진 검증과 class-level umbrella+references 구조를 선호하며, 범용 Skill/MCP의 무비판적 권장을 싫어함.
+Codex 사용량은 ‘세션’ 대신 API의 실제 제한 기간(5시간·7일)과 초기화 시각을 정확히 표시하길 원함.
 §
-사용자는 MCP 리포트에서 프로젝트별 호출량·도구 종류·도구별 횟수·사용패턴과 도구별 사용량 그래프를 원함. 민감한 parameter는 권한 통제 상세 링크로 분리함.
+Locale UI: ‘언어 추가’ 검색·빈 값 Auto-fill, source/fallback tooltip. 다국어 설정은 메시지 설정의 첫 번째 항목을 선호함.
 §
-사용자는 Codex 사용량에서 추상적인 ‘세션’ 명칭보다 API가 반환한 실제 제한 기간(예: 5시간·7일)과 초기화 시각을 정확히 표시하길 원함.
+Hyukjun Kang/GitHub TheClevers. PR마다 범위별 Linear 이슈를 만들어 본인 Todo로 할당·태그함. Parent는 책임 범위가 같을 때만 연결함.
 §
-Locale UI는 ‘언어 추가’·하단 검색/선택·default 기반 빈 언어 Auto-fill을 선호함. rollout은 Michael allowlist, 번역 키는 `.env`·Secrets Manager, PG writer 전 live schema·별도 migration SQL 검증을 원함.
+Notifly MCP 문서는 클라이언트별 설정을 구분함. 편집 리소스는 web-console 저장 구조와 맞추고, 여정 진입 segment와 조건 분기 groups를 구분하며 create→편집 round-trip 검증을 선호함. AI 어시스턴트는 내부 tool명만 숨기고 공개 API/SDK명은 유지하며 프롬프트 규칙은 짧게 두길 원함.
 §
-`Hyukjun Kang`; Linear 이슈는 본인 배정 Todo, 요청 시 parent subissue로 생성.
+PR 후속은 상태 전이·iframe·5개 locale key를 실데이터로 대조하고 mock·불필요한 예외/test seam·dead code를 피함.
 §
-Notifly MCP 문서는 ChatGPT 데스크톱·웹·Codex를 분리하고, 도구 갱신 안내는 ChatGPT에서 제외하되 Claude에는 유지함. 변경은 Draft PR→사용자 미리보기·스크린샷→CI→Ready 순이며 사용자 미리보기 때 에이전트 서버는 종료함.
+Poller는 handler/ESM/live로 검증하며 fresh main→TDD·실측→remote 확인을 선호함. 호환 PR 배포·drain 뒤 activation PR을 marker-only diff로 rebase해 CI·리뷰를 정리함.
 §
-계획·검토만 요청하면 승인 전 이슈 생성·코드 수정·상태 변경을 원하지 않음.
+‘원시인 모드’는 다음 할 일 하나만 짧게 답함.
 §
-사용자는 Poller의 crash·멱등성과 partial retry의 handler/ESM/live 설정을 검증함. 구현은 fresh main 격리 worktree→TDD·실측→remote 확인→stacked Draft PR·CI→선행 PR Ready→CodeRabbit·Codex 리뷰 대기를 선호함.
+PR 리뷰는 CodeRabbit·ChatGPT/Codex를 모두 확인하고 핵심·액션만 짧게 설명하며, 승인 후 pull→수정·검증→답변·resolve→재리뷰까지 수행하길 선호함.
 §
-‘원시인 모드’는 다음 할 일 하나만 짧게 답하는 형식임.
+팀 공유는 전→후 중심 공식 문체(보통 3줄, 요청 시 1줄)를 선호함.
 §
-자동 리뷰는 먼저 메커니즘·목표 정합성으로 설명·분류한 뒤, 합의된 최소 변경만 반영하길 선호함.
+프롬프트 규칙은 짧고 고밀도로 쓰길 선호함. Assistant 전용 도구명은 사용자에게 숨기고, 조용히 실행해 결과나 필요한 입력만 안내하길 원함.
+§
+Ponytail full 모드를 선호함.
