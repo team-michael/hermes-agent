@@ -13,3 +13,5 @@ GitHub team rule: BG commit messages and PR titles follow Conventional Commits 1
 User expects pricing assumptions and billing-unit mappings to be source-verified; unverified conversions are not quote inputs.
 §
 User wants recommendations re-evaluated against actual data, risk, and implementation value, with low-value or premature optimizations explicitly deferred.
+§
+Analytics preference: keep CTA intent separate from completed conversions; review, apply, and verify approved changes.

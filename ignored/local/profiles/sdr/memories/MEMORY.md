@@ -17,3 +17,5 @@ Notifly product_id mappings: atease-cafe24=아디즈; sione-cafe24=시오네; sw
 Notifly 고객 회신에서 캠페인 전략·타겟 설계·문안 작성·대행 세팅 등 컨설팅을 제공한다고 표현하지 않는다. 브랜드가 직접 설정·운영하며, Notifly 지원 범위는 제품 사용법·연동·오류·카카오 템플릿 등록/반려 사유 등 운영 가이드다; 최종 템플릿 승인은 카카오가 결정한다.
 §
 People identity rule: Trackit English names must not be transliterated into Korean without a direct source.
+§
+Notifly 웰컴 과제의 기존 수령자 제외 조건은 전체 기간 `benefit_received` 이벤트 중 `benefit="welcome"`인 이벤트 발생 횟수 0회다. `sign_up`은 발송 트리거다.

@@ -2,7 +2,7 @@ Triage status: `no_action` for spikes/recovered/known benign; `needs_fix` for tr
 §
 Sentry email alert pipeline: always catalog-check title+transaction+message before no_action. When payload truncates and user asks "어떤 프로젝트?", use Logs Insights with `date -d "<ISO 8601>" +%s` timestamp verification to recover full payload, extract productId from request.url, map via DynamoDB GSI (prefer dev=false), parse request.query for campaign IDs/mode. Do NOT re-run helper. Unix timestamp miscalc pitfall: 1753592700 vs 1785133500 for 2026-07-27 06:25 UTC caused MalformedQueryException.
 §
-Skill library: `software-development/check`는 external_dirs에 등록되어 autonomous skill_manage write_file이 차단됨. reference 추가/큰 변경 시 foreground에서 `hermes curator adopt software-development/check` 권장.
+Skill library: `software-development/check`는 external_dirs에 등록되어 autonomous skill_manage write_file이 차단됨. reference 추가/큰 변경 시 foreground에서 `hermes curator adopt software-development/check` 권장. 사용자가 `korean-martech-prospect-research` 스킬 업데이트를 요구함 — autonomous skill_manage write_file이 가능한지 확인 후 시도, blocked 시 `hermes curator adopt` 방식 안내.
 §
 DLQ triage when Lambda looks healthy: `maxReceiveCount=1` + partial batch or downstream rejection can still land messages in DLQ. Inspect DLQ body, RedrivePolicy, and consumer logs. Never assume healthy Lambda metrics prove no backlog.
 §

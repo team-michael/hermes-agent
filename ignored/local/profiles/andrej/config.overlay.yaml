@@ -29,7 +29,7 @@ auxiliary:
         enabled: false
 agent:
   gateway_notify_interval: 0
-  reasoning_effort: xhigh
+  reasoning_effort: medium
   service_tier: fast
 terminal:
   env_passthrough:

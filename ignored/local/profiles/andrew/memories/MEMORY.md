@@ -1,14 +1,10 @@
-Env: ws `~/.hermes/workspace`; gh in profile `.env`; JDK `~/.hermes/jdks/jdk-17`; Android SDK `~/.hermes/android-sdk`.
+Env: ws `~/.hermes/workspace`; gh auth: export GH_TOKEN=$(grep ^GITHUB_TOKEN= ~/.hermes/profiles/andrew/.env|cut -d= -f2-) → clix-so_bot. JDK ~/.hermes/jdks/jdk-17.
 §
-Notifly: project_id→DDB product_id/name; per-project PG table_${pid}; DDL via onboarding/preflight. Push RCA: FCM 404/UNREGISTERED can null device_token; test sends require native device_token IS NOT NULL. project_statistics long-form metrics.
-§
-project_statistics: billing independent(`session_starts`,`events`); event-log granularity; UTC/KST09.
+Notifly: project_id→DDB product_id/name; per-project PG table_${pid}; DDL via onboarding/preflight. Push RCA: FCM 404/UNREGISTERED nulls device_token; test sends need IS NOT NULL. project_statistics: billing indep(session_starts,events); event-log granularity; UTC/KST09.
 §
 Notifly docs: docs=`notifly-event/docs`; web=`notifly-web`; Product KB=`notifly-product-knowledge`. KR docs use '노티플라이'.
 §
-Slack links: use SLACK_BOT_TOKEN replies/history; url_private images→vision.
-§
-Git: `Andrej Karpathy <team@greyboxhq.com>`; Gunwoo Park→`gunoooo`.
+Slack: SLACK_BOT_TOKEN replies/history; url_private→vision.
 §
 Cloudflare: never print tokens. Redis proxy: ECS `cache-proxy`, host `cache-proxy-prod-internal.notifly.tech`.
 §
@@ -34,10 +30,8 @@ Liquid: project:{id}; tag=ctx.environments.project?.id; Catalog explicit init; D
 §
 Braze Catalog: 17-route; v1 `{data,error}`; CDI=UTC `*/N`.
 §
-CloudTrail: notifly-admin=Management only; SQS data events 미기록.
-§
 Notifly CE: SDK clean-room self-host; AGPL.
 §
-Kyungseo Jeong is male.
-§
 Sentinel: trend RCA=campaign/UJ first, deploy later; decompose by channel.
+§
+ETL Workflow Failure 백필: Slack permalink ts→Step Functions TaskFailed 대조; 실패 유형 분류(Lambda 900s timeout vs Glue internal error); window 재실행·shard 중복·미처리 group 확인; 정확한 window만 순차 재실행(clear_before_run:true; 공통 input_hash 우회 시 force_rerun:true); SUCCEEDED·실행/skip/실패 0 검증; Slack ✅ reaction(reactions:write).
