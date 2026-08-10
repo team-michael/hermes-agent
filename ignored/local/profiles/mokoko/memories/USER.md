@@ -18,7 +18,7 @@ PR 후속은 상태 전이·iframe·5개 locale key를 실데이터로 대조하
 §
 Poller는 handler/ESM/live로 검증하며 fresh main→TDD·실측→remote 확인을 선호함. 호환 PR 배포·drain 뒤 activation PR을 marker-only diff로 rebase해 CI·리뷰를 정리함.
 §
-‘원시인 모드’는 다음 할 일 하나만 짧게 답함.
+원시인/Ponytail full은 최소 작업·짧은 결론, 지연 시 확인점 즉시 공유를 선호함.
 §
 PR 리뷰는 CodeRabbit·ChatGPT/Codex를 모두 확인하고 핵심·액션만 짧게 설명하며, 승인 후 pull→수정·검증→답변·resolve→재리뷰까지 수행하길 선호함.
 §
