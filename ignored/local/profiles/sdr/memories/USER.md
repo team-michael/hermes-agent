@@ -6,6 +6,6 @@ AI research: no invented or stale-as-current facts or fake URLs; mark unknowns/e
 §
 User explores Notifly MMP+CRM inside the existing SDK/console, not a standalone MMP; excludes retail media without external advertiser-app attribution.
 §
-User's name is 상엽.
+User's name is 지원.
 §
 Product-list research: preserve exact vendor/product pairs; do not expand scope or substitute sibling/similar products.

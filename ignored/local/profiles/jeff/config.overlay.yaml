@@ -23,7 +23,7 @@ agent:
   gateway_auto_continue_freshness: 3600
   image_input_mode: auto
   disabled_toolsets: []
-  reasoning_effort: xhigh
+  reasoning_effort: medium
 terminal:
   backend: local
   modal_mode: auto

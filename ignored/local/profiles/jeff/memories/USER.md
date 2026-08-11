@@ -16,7 +16,7 @@ GFSA 외부심사: 내부 ID/PR/티켓/SHA/Slack 링크 제외; 기능·KR 진�
 §
 Linear: 신규=Todo, 진행=In Progress. Done 전 issue criteria→PR/main·test·live matrix 대조; project Done 누락도 확인.
 §
-코드/API=Ponytail full: 경로 추적→YAGNI·기존/stdlib/native·최소 diff; 새 wrapper보다 기존 경계 선호; runtime bundle 실제 검증; 추측 abstraction·중복 guard 금지; API=live contract; review=head.
+코드/API=Ponytail full: 경로·merged PR·공통 telemetry/live 선확인→YAGNI·기존/native·최소 diff; 기존 경계; runtime 검증; 추측 abstraction·중복 guard 금지; API=live contract; review=head.
 §
 UX: 화면 용어=동작; 삭제≠비활성화(soft delete를 삭제로 표시 금지).
 §

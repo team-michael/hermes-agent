@@ -13,10 +13,11 @@ approvals:
   timeout: 60
   cron_mode: deny
 command_allowlist:
-- script execution via -e/-c flag
-- execute_code
-- script execution via heredoc
+- recursive delete
 - overwrite project env/config via redirection
+- script execution via heredoc
+- execute_code
+- script execution via -e/-c flag
 security:
   redact_secrets: true
 _config_version: 33
