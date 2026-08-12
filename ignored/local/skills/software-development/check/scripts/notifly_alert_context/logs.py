@@ -9,7 +9,7 @@ from .detect import (
     detect_sharded_table_refs, detect_sharded_table_names, detect_user_journey_ids,
     detect_user_journey_refs, summarize_dlq_backlog_rows,
 )
-from .aws_collectors import parse_datetime, parse_log_timestamp
+from .aws_collectors import alarm_focus_window, parse_datetime, parse_log_timestamp
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlsplit
 
@@ -956,6 +956,72 @@ def top_log_signatures(rows: Sequence[Dict[str, str]], limit: int = 5) -> List[D
         }
         for sig, count in signature_counts.most_common(limit)
     ]
+
+
+def collect_lambda_alarm_signatures(
+    session,
+    log_groups: Sequence[str],
+    alarm: Optional[Dict[str, Any]],
+    history: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    groups = unique(log_groups)[:MAX_LAMBDA_OFFENDERS]
+    if not groups:
+        return {'status': 'not_applicable'}
+    if session is None:
+        return {'status': 'error', 'error': 'missing aws session'}
+
+    start, end = alarm_focus_window(alarm, history)
+    query = """
+fields @timestamp, @message, @logStream, @log
+| filter @message like /(?i)REPORT/
+    or @message like /(?i)ERROR/
+    or @message like /(?i)Exception/
+    or @message like /(?i)timeout/
+    or @message like /(?i)query/
+    or @message like /(?i)deadlock/
+    or @message like /(?i)connection/
+| sort @timestamp desc
+| limit 100
+""".strip()
+    response = run_logs_insights_query_window_groups(
+        session,
+        groups,
+        query,
+        start=start,
+        end=end,
+        limit=100,
+        max_wait_seconds=25,
+    )
+    rows = response.get('rows') or []
+    signatures = top_log_signatures(rows, limit=MAX_LAMBDA_LOG_SIGNATURES)
+    for item in signatures:
+        item['count_in_current_alarm_window'] = item.pop('count_in_sample')
+
+    db_evidence: List[str] = []
+    for row in rows:
+        message = sanitize_log_line(
+            str(row.get('@message') or row.get('message') or ''),
+            limit=360,
+        )
+        if message and any(pattern.search(message) for pattern in DB_LOG_PATTERNS):
+            if message not in db_evidence:
+                db_evidence.append(message)
+        if len(db_evidence) >= MAX_LAMBDA_LOG_SIGNATURES:
+            break
+
+    query_status = response.get('status')
+    result = {
+        'status': 'collected' if query_status == 'Complete' else 'error',
+        'window_start': start.isoformat(),
+        'window_end': end.isoformat(),
+        'log_groups': groups,
+        'signatures': signatures,
+        'db_evidence': db_evidence,
+        'query_status': query_status,
+    }
+    if response.get('error'):
+        result['error'] = sanitize_error(response.get('error'))
+    return result
 
 def project_campaign_pair_counts(rows: Sequence[Dict[str, str]], limit: int = 20) -> List[Dict[str, Any]]:
     counts: Counter[tuple[str, str]] = Counter()

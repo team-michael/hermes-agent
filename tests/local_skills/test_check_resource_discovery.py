@@ -25,6 +25,13 @@ from notifly_alert_context.config import (  # noqa: E402
     MAX_DISCOVERY_WINDOW_SECONDS,
     MAX_LAMBDA_OFFENDERS,
 )
+from notifly_alert_context.collectors import (  # noqa: E402
+    CollectorContext,
+    collector_keys,
+    effective_lambda_names,
+    effective_log_groups,
+)
+from notifly_alert_context.logs import collect_lambda_alarm_signatures  # noqa: E402
 
 
 DIMENSIONLESS_LAMBDA_ALARM = {
@@ -120,6 +127,51 @@ class AccessDeniedCloudWatchClient:
         raise RuntimeError("AccessDeniedException: cloudwatch:GetMetricData")
 
 
+class FakeLogsClient:
+    def __init__(self) -> None:
+        self.start_calls = []
+
+    def start_query(self, **kwargs):
+        self.start_calls.append(kwargs)
+        return {"queryId": "query-1"}
+
+    def get_query_results(self, **kwargs):
+        return {
+            "status": "Complete",
+            "results": [
+                [
+                    {"field": "@timestamp", "value": "2026-08-12T01:04:30Z"},
+                    {
+                        "field": "@message",
+                        "value": "REPORT RequestId: req Duration: 12000 ms Status: timeout",
+                    },
+                    {"field": "@log", "value": "group"},
+                    {"field": "@logStream", "value": "stream"},
+                ],
+                [
+                    {"field": "@timestamp", "value": "2026-08-12T01:04:20Z"},
+                    {
+                        "field": "@message",
+                        "value": "Query timeout while waiting for postgres connection",
+                    },
+                    {"field": "@log", "value": "group"},
+                    {"field": "@logStream", "value": "stream"},
+                ],
+            ],
+            "statistics": {"recordsMatched": 2},
+        }
+
+
+class FakeLogsSession:
+    def __init__(self) -> None:
+        self.logs = FakeLogsClient()
+
+    def client(self, name: str):
+        if name != "logs":
+            raise AssertionError(name)
+        return self.logs
+
+
 def test_dimensionless_lambda_discovery_is_ranked_and_bounded() -> None:
     session = FakeSession()
 
@@ -212,3 +264,68 @@ def test_access_denied_is_returned_after_one_attempt() -> None:
     assert result["status"] == "error"
     assert "AccessDeniedException" in result["error"]
     assert len(cloudwatch.calls) == 1
+
+
+def test_registry_discovers_before_enrichment() -> None:
+    keys = collector_keys()
+
+    assert keys.index("alarm_shape") < keys.index("lambda_discovery")
+    assert keys.index("lambda_discovery") < keys.index("lambda_log_signatures")
+    assert keys.index("lambda_log_signatures") < keys.index("rds_context")
+    assert keys.index("rds_context") < keys.index("rds_performance_insights")
+
+
+def test_effective_resources_include_discovery_without_mutation() -> None:
+    ctx = CollectorContext(
+        session=None,
+        text="CloudWatch Alarm",
+        alarm={},
+        log_groups=(),
+        keywords=(),
+        queue_names=(),
+        lambda_names=(),
+        history={},
+    )
+    ctx.results["lambda_discovery"] = {
+        "derived_lambda_names": ["scheduled-batch-delivery"],
+        "derived_log_groups": ["/aws/lambda/scheduled-batch-delivery"],
+    }
+
+    assert effective_lambda_names(ctx) == ["scheduled-batch-delivery"]
+    assert effective_log_groups(ctx) == [
+        "/aws/lambda/scheduled-batch-delivery"
+    ]
+    assert ctx.lambda_names == ()
+    assert ctx.log_groups == ()
+
+
+def test_lambda_signatures_use_one_bounded_multi_group_query() -> None:
+    session = FakeLogsSession()
+    groups = [f"/aws/lambda/function-{index}" for index in range(7)]
+
+    result = collect_lambda_alarm_signatures(
+        session,
+        groups,
+        DIMENSIONLESS_LAMBDA_ALARM,
+        ALARM_HISTORY,
+    )
+
+    assert result["status"] == "collected"
+    assert len(session.logs.start_calls) == 1
+    call = session.logs.start_calls[0]
+    assert call["logGroupNames"] == groups[:5]
+    assert call["limit"] == 100
+    for term in (
+        "REPORT",
+        "ERROR",
+        "Exception",
+        "timeout",
+        "query",
+        "deadlock",
+        "connection",
+    ):
+        assert term in call["queryString"]
+    assert len(result["signatures"]) <= 10
+    assert result["db_evidence"] == [
+        "Query timeout while waiting for postgres connection"
+    ]
