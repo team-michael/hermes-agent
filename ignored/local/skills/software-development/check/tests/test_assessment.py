@@ -562,6 +562,245 @@ def test_compact_output_is_capped_and_keeps_decision_fields() -> None:
     assert "alarm" in result
 
 
+def _dimensionless_lambda_data() -> dict:
+    return {
+        "detected": {
+            "alarm_name": "notifly-lambda-high-duration",
+            "log_groups": [],
+            "keywords": [],
+            "service_names": [],
+            "lambda_names": ["scheduled-batch-delivery"],
+            "project_ids": [],
+        },
+        "alarm_summary": {
+            "AlarmName": "notifly-lambda-high-duration",
+            "Namespace": "AWS/Lambda",
+            "MetricName": "Duration",
+            "StateValue": "ALARM",
+            "Statistic": "Sum",
+            "Dimensions": [],
+        },
+        "alarm_shape": {
+            "dimensionless_lambda": True,
+            "hermes_profile_status": False,
+            "db_relevance": {"level": "none", "evidence": []},
+        },
+        "alarm_history": {
+            "latest_alarm_transition": {
+                "timestamp": "2026-08-12T01:05:00Z",
+            },
+            "alarm_count_7d": 2,
+            "sample_items": [],
+        },
+        "metric_datapoints": {"datapoint_count": 1},
+        "lambda_discovery": {
+            "status": "collected",
+            "offenders": [{
+                "function_name": "scheduled-batch-delivery",
+                "duration_sum_ms": 64_000_000,
+                "invocations": 800,
+                "errors": 0,
+                "throttles": 0,
+            }],
+        },
+        "lambda_log_signatures": {
+            "status": "collected",
+            "signatures": [],
+            "db_evidence": [],
+        },
+        "lambda_context": {
+            "functions": [{
+                "function_name": "scheduled-batch-delivery",
+                "configuration": {
+                    "function_name": "scheduled-batch-delivery",
+                    "state": "Active",
+                },
+            }],
+        },
+        "logs_insights": None,
+        "rds_context": None,
+        "rds_performance_insights": None,
+        "hermes_observability": None,
+        "scope_attribution": {"infra_indicators": ["AWS/Lambda"]},
+        "project_mappings": [],
+        "repo_code_hits": [{"path": "services/lambda.ts"}],
+    }
+
+
+def _answerable_lambda_timeout_data() -> dict:
+    data = _dimensionless_lambda_data()
+    data["lambda_discovery"]["offenders"][0]["errors"] = 3
+    data["lambda_log_signatures"]["signatures"] = [{
+        "signature": "REPORT Status: timeout",
+        "count_in_current_alarm_window": 3,
+    }]
+    return data
+
+
+def _healthy_lambda_batch_data() -> dict:
+    data = _dimensionless_lambda_data()
+    data["alarm_history"]["sample_items"] = [{
+        "timestamp": "2026-08-12T01:07:00Z",
+        "new_state": "OK",
+    }]
+    data["alarm_history"]["rapid_recurrence"] = {
+        "status": "normal",
+        "alarm_count_within_30m": 1,
+    }
+    return data
+
+
+def _hermes_profile_only_data() -> dict:
+    data = _dimensionless_lambda_data()
+    data["detected"]["alarm_name"] = "hermes-agent-profile-status"
+    data["detected"]["lambda_names"] = []
+    data["alarm_summary"] = {
+        "AlarmName": "hermes-agent-profile-status",
+        "StateValue": "ALARM",
+        "Dimensions": [],
+    }
+    data["alarm_shape"] = {
+        "dimensionless_lambda": False,
+        "hermes_profile_status": True,
+        "db_relevance": {"level": "none", "evidence": []},
+    }
+    data["lambda_discovery"] = {
+        "status": "not_applicable",
+        "offenders": [],
+    }
+    data["lambda_context"] = None
+    data["hermes_observability"] = {
+        "status": "collected",
+        "breaching_profiles": [{"profile": "linus", "value": 2}],
+        "pressure_incidents": [],
+        "session_candidates": [],
+    }
+    data["scope_attribution"] = {
+        "infra_indicators": ["HermesProfileStatus"],
+    }
+    return data
+
+
+def test_fallback_pi_alone_cannot_establish_root_cause() -> None:
+    data = _dimensionless_lambda_data()
+    data["alarm_shape"]["db_relevance"]["level"] = "candidate"
+    data["rds_context"] = {
+        "target_source": "production_default_correlation",
+        "db_relevance": {
+            "level": "candidate",
+            "evidence": ["alarm_or_service_token:db"],
+        },
+        "instances": [{"id": "notifly-db-prod-c", "role_hint": "writer"}],
+    }
+    data["rds_performance_insights"] = {
+        "evidence_level": "correlated",
+        "instances": [{
+            "top_sql": [{"sql_id": "sql-1", "statement": "SELECT 1"}],
+        }],
+    }
+
+    result = assess_helper_context(data)
+
+    assert result["can_answer_root_cause"] is False
+    assert "rds_correlated_top_sql" in result["root_cause_evidence"]
+    assert "rds_performance_insights_top_sql" not in result[
+        "root_cause_evidence"
+    ]
+
+
+def test_answerable_result_has_no_required_gap() -> None:
+    result = assess_helper_context(_answerable_lambda_timeout_data())
+
+    assert result["can_answer_root_cause"] is True
+    assert "lambda_current_error" in result["root_cause_evidence"]
+    assert not [
+        item for item in result["missing_required_context"]
+        if item.get("severity", "required") == "required"
+    ]
+    assert result["required_followups"] == []
+
+
+def test_healthy_aggregate_pattern_can_finalize() -> None:
+    result = assess_helper_context(_healthy_lambda_batch_data())
+
+    assert result["can_answer_root_cause"] is True
+    assert "healthy_lambda_batch_pattern" in result["root_cause_evidence"]
+
+
+def test_profile_without_session_remains_incomplete() -> None:
+    result = assess_helper_context(_hermes_profile_only_data())
+
+    assert result["can_answer_root_cause"] is False
+    assert any(
+        item["key"] == "hermes_session_attribution"
+        for item in result["missing_required_context"]
+    )
+
+
+def test_compact_output_keeps_discovery_provenance_under_budget() -> None:
+    data = _answerable_lambda_timeout_data()
+    data["lambda_discovery"]["offenders"] = [
+        {
+            "function_name": f"function-{index}",
+            "duration_sum_ms": 64_000_000 - index,
+            "duration_avg_ms": 8_000,
+            "invocations": 800,
+            "errors": 3,
+            "throttles": 0,
+            "evidence_level": "observed",
+        }
+        for index in range(5)
+    ]
+    data["lambda_log_signatures"]["signatures"] = [
+        {
+            "signature": f"REPORT Status: timeout {index}",
+            "count_in_current_alarm_window": index + 1,
+        }
+        for index in range(10)
+    ]
+    data["rds_context"] = {
+        "target_source": "production_default_correlation",
+        "db_relevance": {"level": "confirmed", "evidence": ["current_log:query"]},
+        "instances": [
+            {"id": f"db-{index}", "role_hint": "reader"}
+            for index in range(4)
+        ],
+    }
+    data["rds_performance_insights"] = {
+        "target_source": "production_default_correlation",
+        "evidence_level": "correlated",
+        "instances": [
+            {
+                "instance_id": f"db-{index}",
+                "top_sql": [{"sql_id": f"sql-{index}", "statement": "SELECT 1"}],
+            }
+            for index in range(4)
+        ],
+    }
+    data["hermes_observability"] = {
+        "session_candidates": [
+            {
+                "profile": "linus",
+                "session_link": "@session:linus/session-1",
+                "attribution_confidence": "time_overlap_candidate",
+            }
+        ],
+    }
+    data["helper_assessment"] = assess_helper_context(data)
+
+    result = compact_output(data)
+    encoded = json.dumps(result, ensure_ascii=False, default=str).encode("utf-8")
+
+    assert len(encoded) <= COMPACT_OUTPUT_MAX_BYTES
+    assert result["lambda_discovery"]["offenders"][0]["function_name"] == (
+        "function-0"
+    )
+    assert result["rds"]["target_source"] == "production_default_correlation"
+    assert result["hermes_observability"]["session_candidates"][0][
+        "session_link"
+    ] == "@session:linus/session-1"
+
+
 if __name__ == "__main__":
     tests = [
         value

@@ -40,6 +40,61 @@ def lambda_context_has_signal(lambda_context: Any) -> bool:
                 return True
     return False
 
+
+def lambda_signatures_have_current_error(signatures: Any) -> bool:
+    if not isinstance(signatures, dict):
+        return False
+    error_pattern = re.compile(
+        r'(?i)\b(error|exception|timeout|timed out|failed|failure)\b|'
+        r'status\s*:\s*(?:timeout|error)'
+    )
+    for item in signatures.get('signatures') or []:
+        if not isinstance(item, dict):
+            continue
+        text = ' '.join([
+            str(item.get('signature') or ''),
+            *[str(line) for line in item.get('sample_lines') or []],
+        ])
+        if error_pattern.search(text):
+            return True
+    return False
+
+
+def history_has_quick_recovery(
+    history: Any,
+    *,
+    max_seconds: int = 15 * 60,
+) -> bool:
+    if not isinstance(history, dict):
+        return False
+    alarm_timestamp = (
+        (history.get('latest_alarm_transition') or {}).get('timestamp')
+    )
+    try:
+        alarm_time = datetime.fromisoformat(
+            str(alarm_timestamp).replace('Z', '+00:00')
+        )
+        if alarm_time.tzinfo is None:
+            alarm_time = alarm_time.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return False
+
+    for item in history.get('sample_items') or []:
+        if not isinstance(item, dict) or item.get('new_state') != 'OK':
+            continue
+        try:
+            recovered_at = datetime.fromisoformat(
+                str(item.get('timestamp')).replace('Z', '+00:00')
+            )
+            if recovered_at.tzinfo is None:
+                recovered_at = recovered_at.replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            continue
+        elapsed = (recovered_at - alarm_time).total_seconds()
+        if 0 <= elapsed <= max_seconds:
+            return True
+    return False
+
 def log_context_has_actionable_detail(contexts: Sequence[Dict[str, Any]]) -> bool:
     actionable = re.compile(
         r'(?i)\b(detail|code|routine|constraint|where|sqlstate|deadlock|duplicate|timeout|'
@@ -745,9 +800,12 @@ def build_dlq_disposition(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 def assess_helper_context(data: Dict[str, Any]) -> Dict[str, Any]:
     detected = data.get('detected') or {}
     alarm = data.get('alarm_summary') or {}
+    alarm_shape = data.get('alarm_shape') or {}
     history = data.get('alarm_history') or {}
     metric = data.get('metric_datapoints') or {}
     hermes_observability = data.get('hermes_observability') or {}
+    lambda_discovery = data.get('lambda_discovery') or {}
+    lambda_log_signatures = data.get('lambda_log_signatures') or {}
     logs = data.get('logs_insights') or {}
     rds = data.get('rds_context')
     pi_data = data.get('rds_performance_insights')
@@ -833,17 +891,50 @@ def assess_helper_context(data: Dict[str, Any]) -> Dict[str, Any]:
             'Final answer needs the breached metric/threshold context.',
         )
 
-    hermes_shaped = metric_name == 'HermesServiceHealthy'
+    hermes_profile_status = bool(alarm_shape.get('hermes_profile_status'))
+    hermes_shaped = hermes_profile_status or metric_name == 'HermesServiceHealthy'
     if hermes_shaped:
+        breaching_profiles = (
+            hermes_observability.get('breaching_profiles')
+            if isinstance(hermes_observability, dict)
+            else None
+        ) or []
         pressure_incidents = (
             hermes_observability.get('pressure_incidents')
             if isinstance(hermes_observability, dict)
             else None
         ) or []
+        session_candidates = (
+            hermes_observability.get('session_candidates')
+            if isinstance(hermes_observability, dict)
+            else None
+        ) or []
+        if breaching_profiles:
+            root_cause_evidence.append('hermes_breaching_profiles')
         if pressure_incidents:
             root_cause_evidence.append('hermes_profile_pressure_events')
             if any(incident.get('session_context') for incident in pressure_incidents):
                 root_cause_evidence.append('hermes_session_attribution')
+        if session_candidates:
+            root_cause_evidence.append('hermes_session_candidates')
+        if (
+            hermes_profile_status
+            and breaching_profiles
+            and 'hermes_session_attribution' not in root_cause_evidence
+        ):
+            append_missing(
+                missing,
+                'hermes_session_attribution',
+                'Breaching Hermes profiles were observed, but no exact pressure-event session attribution was resolved.',
+            )
+            append_followup(
+                followups,
+                'resolve_hermes_session_attribution',
+                'Hermes observability log and profile state.db',
+                'Resolve a pressure-event/tool interval for the breaching profile; retain time-overlap sessions as candidates only.',
+                ['hermes_observability.pressure_incidents[].session_context'],
+                'A time-overlap candidate is not causal session attribution.',
+            )
         elif not isinstance(hermes_observability, dict) or hermes_observability.get('status') == 'error':
             append_missing(
                 missing,
@@ -860,10 +951,19 @@ def assess_helper_context(data: Dict[str, Any]) -> Dict[str, Any]:
             )
 
     log_shaped = bool(logs or detected.get('log_groups') or data.get('metric_filters') or 'aws/logs' in namespace.lower())
+    db_relevance = (
+        rds.get('db_relevance')
+        if isinstance(rds, dict)
+        else None
+    ) or alarm_shape.get('db_relevance') or {}
+    db_level = str(db_relevance.get('level') or 'none')
+    fallback_pi = bool(
+        isinstance(rds, dict)
+        and rds.get('target_source') == 'production_default_correlation'
+    )
     rds_shaped = bool(
         'aws/rds' in namespace.lower()
-        or rds
-        or pi_data
+        or db_level in {'candidate', 'confirmed'}
         or {'dbclusteridentifier', 'dbinstanceidentifier'} & dim_names
         or metric_name.lower() in {'cpuutilization', 'freeablememory', 'databaseload', 'readiops', 'writeiops', 'volumereadiops', 'volumewriteiops'}
     )
@@ -873,7 +973,13 @@ def assess_helper_context(data: Dict[str, Any]) -> Dict[str, Any]:
         or re.search(r'(?i)(4xx|5xx|httpcode|http)', metric_name)
     )
     sqs_shaped = bool(detected.get('queue_names') or 'aws/sqs' in namespace.lower() or 'queuename' in dim_names)
-    lambda_shaped = bool(detected.get('lambda_names') or 'aws/lambda' in namespace.lower() or 'functionname' in dim_names)
+    dimensionless_lambda = bool(alarm_shape.get('dimensionless_lambda'))
+    lambda_shaped = bool(
+        dimensionless_lambda
+        or detected.get('lambda_names')
+        or 'aws/lambda' in namespace.lower()
+        or 'functionname' in dim_names
+    )
 
     if log_shaped:
         if not isinstance(logs, dict) or logs.get('skipped') or logs.get('errors'):
@@ -993,8 +1099,28 @@ def assess_helper_context(data: Dict[str, Any]) -> Dict[str, Any]:
                 ['rds_performance_insights.instances[].top_sql'],
                 'DB-shaped final answers must name the SQL family/query fingerprint.',
             )
+        elif fallback_pi:
+            root_cause_evidence.append('rds_correlated_top_sql')
+            has_current_db_evidence = any(
+                str(item).startswith('current_log:')
+                for item in db_relevance.get('evidence') or []
+            )
+            if not has_current_db_evidence:
+                append_missing(
+                    missing,
+                    'db_causal_link',
+                    'Production-default PI data is correlated context only; no current alarm-window DB evidence links it to this alarm.',
+                )
+                append_followup(
+                    followups,
+                    'confirm_current_db_causal_link',
+                    'Current Lambda/service logs',
+                    'Confirm a query, connection, deadlock, or DB timeout signature in the current alarm window before treating fallback PI as causal.',
+                    ['rds.db_relevance.evidence', 'lambda_log_signatures.db_evidence'],
+                    'Production-default correlation cannot establish root cause by itself.',
+                )
         else:
-            root_cause_evidence.append('rds_performance_insights_top_sql')
+            root_cause_evidence.append('rds_explicit_top_sql')
 
     if http_shaped and (not isinstance(http, dict) or http.get('status') == 'not_applicable' or http.get('error')):
         append_missing(missing, 'http_peer_metrics', 'HTTP 4xx/5xx/request-count peer metrics are unavailable.')
@@ -1025,7 +1151,60 @@ def assess_helper_context(data: Dict[str, Any]) -> Dict[str, Any]:
     elif sqs_shaped:
         root_cause_evidence.append('sqs_queue_metrics')
 
-    if lambda_shaped and (not isinstance(lambda_context, dict) or lambda_context.get('error')):
+    offenders = (
+        lambda_discovery.get('offenders')
+        if isinstance(lambda_discovery, dict)
+        else None
+    ) or []
+    discovery_resolved = bool(
+        offenders
+        or (
+            isinstance(lambda_discovery, dict)
+            and lambda_discovery.get('derived_lambda_names')
+        )
+    )
+    if offenders:
+        root_cause_evidence.append('lambda_top_offender')
+
+    current_lambda_error = lambda_signatures_have_current_error(
+        lambda_log_signatures
+    )
+    healthy_lambda_batch = bool(
+        dimensionless_lambda
+        and offenders
+        and all(
+            _safe_int(item.get('errors')) == 0
+            and _safe_int(item.get('throttles')) == 0
+            for item in offenders
+            if isinstance(item, dict)
+        )
+        and history_has_quick_recovery(history)
+        and (_safe_int(history.get('alarm_count_7d')) or 0) >= 2
+    )
+    if current_lambda_error:
+        root_cause_evidence.append('lambda_current_error')
+    elif healthy_lambda_batch:
+        root_cause_evidence.append('healthy_lambda_batch_pattern')
+    elif dimensionless_lambda:
+        append_missing(
+            missing,
+            'lambda_execution_mechanism',
+            'The aggregate Lambda offender is known, but neither a current error/timeout nor the complete healthy recurring-batch pattern was established.',
+        )
+        append_followup(
+            followups,
+            'resolve_lambda_execution_mechanism',
+            'Current-window Lambda logs and peer metrics',
+            'Use the discovered functions and fixed current-window signatures to distinguish timeout/error from a healthy high-volume batch.',
+            ['lambda_log_signatures.signatures', 'lambda_discovery.offenders'],
+            'Aggregate Duration alone does not identify the execution mechanism.',
+        )
+
+    if (
+        lambda_shaped
+        and not discovery_resolved
+        and (not isinstance(lambda_context, dict) or lambda_context.get('error'))
+    ):
         append_missing(missing, 'lambda_context', 'Lambda configuration/event-source/metric context is unavailable.')
         append_followup(
             followups,
@@ -1037,7 +1216,7 @@ def assess_helper_context(data: Dict[str, Any]) -> Dict[str, Any]:
         )
     elif lambda_shaped and isinstance(lambda_context, dict) and lambda_context_has_signal(lambda_context):
         root_cause_evidence.append('lambda_runtime_metrics')
-    elif lambda_shaped:
+    elif lambda_shaped and not discovery_resolved:
         append_missing(missing, 'lambda_context', 'Lambda context was inferred but no matching function configuration or runtime datapoints were found.')
         append_followup(
             followups,
@@ -1602,7 +1781,6 @@ def _fit_compact_budget(result: Dict[str, Any]) -> Dict[str, Any]:
         'http',
         'lambda',
         'sqs',
-        'rds',
         'rds_performance_insights',
         'metric_filters',
         'code',
@@ -1657,6 +1835,10 @@ def _fit_compact_budget(result: Dict[str, Any]) -> Dict[str, Any]:
         'current_error_facts',
         'current_code_locations',
         'hermes_observability',
+        'alarm_shape',
+        'lambda_discovery',
+        'lambda_log_signatures',
+        'rds',
     ]
     if not result.get('dlq_disposition'):
         essential_keys.extend(['history', 'metric', 'logs'])
@@ -1699,6 +1881,20 @@ def compact_output(data: Dict[str, Any]) -> Dict[str, Any]:
             assessment.get('dlq_disposition')
         ),
         'detected': _bounded_value(data.get('detected')),
+        'alarm_shape': _bounded_value(
+            data.get('alarm_shape'),
+            max_depth=4,
+        ),
+        'lambda_discovery': _bounded_value(
+            data.get('lambda_discovery'),
+            max_depth=5,
+            max_items=5,
+        ),
+        'lambda_log_signatures': _bounded_value(
+            data.get('lambda_log_signatures'),
+            max_depth=5,
+            max_items=10,
+        ),
         'aws': _bounded_value(data.get('aws_caller_identity')),
         'alarm': {
             'name': alarm.get('AlarmName'),

@@ -1,7 +1,7 @@
 ---
 name: check
 description: Investigate Notifly Slack/Amazon Q/CloudWatch alerts from live data sources using the bundled deterministic helper, then return one concise Korean triage result.
-version: 1.4.6
+version: 1.5.0
 author: Hermes Agent
 license: MIT
 metadata:
@@ -55,6 +55,7 @@ Rules:
    - `missing_required_context`
    - `required_followups`
    - `alarm`, `history`, and current alarm window
+   - `alarm_shape`, `lambda_discovery`, and `lambda_log_signatures`
    - `current_error_facts`, `current_trigger_contexts`, `logs`
    - `logs` → `current_top_signatures` / `current_trigger_contexts` if `current_error_facts` is empty
    - datasource-specific evidence (`rds_performance_insights`, `sqs`, `lambda`, `http`)
@@ -66,6 +67,8 @@ Rules:
 6. After those two calls, finalize with the strongest available evidence and state any remaining field as unavailable. Do not start another investigation branch.
 7. If a datasource is unavailable (`NotAuthorizedException`, expired ECS stream, ingestion lag), mark it unavailable and continue with the strongest remaining evidence. Do not retry the same failed operation with alternate syntax unless the failure explicitly identifies a correctable parameter.
 8. Never invent Logs Insights `parse` syntax repeatedly in the model loop. Use a vetted reference or add a deterministic helper collector outside the foreground alert response.
+9. Do not repeat helper-covered CloudWatch, Logs Insights, RDS, PI, or Hermes
+   queries manually. Use only a listed blocking follow-up.
 
 ## Manual fallback boundary
 
@@ -98,7 +101,7 @@ Load one relevant reference with `skill_view(name="check", file_path="references
 - Observed facts, interpretation, and speculation must remain distinct.
 - Alarm names are labels; verify the live threshold, period, evaluation periods, datapoints-to-alarm, dimensions, and current state.
 - For log-derived alarms, identify the concrete trigger from the exact alarm window. Historical top signatures are baseline only.
-- For DB alerts, name the concrete instance/role and top SQL fingerprint from Performance Insights, DB logs, or a clearly labeled fallback. Map sharded table suffixes to project/product.
+- For DB alerts, name the concrete instance/role and top SQL fingerprint from Performance Insights, DB logs, or a clearly labeled fallback. `production_default_correlation` is scope enrichment, not causal proof without current alarm-window DB evidence. Map sharded table suffixes to project/product.
 - If a source is unavailable, say so; do not imply it was checked.
 - Do not infer customer impact from metric breach alone. Check delivery failures, queue growth, latency, errors, data loss, or completed work as appropriate.
 
@@ -198,7 +201,7 @@ When `dlq_backlog.event_type` is `DLQ_BACKLOG_DETECTED`, use the helper's
 
 ### Lambda
 
-Resolve the real function name rather than assuming the alarm prefix equals it. Cross-check runtime Errors/Throttles/Duration. A `REPORT ... Status: timeout` may exist without an ERROR log line.
+Resolve the real function name rather than assuming the alarm prefix equals it. Use `lambda_discovery.offenders` and its derived log groups; do not start manual per-function CloudWatch loops. Cross-check runtime Errors/Throttles/Duration. A `REPORT ... Status: timeout` may exist without an ERROR log line. A dimensionless aggregate is answerable only with a current error/timeout signature or the complete healthy recurring-batch pattern emitted by the helper.
 
 ### HTTP 4xx/5xx
 
@@ -228,6 +231,9 @@ When `MetricName` is `HermesServiceHealthy`, use the helper's
   accounting.
 - If session attribution is unavailable, say so. Do not guess a full ID or use
   archived session replay as evidence.
+- Exact pressure-event session attribution may be reported as cause. Entries in
+  `session_candidates` are time-overlap candidates only and must be labeled
+  uncertain; they do not close a required attribution gap.
 
 ## Slack response contract
 
@@ -335,6 +341,10 @@ Do not modify skills or write one-off production scripts during the foreground a
 
 ## Known improvements
 
+- `v1.5.0`: metric-math alarms are classified before enrichment, dimensionless
+  Lambda offenders and current signatures are discovered with bounded queries,
+  DB fallback PI retains correlation provenance, and Hermes profile alarms
+  distinguish exact pressure attribution from time-overlap candidates.
 - `v1.4.6`: `HermesServiceHealthy` collection resolves profile-pressure events
   to full parent/subagent session links, active tool intervals, bounded task
   excerpts, sequential `execute_code` batch size, read rate, and recovery time.

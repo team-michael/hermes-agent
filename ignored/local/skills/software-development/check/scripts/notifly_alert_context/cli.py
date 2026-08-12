@@ -11,6 +11,8 @@ from .aws_collectors import (
 )
 from .collectors import (
     CollectorContext,
+    effective_lambda_names,
+    effective_log_groups,
     queue_names_from_dlq_backlog,
     run_collectors,
 )
@@ -78,7 +80,7 @@ def main() -> None:
     queue_names = unique([*queue_names, *alarm_dimension_value(alarm, ['QueueName'])])
     lambda_names = detect_lambda_names(text, log_groups, alarm)
     history = collect_alarm_history(session, alarm_name, args.lookback_days)
-    collector_results = run_collectors(CollectorContext(
+    collector_context = CollectorContext(
         session=session,
         text=text,
         alarm=alarm,
@@ -88,8 +90,14 @@ def main() -> None:
         lambda_names=lambda_names,
         history=history,
         days=7,
-    ))
+    )
+    collector_results = run_collectors(collector_context)
     metric_datapoints = collector_results.get('metric_datapoints')
+    alarm_shape = collector_results.get('alarm_shape')
+    lambda_discovery = collector_results.get('lambda_discovery')
+    lambda_log_signatures = collector_results.get('lambda_log_signatures')
+    lambda_names = effective_lambda_names(collector_context)
+    log_groups = effective_log_groups(collector_context)
     hermes_observability = collector_results.get('hermes_observability')
     rds_context = collector_results.get('rds_context')
     rds_performance_insights = collector_results.get('rds_performance_insights')
@@ -191,6 +199,9 @@ def main() -> None:
         'alarm_summary': summarize_alarm(alarm) if isinstance(alarm, dict) else alarm,
         'alarm_history': history,
         'metric_datapoints': metric_datapoints,
+        'alarm_shape': alarm_shape,
+        'lambda_discovery': lambda_discovery,
+        'lambda_log_signatures': lambda_log_signatures,
         'hermes_observability': hermes_observability,
         'rds_context': rds_context,
         'rds_performance_insights': rds_performance_insights,
@@ -218,6 +229,9 @@ def main() -> None:
         print_section('Alarm summary', data['alarm_summary'])
         print_section('Alarm history', history)
         print_section('Metric datapoints', metric_datapoints)
+        print_section('Alarm shape', alarm_shape)
+        print_section('Lambda discovery', lambda_discovery)
+        print_section('Lambda current-window signatures', lambda_log_signatures)
         print_section('Hermes host observability', hermes_observability)
         print_section('Metric filters', metric_filters)
         print_section('Logs Insights compact summary', logs_insights)
