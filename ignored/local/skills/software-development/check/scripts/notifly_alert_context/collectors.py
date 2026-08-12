@@ -84,6 +84,7 @@ def _collect_hermes_observability(ctx: CollectorContext) -> Any:
         ctx.session,
         ctx.alarm,
         ctx.history,
+        alarm_shape=ctx.results.get('alarm_shape'),
     )
 
 

@@ -16,11 +16,17 @@ KST = timezone(timedelta(hours=9))
 PROFILE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
-def is_hermes_service_health_alarm(alarm: Any) -> bool:
+def is_hermes_service_health_alarm(
+    alarm: Any,
+    alarm_shape: Optional[Dict[str, Any]] = None,
+) -> bool:
     return bool(
         isinstance(alarm, dict)
         and alarm.get("_alarm_type") == "MetricAlarm"
-        and str(alarm.get("MetricName") or "") == "HermesServiceHealthy"
+        and (
+            str(alarm.get("MetricName") or "") == "HermesServiceHealthy"
+            or bool((alarm_shape or {}).get("hermes_profile_status"))
+        )
     )
 
 
@@ -483,6 +489,98 @@ def resolve_pressure_session(
             connection.close()
 
 
+def find_overlapping_session_candidates(
+    root: Path,
+    profiles: Sequence[str],
+    start: datetime,
+    end: datetime,
+    limit_per_profile: int = 3,
+) -> List[Dict[str, Any]]:
+    candidates: List[Dict[str, Any]] = []
+    start_timestamp = start.astimezone(timezone.utc).timestamp()
+    end_timestamp = end.astimezone(timezone.utc).timestamp()
+    for profile in profiles:
+        if not PROFILE_NAME_PATTERN.fullmatch(str(profile)):
+            continue
+        db_path = _profile_db_path(root, str(profile))
+        if db_path is None or not db_path.is_file():
+            continue
+        connection = None
+        try:
+            connection = sqlite3.connect(
+                f"file:{db_path}?mode=ro",
+                uri=True,
+                timeout=0.25,
+            )
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA query_only=ON")
+            rows = connection.execute(
+                """
+                SELECT
+                    s.id,
+                    s.source,
+                    s.parent_session_id,
+                    s.started_at,
+                    s.ended_at,
+                    s.title,
+                    MAX(m.timestamp) AS last_activity_at
+                FROM sessions AS s
+                JOIN messages AS m ON m.session_id = s.id
+                WHERE m.active = 1
+                  AND m.timestamp >= ?
+                  AND m.timestamp <= ?
+                GROUP BY
+                    s.id, s.source, s.parent_session_id,
+                    s.started_at, s.ended_at, s.title
+                ORDER BY last_activity_at DESC
+                LIMIT ?
+                """,
+                (start_timestamp, end_timestamp, max(1, limit_per_profile)),
+            ).fetchall()
+            for row in rows:
+                _, task_excerpt = _tool_intervals(connection, str(row["id"]))
+                parent = None
+                if row["parent_session_id"]:
+                    parent = connection.execute(
+                        "SELECT id, title FROM sessions WHERE id = ?",
+                        (row["parent_session_id"],),
+                    ).fetchone()
+                candidates.append({
+                    "profile": str(profile),
+                    "session_id": row["id"],
+                    "session_link": _session_link(profile, row["id"]),
+                    "source": row["source"],
+                    "title": row["title"],
+                    "parent_session_id": row["parent_session_id"],
+                    "parent_session_link": _session_link(
+                        profile,
+                        row["parent_session_id"],
+                    ),
+                    "parent_title": parent["title"] if parent else None,
+                    "task_excerpt": task_excerpt,
+                    "last_activity_at": _iso_utc(row["last_activity_at"]),
+                    "last_activity_at_kst": _format_kst(
+                        row["last_activity_at"]
+                    ),
+                    "attribution_confidence": "time_overlap_candidate",
+                    "attribution_note": (
+                        "The session had message or tool activity in the alarm "
+                        "window, but no profile-pressure event tied it to the "
+                        "alarm."
+                    ),
+                })
+        except (OSError, sqlite3.Error):
+            continue
+        finally:
+            if connection is not None:
+                connection.close()
+    candidates.sort(
+        key=lambda item: str(item.get("last_activity_at") or ""),
+        reverse=True,
+    )
+    return candidates
+
+
 def _is_breaching(value: float, threshold: Any, operator: Any) -> bool:
     try:
         threshold_value = float(threshold)
@@ -494,6 +592,107 @@ def _is_breaching(value: float, threshold: Any, operator: Any) -> bool:
         "GreaterThanThreshold": value > threshold_value,
         "GreaterThanOrEqualToThreshold": value >= threshold_value,
     }.get(str(operator or ""), False)
+
+
+def collect_profile_status_metrics(
+    session: Any,
+    alarm: Dict[str, Any],
+    history: Any,
+    alarm_shape: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    if not (alarm_shape or {}).get("hermes_profile_status"):
+        return {"status": "not_applicable", "breaching_profiles": []}
+    instance_ids = (alarm_shape or {}).get("hermes_instance_ids") or []
+    instance_id = str(instance_ids[0]) if instance_ids else ""
+    if not PROFILE_NAME_PATTERN.fullmatch(instance_id):
+        return {
+            "status": "partial",
+            "error": "missing or unsafe Hermes InstanceId",
+            "breaching_profiles": [],
+        }
+    if session is None:
+        return {
+            "status": "error",
+            "error": "missing aws session",
+            "breaching_profiles": [],
+        }
+
+    latest = ((history or {}).get("latest_alarm_transition") or {}).get(
+        "timestamp"
+    )
+    anchor = _parse_datetime(latest) or datetime.now(timezone.utc)
+    period = 60
+    for query in alarm.get("Metrics") or []:
+        if isinstance(query, dict) and query.get("Period"):
+            period = max(60, int(query["Period"]))
+            break
+    evaluations = max(1, int(alarm.get("EvaluationPeriods") or 1))
+    end = anchor + timedelta(minutes=5)
+    start = anchor - timedelta(seconds=period * evaluations)
+    if (end - start).total_seconds() > 30 * 60:
+        start = end - timedelta(minutes=30)
+
+    expression = (
+        'SELECT MAX(HermesProfileStatus) FROM SCHEMA("CWAgent", '
+        'InstanceId, Profile, metric_type) '
+        f"WHERE InstanceId = '{instance_id}' AND metric_type = 'gauge' "
+        'GROUP BY Profile ORDER BY MAX() DESC LIMIT 20'
+    )
+    try:
+        response = session.client("cloudwatch").get_metric_data(
+            MetricDataQueries=[{
+                "Id": "profile_status",
+                "Expression": expression,
+                "Label": "${PROP('Dim.Profile')}",
+                "ReturnData": True,
+                "Period": period,
+            }],
+            StartTime=start,
+            EndTime=end,
+            ScanBy="TimestampDescending",
+        )
+    except Exception as error:
+        return {
+            "status": "error",
+            "error": str(error),
+            "instance_id": instance_id,
+            "window_start": start.isoformat(),
+            "window_end": end.isoformat(),
+            "breaching_profiles": [],
+        }
+
+    rows = []
+    for metric in response.get("MetricDataResults") or []:
+        profile = str(metric.get("Label") or "").strip()
+        if not PROFILE_NAME_PATTERN.fullmatch(profile):
+            continue
+        values = [
+            float(value)
+            for value in metric.get("Values") or []
+            if isinstance(value, (int, float))
+        ]
+        if not values:
+            continue
+        value = max(values)
+        if _is_breaching(
+            value,
+            alarm.get("Threshold"),
+            alarm.get("ComparisonOperator"),
+        ):
+            rows.append({
+                "profile": profile,
+                "value": value,
+                "evidence_level": "observed",
+            })
+    rows.sort(key=lambda row: (-float(row["value"]), row["profile"]))
+    return {
+        "status": "collected",
+        "instance_id": instance_id,
+        "window_start": start.isoformat(),
+        "window_end": end.isoformat(),
+        "query": expression,
+        "breaching_profiles": rows,
+    }
 
 
 def _collect_alarm_trigger(
@@ -629,8 +828,9 @@ def collect_hermes_observability_context(
     history: Any,
     *,
     root: Optional[Path] = None,
+    alarm_shape: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    if not is_hermes_service_health_alarm(alarm):
+    if not is_hermes_service_health_alarm(alarm, alarm_shape):
         return {"status": "not_applicable"}
 
     cluster_start, cluster_end = _alarm_cluster(history)
@@ -644,21 +844,43 @@ def collect_hermes_observability_context(
     if query_end <= query_start:
         query_end = query_start + timedelta(minutes=1)
 
-    instance_id = _dimension_value(alarm, "InstanceId")
+    profile_metrics = collect_profile_status_metrics(
+        session,
+        alarm,
+        history,
+        alarm_shape,
+    )
+    instance_id = (
+        profile_metrics.get("instance_id")
+        or _dimension_value(alarm, "InstanceId")
+    )
     event_result = _collect_pressure_events(
         session,
         start=query_start,
         end=query_end,
         instance_id=instance_id,
     )
-    incidents = pair_pressure_events(event_result.get("events") or [])
+    raw_events = event_result.get("events") or []
+    breaching_profiles = profile_metrics.get("breaching_profiles") or []
+    breaching_names = {
+        str(row.get("profile"))
+        for row in breaching_profiles
+        if isinstance(row, dict) and row.get("profile")
+    }
+    if breaching_names:
+        raw_events = [
+            event
+            for event in raw_events
+            if str(event.get("profile") or "") in breaching_names
+        ]
+    incidents = pair_pressure_events(raw_events)
     resolved_root = (root or host_hermes_root()).resolve()
     for incident in incidents:
         open_event = incident.get("open") or {}
         raw_event = next(
             (
                 event
-                for event in event_result.get("events") or []
+                for event in raw_events
                 if event.get("state") == "open"
                 and _iso_utc(event.get("timestamp")) == open_event.get("timestamp")
                 and event.get("profile") == incident.get("profile")
@@ -670,13 +892,41 @@ def collect_hermes_observability_context(
                 resolved_root, raw_event
             )
 
-    trigger = _collect_alarm_trigger(
-        session,
-        alarm,
-        history if isinstance(history, dict) else {},
-        start=query_start,
-        end=query_end,
-    )
+    if profile_metrics.get("status") != "not_applicable":
+        trigger = {
+            "classification": "profile_metric_breach",
+            "observed_breaching_count": len(breaching_profiles),
+            "observed_profiles": [
+                row.get("profile") for row in breaching_profiles
+            ],
+        }
+    else:
+        trigger = _collect_alarm_trigger(
+            session,
+            alarm,
+            history if isinstance(history, dict) else {},
+            start=query_start,
+            end=query_end,
+        )
+
+    exact_profiles = {
+        str(incident.get("profile") or "")
+        for incident in incidents
+        if incident.get("session_context")
+    }
+    candidate_profiles = [
+        profile for profile in breaching_names if profile not in exact_profiles
+    ]
+    candidate_start = _parse_datetime(profile_metrics.get("window_start"))
+    candidate_end = _parse_datetime(profile_metrics.get("window_end"))
+    session_candidates = []
+    if candidate_profiles and candidate_start and candidate_end:
+        session_candidates = find_overlapping_session_candidates(
+            resolved_root,
+            sorted(candidate_profiles),
+            candidate_start,
+            candidate_end,
+        )
     return {
         "status": "collected" if event_result.get("status") == "ok" else "error",
         "error": event_result.get("error"),
@@ -685,6 +935,8 @@ def collect_hermes_observability_context(
         "alarm_cluster_start_kst": _format_kst(cluster_start),
         "alarm_cluster_end_kst": _format_kst(cluster_end),
         "alarm_trigger": trigger,
+        "breaching_profiles": breaching_profiles,
         "pressure_incidents": incidents,
+        "session_candidates": session_candidates,
         "report_facts": _build_report_facts(incidents, cluster_start),
     }

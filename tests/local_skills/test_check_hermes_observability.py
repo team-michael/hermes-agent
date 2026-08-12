@@ -14,8 +14,10 @@ SKILL_ROOT = (
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
 from notifly_alert_context.assessment import compact_output  # noqa: E402
+from notifly_alert_context.alarm_shape import classify_alarm_shape  # noqa: E402
 from notifly_alert_context.hermes_observability import (  # noqa: E402
     collect_hermes_observability_context,
+    find_overlapping_session_candidates,
     pair_pressure_events,
     resolve_pressure_session,
 )
@@ -194,6 +196,26 @@ class _CloudWatchClient:
             ]
         }
 
+    def get_metric_data(self, **kwargs):
+        return {
+            "MetricDataResults": [
+                {
+                    "Id": "profile_status",
+                    "Label": profile,
+                    "Timestamps": [
+                        datetime.fromtimestamp(190, tz=timezone.utc)
+                    ],
+                    "Values": [value],
+                    "StatusCode": "Complete",
+                }
+                for profile, value in (
+                    ("linus", 2),
+                    ("jeff", 1),
+                    ("hashimoto", 0),
+                )
+            ]
+        }
+
 
 class _Session:
     def client(self, service_name: str):
@@ -219,6 +241,27 @@ def _alarm() -> dict:
             {"Name": "InstanceId", "Value": "i-test"},
             {"Name": "metric_type", "Value": "gauge"},
         ],
+    }
+
+
+def _profile_status_alarm() -> dict:
+    return {
+        "_alarm_type": "MetricAlarm",
+        "AlarmName": "hermes-agent-profile-status",
+        "Threshold": 1.0,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "EvaluationPeriods": 1,
+        "Metrics": [{
+            "Id": "profile_status",
+            "Expression": (
+                'SELECT MAX(HermesProfileStatus) FROM SCHEMA("CWAgent", '
+                'InstanceId, Profile, metric_type) '
+                "WHERE InstanceId = 'i-test' AND metric_type = 'gauge' "
+                "GROUP BY Profile ORDER BY MAX() DESC"
+            ),
+            "ReturnData": True,
+            "Period": 60,
+        }],
     }
 
 
@@ -315,3 +358,36 @@ def test_live_collector_emits_report_ready_full_session_context(tmp_path: Path) 
         compact["hermes_observability"]["report_facts"]["active_session"]
         == f"@session:andrej/{ACTIVE_CHILD}"
     )
+
+
+def test_metric_math_alarm_collects_breaching_profiles(tmp_path: Path) -> None:
+    _create_profile_db(tmp_path)
+    alarm = _profile_status_alarm()
+
+    result = collect_hermes_observability_context(
+        _Session(),
+        alarm,
+        _history(),
+        root=tmp_path,
+        alarm_shape=classify_alarm_shape(alarm),
+    )
+
+    assert [row["profile"] for row in result["breaching_profiles"]] == [
+        "linus",
+        "jeff",
+    ]
+    assert result["status"] == "collected"
+
+
+def test_overlap_without_pressure_is_candidate_only(tmp_path: Path) -> None:
+    _create_profile_db(tmp_path)
+
+    candidates = find_overlapping_session_candidates(
+        tmp_path,
+        ["andrej"],
+        datetime.fromtimestamp(100, tz=timezone.utc),
+        datetime.fromtimestamp(220, tz=timezone.utc),
+    )
+
+    assert candidates[0]["attribution_confidence"] == "time_overlap_candidate"
+    assert candidates[0]["session_link"] == f"@session:andrej/{ACTIVE_CHILD}"
