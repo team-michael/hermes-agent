@@ -1,5 +1,11 @@
 from .common import *
-from .text import normalize_ws, sanitize_error, sanitize_sql_statement
+from .text import (
+    normalize_ws,
+    sanitize_error,
+    sanitize_log_line,
+    sanitize_sql_statement,
+)
+from .alarm_shape import classify_alarm_shape
 from .detect import alarm_dimension_value, detect_sharded_table_refs
 
 def build_aws_session(region: str):
@@ -801,17 +807,110 @@ def collect_lambda_context(session, alarm: Optional[Dict[str, Any]], lambda_name
         rows.append(row)
     return {'days': days, 'functions': rows}
 
-def describe_rds_context(session, alarm: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def resolve_db_relevance(
+    alarm_shape: Optional[Dict[str, Any]],
+    logs_insights: Optional[Dict[str, Any]],
+    lambda_log_signatures: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    preliminary = (
+        (alarm_shape or {}).get('db_relevance')
+        if isinstance(alarm_shape, dict)
+        else None
+    ) or {}
+    result = {
+        'level': str(preliminary.get('level') or 'none'),
+        'evidence': unique(preliminary.get('evidence') or []),
+        'explicit_cluster_ids': unique(
+            preliminary.get('explicit_cluster_ids') or []
+        ),
+        'explicit_instance_ids': unique(
+            preliminary.get('explicit_instance_ids') or []
+        ),
+    }
+
+    current_lines: List[str] = []
+    if isinstance(logs_insights, dict):
+        for detail in logs_insights.get('current_error_details') or []:
+            if not isinstance(detail, dict):
+                continue
+            current_lines.extend([
+                str(detail.get('likely_error') or ''),
+                str(detail.get('root_cause_hint') or ''),
+                *[str(line) for line in detail.get('error_lines') or []],
+            ])
+        for signature in logs_insights.get('current_top_signatures') or []:
+            if not isinstance(signature, dict):
+                continue
+            current_lines.extend([
+                str(signature.get('signature') or ''),
+                *[str(line) for line in signature.get('sample_lines') or []],
+            ])
+    if isinstance(lambda_log_signatures, dict):
+        current_lines.extend([
+            str(line) for line in lambda_log_signatures.get('db_evidence') or []
+        ])
+
+    for raw_line in current_lines:
+        line = sanitize_log_line(raw_line, limit=160).lower()
+        if not line or not any(pattern.search(line) for pattern in DB_LOG_PATTERNS):
+            continue
+        evidence = f'current_log:{line}'
+        if evidence not in result['evidence']:
+            result['evidence'].append(evidence)
+        result['level'] = 'confirmed'
+        if len(result['evidence']) >= 10:
+            break
+    return result
+
+
+def describe_rds_context(
+    session,
+    alarm: Optional[Dict[str, Any]],
+    *,
+    alarm_shape: Optional[Dict[str, Any]] = None,
+    logs_insights: Optional[Dict[str, Any]] = None,
+    lambda_log_signatures: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
     if session is None or not alarm or 'error' in alarm:
         return None
-    dims = {d.get('Name'): d.get('Value') for d in (alarm.get('Dimensions') or [])}
-    if alarm.get('Namespace') != 'AWS/RDS' and not ({'DBClusterIdentifier', 'DBInstanceIdentifier'} & set(dims)):
+    shape = alarm_shape or classify_alarm_shape(alarm)
+    db_relevance = resolve_db_relevance(
+        shape,
+        logs_insights,
+        lambda_log_signatures,
+    )
+    if db_relevance['level'] not in {'candidate', 'confirmed'}:
         return None
+    dims = {
+        d.get('Name'): d.get('Value')
+        for d in (alarm.get('Dimensions') or [])
+        if isinstance(d, dict)
+    }
+    cluster_ids = db_relevance.get('explicit_cluster_ids') or []
+    instance_ids = db_relevance.get('explicit_instance_ids') or []
+    if cluster_ids:
+        target_source = 'alarm_explicit_cluster'
+        cluster_id = cluster_ids[0]
+        instance_id = None
+    elif instance_ids:
+        target_source = 'alarm_explicit_instance'
+        cluster_id = None
+        instance_id = instance_ids[0]
+    else:
+        target_source = 'production_default_correlation'
+        cluster_id = DEFAULT_PRODUCTION_RDS_CLUSTER_ID
+        instance_id = None
+
     rds = session.client('rds')
-    out: Dict[str, Any] = {'dimensions': dims}
+    out: Dict[str, Any] = {
+        'status': 'collected',
+        'dimensions': dims,
+        'db_relevance': db_relevance,
+        'target_source': target_source,
+        'alarm_period': int(alarm.get('Period') or 60),
+        'alarm_evaluation_periods': int(alarm.get('EvaluationPeriods') or 1),
+    }
     try:
-        cluster_id = dims.get('DBClusterIdentifier')
-        inst_id = dims.get('DBInstanceIdentifier')
         if cluster_id:
             clusters = rds.describe_db_clusters(DBClusterIdentifier=cluster_id).get('DBClusters') or []
             if clusters:
@@ -835,9 +934,12 @@ def describe_rds_context(session, alarm: Optional[Dict[str, Any]]) -> Optional[D
                                 'pi_enabled': inst.get('PerformanceInsightsEnabled'),
                                 'dbi_resource_id': inst.get('DbiResourceId'),
                             })
-                    out['instances'] = rows
-        elif inst_id:
-            insts = rds.describe_db_instances(DBInstanceIdentifier=inst_id).get('DBInstances') or []
+                    out['instances'] = [
+                        row for row in rows
+                        if row.get('pi_enabled') and row.get('dbi_resource_id')
+                    ][:MAX_RDS_PI_INSTANCES]
+        elif instance_id:
+            insts = rds.describe_db_instances(DBInstanceIdentifier=instance_id).get('DBInstances') or []
             if insts:
                 inst = insts[0]
                 out['instance'] = {
@@ -849,7 +951,8 @@ def describe_rds_context(session, alarm: Optional[Dict[str, Any]]) -> Optional[D
                     'dbi_resource_id': inst.get('DbiResourceId'),
                 }
     except Exception as e:
-        return {'error': str(e)}
+        out['status'] = 'error'
+        out['error'] = sanitize_error(e)
     return out
 
 def parse_datetime(value: Any) -> Optional[datetime]:
@@ -881,27 +984,17 @@ def parse_log_timestamp(value: Any) -> Optional[datetime]:
             pass
     return None
 
-def rds_pi_window(history: Optional[Dict[str, Any]]) -> tuple[datetime, datetime]:
-    now = datetime.now(timezone.utc)
-    anchor = now
-    latest_alarm = ((history or {}).get('latest_alarm_transition') or {}).get('timestamp')
-    parsed_latest = parse_datetime(latest_alarm)
-    if parsed_latest:
-        anchor = min(parsed_latest, now)
-        return anchor - timedelta(hours=2), anchor + timedelta(minutes=15)
-    for item in (history or {}).get('sample_items') or []:
-        if not isinstance(item, dict) or item.get('new_state') != 'ALARM':
-            continue
-        parsed = parse_datetime(item.get('timestamp'))
-        if parsed:
-            anchor = min(parsed, now)
-            break
-    start = max(anchor - timedelta(minutes=45), now - timedelta(days=7))
-    end = min(max(anchor + timedelta(minutes=45), start + timedelta(minutes=10)), now)
-    if end <= start:
-        start = now - timedelta(hours=2)
-        end = now
-    return start, end
+def rds_pi_window(
+    history: Optional[Dict[str, Any]],
+    rds_context: Optional[Dict[str, Any]] = None,
+) -> tuple[datetime, datetime]:
+    alarm = {
+        'Period': (rds_context or {}).get('alarm_period') or 60,
+        'EvaluationPeriods': (
+            (rds_context or {}).get('alarm_evaluation_periods') or 1
+        ),
+    }
+    return alarm_focus_window(alarm, history)
 
 def rds_pi_focus_window(history: Optional[Dict[str, Any]]) -> tuple[datetime, datetime]:
     """Narrow window for attributing the current RDS alarm, not historical background load."""
@@ -937,8 +1030,10 @@ def collect_rds_performance_insights(
     instances = rds_instances_for_pi(rds_context)
     if session is None or not instances:
         return None
-    start, end = rds_pi_window(history)
+    start, end = rds_pi_window(history, rds_context)
     focus_start, focus_end = rds_pi_focus_window(history)
+    focus_start = max(focus_start, start)
+    focus_end = min(focus_end, end)
     pi = session.client('pi')
     rows = []
     detected_project_ids: List[str] = []
@@ -1040,6 +1135,13 @@ def collect_rds_performance_insights(
         'focus_window_start': focus_start.isoformat(),
         'focus_window_end': focus_end.isoformat(),
         'source': 'AWS Performance Insights db.load.avg grouped by db.sql',
+        'target_source': rds_context.get('target_source'),
+        'evidence_level': (
+            'correlated'
+            if rds_context.get('target_source')
+            == 'production_default_correlation'
+            else 'observed'
+        ),
         'instances': rows,
         'detected_scope_ids': {
             'project_ids': unique(detected_project_ids)[:10],

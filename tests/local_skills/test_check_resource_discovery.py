@@ -20,6 +20,9 @@ from notifly_alert_context.alarm_shape import classify_alarm_shape  # noqa: E402
 from notifly_alert_context.aws_collectors import (  # noqa: E402
     alarm_focus_window,
     collect_lambda_top_offenders,
+    collect_rds_performance_insights,
+    describe_rds_context,
+    resolve_db_relevance,
 )
 from notifly_alert_context.config import (  # noqa: E402
     MAX_DISCOVERY_WINDOW_SECONDS,
@@ -49,6 +52,28 @@ ALARM_HISTORY = {
     "latest_alarm_transition": {
         "timestamp": "2026-08-12T01:05:00+00:00",
     }
+}
+
+RDS_METRIC_MATH_ALARM = {
+    "_alarm_type": "MetricAlarm",
+    "AlarmName": "explicit-rds-cpu-high",
+    "Period": 60,
+    "EvaluationPeriods": 5,
+    "Metrics": [{
+        "Id": "cpu",
+        "Expression": (
+            'SELECT MAX(CPUUtilization) FROM SCHEMA("AWS/RDS", '
+            "DBInstanceIdentifier) WHERE tag.DBClusterIdentifier = "
+            "'explicit-cluster' GROUP BY DBInstanceIdentifier"
+        ),
+    }],
+}
+
+NON_DB_ALARM = {
+    "AlarmName": "event-stream-iterator-age",
+    "Namespace": "AWS/Kinesis",
+    "MetricName": "GetRecords.IteratorAgeMilliseconds",
+    "Dimensions": [{"Name": "StreamName", "Value": "prod-events"}],
 }
 
 
@@ -170,6 +195,96 @@ class FakeLogsSession:
         if name != "logs":
             raise AssertionError(name)
         return self.logs
+
+
+class FakeRdsClient:
+    def __init__(self) -> None:
+        self.cluster_requests = []
+
+    def describe_db_clusters(self, **kwargs):
+        cluster_id = kwargs["DBClusterIdentifier"]
+        self.cluster_requests.append(cluster_id)
+        return {
+            "DBClusters": [{
+                "DBClusterIdentifier": cluster_id,
+                "Engine": "aurora-postgresql",
+                "Status": "available",
+                "DBClusterMembers": [
+                    {
+                        "DBInstanceIdentifier": f"db-{letter}",
+                        "IsClusterWriter": letter == "a",
+                    }
+                    for letter in "abcde"
+                ],
+            }]
+        }
+
+    def describe_db_instances(self, **kwargs):
+        if kwargs:
+            instance_ids = [kwargs["DBInstanceIdentifier"]]
+        else:
+            instance_ids = [f"db-{letter}" for letter in "abcde"]
+        return {
+            "DBInstances": [
+                {
+                    "DBInstanceIdentifier": instance_id,
+                    "DBInstanceClass": "db.r7g.large",
+                    "Engine": "aurora-postgresql",
+                    "DBInstanceStatus": "available",
+                    "PerformanceInsightsEnabled": True,
+                    "DbiResourceId": f"resource-{instance_id}",
+                }
+                for instance_id in instance_ids
+            ]
+        }
+
+
+class FakePiClient:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def get_resource_metrics(self, **kwargs):
+        self.calls.append(kwargs)
+        return {
+            "MetricList": [{
+                "Key": {
+                    "Dimensions": {
+                        "db.sql.id": "sql-1",
+                        "db.sql.statement": (
+                            "SELECT * FROM users_1234567890abcdef1234567890abcdef"
+                        ),
+                    }
+                },
+                "DataPoints": [{
+                    "Timestamp": datetime(2026, 8, 12, 1, 5, tzinfo=timezone.utc),
+                    "Value": 3.5,
+                }],
+            }]
+        }
+
+
+class FakeRdsSession:
+    def __init__(self) -> None:
+        self.rds = FakeRdsClient()
+        self.pi = FakePiClient()
+        self.requested_clients = []
+
+    def client(self, name: str):
+        self.requested_clients.append(name)
+        if name == "rds":
+            return self.rds
+        if name == "pi":
+            return self.pi
+        raise AssertionError(name)
+
+
+class RejectUnexpectedClientSession:
+    def __init__(self) -> None:
+        self.requested_clients = []
+
+    def client(self, name: str):
+        self.requested_clients.append(name)
+        raise AssertionError(name)
 
 
 def test_dimensionless_lambda_discovery_is_ranked_and_bounded() -> None:
@@ -329,3 +444,105 @@ def test_lambda_signatures_use_one_bounded_multi_group_query() -> None:
     assert result["db_evidence"] == [
         "Query timeout while waiting for postgres connection"
     ]
+
+
+def test_explicit_cluster_precedes_fallback() -> None:
+    session = FakeRdsSession()
+
+    result = describe_rds_context(
+        session,
+        RDS_METRIC_MATH_ALARM,
+        alarm_shape=classify_alarm_shape(RDS_METRIC_MATH_ALARM),
+    )
+
+    assert result["target_source"] == "alarm_explicit_cluster"
+    assert result["cluster"]["id"] == "explicit-cluster"
+    assert session.rds.cluster_requests == ["explicit-cluster"]
+    assert len(result["instances"]) == 4
+
+
+def test_candidate_db_alarm_uses_correlation_target() -> None:
+    session = FakeRdsSession()
+    alarm = {
+        "AlarmName": "worker-db-query-latency",
+        "Namespace": "Custom/Worker",
+        "MetricName": "Latency",
+        "Dimensions": [],
+    }
+
+    result = describe_rds_context(
+        session,
+        alarm,
+        alarm_shape=classify_alarm_shape(alarm),
+    )
+
+    assert result["target_source"] == "production_default_correlation"
+    assert result["db_relevance"]["level"] == "candidate"
+    assert session.rds.cluster_requests == ["notifly-db-prod-cluster"]
+
+
+def test_current_db_log_evidence_confirms_candidate() -> None:
+    shape = classify_alarm_shape({
+        "AlarmName": "worker-db-latency",
+        "Namespace": "Custom/Worker",
+        "MetricName": "Latency",
+    })
+
+    result = resolve_db_relevance(
+        shape,
+        {
+            "current_error_details": [{
+                "likely_error": "Query timeout waiting for postgres connection",
+            }]
+        },
+        None,
+    )
+
+    assert result["level"] == "confirmed"
+    assert "current_log:query timeout waiting for postgres connection" in result[
+        "evidence"
+    ]
+
+
+def test_non_db_alarm_does_not_open_rds_client() -> None:
+    session = RejectUnexpectedClientSession()
+
+    result = describe_rds_context(
+        session,
+        NON_DB_ALARM,
+        alarm_shape=classify_alarm_shape(NON_DB_ALARM),
+    )
+
+    assert result is None
+    assert session.requested_clients == []
+
+
+def test_fallback_pi_is_bounded_and_correlation_only() -> None:
+    session = FakeRdsSession()
+    alarm = {
+        "AlarmName": "worker-db-query-latency",
+        "Namespace": "Custom/Worker",
+        "MetricName": "Latency",
+        "Dimensions": [],
+    }
+    rds_context = describe_rds_context(
+        session,
+        alarm,
+        alarm_shape=classify_alarm_shape(alarm),
+    )
+
+    result = collect_rds_performance_insights(
+        session,
+        rds_context,
+        ALARM_HISTORY,
+    )
+
+    assert result["target_source"] == "production_default_correlation"
+    assert result["evidence_level"] == "correlated"
+    assert len(result["instances"]) == 4
+    assert len(session.pi.calls) == 4
+    assert all(
+        (call["EndTime"] - call["StartTime"]).total_seconds()
+        <= MAX_DISCOVERY_WINDOW_SECONDS
+        for call in session.pi.calls
+    )

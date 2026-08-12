@@ -116,7 +116,13 @@ def _collect_lambda_log_signatures(ctx: CollectorContext) -> Any:
 
 
 def _collect_rds_context(ctx: CollectorContext) -> Any:
-    return describe_rds_context(ctx.session, ctx.alarm)
+    return describe_rds_context(
+        ctx.session,
+        ctx.alarm,
+        alarm_shape=ctx.results.get('alarm_shape'),
+        logs_insights=ctx.results.get('logs_insights'),
+        lambda_log_signatures=ctx.results.get('lambda_log_signatures'),
+    )
 
 
 def _collect_rds_performance_insights(ctx: CollectorContext) -> Any:
