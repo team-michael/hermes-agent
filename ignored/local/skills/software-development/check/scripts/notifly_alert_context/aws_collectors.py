@@ -295,6 +295,176 @@ def collect_metric_datapoints(session, alarm: Optional[Dict[str, Any]], days: in
         comparison_operator=alarm.get('ComparisonOperator'),
     )
 
+
+def alarm_focus_window(
+    alarm: Optional[Dict[str, Any]],
+    history: Optional[Dict[str, Any]],
+) -> tuple[datetime, datetime]:
+    now = datetime.now(timezone.utc)
+    latest = (history or {}).get('latest_alarm_transition') or {}
+    anchor = parse_datetime(latest.get('timestamp')) or now
+    anchor = min(anchor.astimezone(timezone.utc), now)
+    period = max(60, int((alarm or {}).get('Period') or 60))
+    evaluations = max(1, int((alarm or {}).get('EvaluationPeriods') or 1))
+    start = anchor - timedelta(seconds=period * evaluations)
+    end = min(anchor + timedelta(minutes=5), now)
+    if end <= start:
+        start = end - timedelta(minutes=15)
+    if (end - start).total_seconds() > MAX_DISCOVERY_WINDOW_SECONDS:
+        start = end - timedelta(seconds=MAX_DISCOVERY_WINDOW_SECONDS)
+    return start, end
+
+
+def _metric_result_value(result: Dict[str, Any]) -> Optional[float]:
+    values = [
+        float(value)
+        for value in result.get('Values') or []
+        if isinstance(value, (int, float))
+    ]
+    return max(values) if values else None
+
+
+def _lambda_peer_metric_queries(
+    function_names: Sequence[str],
+    period: int,
+) -> List[Dict[str, Any]]:
+    metrics = (
+        ('duration_sum', 'Duration', 'Sum'),
+        ('duration_avg', 'Duration', 'Average'),
+        ('invocations', 'Invocations', 'Sum'),
+        ('errors', 'Errors', 'Sum'),
+        ('throttles', 'Throttles', 'Sum'),
+    )
+    queries: List[Dict[str, Any]] = []
+    for index, function_name in enumerate(function_names):
+        dimensions = [{'Name': 'FunctionName', 'Value': function_name}]
+        for suffix, metric_name, stat in metrics:
+            queries.append({
+                'Id': f'f{index}_{suffix}',
+                'MetricStat': {
+                    'Metric': {
+                        'Namespace': 'AWS/Lambda',
+                        'MetricName': metric_name,
+                        'Dimensions': dimensions,
+                    },
+                    'Period': period,
+                    'Stat': stat,
+                },
+                'ReturnData': True,
+            })
+    return queries
+
+
+def collect_lambda_top_offenders(
+    session,
+    alarm: Optional[Dict[str, Any]],
+    history: Optional[Dict[str, Any]],
+    alarm_shape: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    if not isinstance(alarm_shape, dict) or not alarm_shape.get('dimensionless_lambda'):
+        return {'status': 'not_applicable'}
+    if session is None:
+        return {'status': 'error', 'error': 'missing aws session'}
+
+    start, end = alarm_focus_window(alarm, history)
+    expression = (
+        'SELECT SUM(Duration) FROM SCHEMA("AWS/Lambda", FunctionName) '
+        'GROUP BY FunctionName ORDER BY SUM() DESC '
+        f'LIMIT {MAX_LAMBDA_OFFENDERS}'
+    )
+    cloudwatch = session.client('cloudwatch')
+    try:
+        response = cloudwatch.get_metric_data(
+            MetricDataQueries=[{
+                'Id': 'lambda_duration_sum',
+                'Expression': expression,
+                'Label': "${PROP('Dim.FunctionName')}",
+                'ReturnData': True,
+                'Period': max(60, int((alarm or {}).get('Period') or 60)),
+            }],
+            StartTime=start,
+            EndTime=end,
+            ScanBy='TimestampDescending',
+        )
+    except Exception as error:
+        return {
+            'status': 'error',
+            'window_start': start.isoformat(),
+            'window_end': end.isoformat(),
+            'query': expression,
+            'error': sanitize_error(error),
+        }
+
+    ranked = []
+    for result in response.get('MetricDataResults') or []:
+        function_name = str(result.get('Label') or '').strip()
+        value = _metric_result_value(result)
+        if not function_name or value is None:
+            continue
+        ranked.append((function_name, value))
+    ranked.sort(key=lambda item: item[1], reverse=True)
+    ranked = ranked[:MAX_LAMBDA_OFFENDERS]
+    offenders = [
+        {
+            'function_name': function_name,
+            'duration_sum_ms': duration_sum,
+            'duration_avg_ms': None,
+            'invocations': None,
+            'errors': None,
+            'throttles': None,
+            'evidence_level': 'observed',
+        }
+        for function_name, duration_sum in ranked
+    ]
+
+    status = 'collected'
+    peer_error = None
+    if offenders:
+        period = max(60, int((alarm or {}).get('Period') or 60))
+        try:
+            peer_response = cloudwatch.get_metric_data(
+                MetricDataQueries=_lambda_peer_metric_queries(
+                    [row['function_name'] for row in offenders],
+                    period,
+                ),
+                StartTime=start,
+                EndTime=end,
+                ScanBy='TimestampDescending',
+            )
+            peer_values = {
+                item.get('Id'): _metric_result_value(item)
+                for item in peer_response.get('MetricDataResults') or []
+            }
+            output_fields = {
+                'duration_sum': 'duration_sum_ms',
+                'duration_avg': 'duration_avg_ms',
+                'invocations': 'invocations',
+                'errors': 'errors',
+                'throttles': 'throttles',
+            }
+            for index, offender in enumerate(offenders):
+                for suffix, output_key in output_fields.items():
+                    value = peer_values.get(f'f{index}_{suffix}')
+                    if value is not None:
+                        offender[output_key] = value
+        except Exception as error:
+            status = 'partial'
+            peer_error = sanitize_error(error)
+
+    function_names = [row['function_name'] for row in offenders]
+    result = {
+        'status': status,
+        'window_start': start.isoformat(),
+        'window_end': end.isoformat(),
+        'query': expression,
+        'offenders': offenders,
+        'derived_lambda_names': function_names,
+        'derived_log_groups': [f'/aws/lambda/{name}' for name in function_names],
+    }
+    if peer_error:
+        result['peer_metrics_error'] = peer_error
+    return result
+
 def collect_5xx_metrics(session, alarm: Optional[Dict[str, Any]], days: int = 7) -> Optional[Dict[str, Any]]:
     if session is None or not alarm or 'error' in alarm:
         return None
