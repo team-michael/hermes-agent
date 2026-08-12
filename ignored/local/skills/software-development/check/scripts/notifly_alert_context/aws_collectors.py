@@ -330,6 +330,16 @@ def _metric_result_value(result: Dict[str, Any]) -> Optional[float]:
     return max(values) if values else None
 
 
+def _metrics_insights_lambda_name(label: Any) -> Optional[str]:
+    value = str(label or '').strip()
+    ranked = re.fullmatch(r'\d+\s+-\s+(.+)', value)
+    if ranked:
+        value = ranked.group(1).strip()
+    if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', value):
+        return None
+    return value
+
+
 def _lambda_peer_metric_queries(
     function_names: Sequence[str],
     period: int,
@@ -384,7 +394,6 @@ def collect_lambda_top_offenders(
             MetricDataQueries=[{
                 'Id': 'lambda_duration_sum',
                 'Expression': expression,
-                'Label': "${PROP('Dim.FunctionName')}",
                 'ReturnData': True,
                 'Period': max(60, int((alarm or {}).get('Period') or 60)),
             }],
@@ -403,7 +412,7 @@ def collect_lambda_top_offenders(
 
     ranked = []
     for result in response.get('MetricDataResults') or []:
-        function_name = str(result.get('Label') or '').strip()
+        function_name = _metrics_insights_lambda_name(result.get('Label'))
         value = _metric_result_value(result)
         if not function_name or value is None:
             continue

@@ -201,18 +201,18 @@ class _CloudWatchClient:
             "MetricDataResults": [
                 {
                     "Id": "profile_status",
-                    "Label": profile,
+                    "Label": f"{index} - {profile}",
                     "Timestamps": [
                         datetime.fromtimestamp(190, tz=timezone.utc)
                     ],
                     "Values": [value],
                     "StatusCode": "Complete",
                 }
-                for profile, value in (
+                for index, (profile, value) in enumerate((
                     ("linus", 2),
                     ("jeff", 1),
                     ("hashimoto", 0),
-                )
+                ), start=1)
             ]
         }
 

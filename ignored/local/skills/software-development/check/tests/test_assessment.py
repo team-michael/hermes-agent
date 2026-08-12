@@ -566,7 +566,7 @@ def _dimensionless_lambda_data() -> dict:
     return {
         "detected": {
             "alarm_name": "notifly-lambda-high-duration",
-            "log_groups": [],
+            "log_groups": ["/aws/lambda/scheduled-batch-delivery"],
             "keywords": [],
             "service_names": [],
             "lambda_names": ["scheduled-batch-delivery"],
@@ -755,6 +755,7 @@ def test_compact_output_keeps_discovery_provenance_under_budget() -> None:
         {
             "signature": f"REPORT Status: timeout {index}",
             "count_in_current_alarm_window": index + 1,
+            "sample_lines": [("timeout detail " * 80)] * 3,
         }
         for index in range(10)
     ]
@@ -772,7 +773,13 @@ def test_compact_output_keeps_discovery_provenance_under_budget() -> None:
         "instances": [
             {
                 "instance_id": f"db-{index}",
-                "top_sql": [{"sql_id": f"sql-{index}", "statement": "SELECT 1"}],
+                "top_sql": [
+                    {
+                        "sql_id": f"sql-{index}-{sql_index}",
+                        "statement": "SELECT " + ("column_name, " * 200),
+                    }
+                    for sql_index in range(3)
+                ],
             }
             for index in range(4)
         ],
@@ -796,6 +803,10 @@ def test_compact_output_keeps_discovery_provenance_under_budget() -> None:
         "function-0"
     )
     assert result["rds"]["target_source"] == "production_default_correlation"
+    assert result["rds_performance_insights"]["target_source"] == (
+        "production_default_correlation"
+    )
+    assert result["rds_performance_insights"]["evidence_level"] == "correlated"
     assert result["hermes_observability"]["session_candidates"][0][
         "session_link"
     ] == "@session:linus/session-1"

@@ -89,19 +89,19 @@ class FakeCloudWatchClient:
                 "MetricDataResults": [
                     {
                         "Id": "lambda_duration_sum",
-                        "Label": name,
+                        "Label": f"{index} - {name}",
                         "Timestamps": [datetime(2026, 8, 12, 1, 5, tzinfo=timezone.utc)],
                         "Values": [value],
                         "StatusCode": "Complete",
                     }
-                    for name, value in [
+                    for index, (name, value) in enumerate([
                         ("small-function", 10),
                         ("kds-consumer", 50_000_000),
                         ("scheduled-batch-delivery", 64_000_000),
                         ("anomaly-delivery-monitoring", 20_000_000),
                         ("segment-publisher-trigger", 30_000_000),
                         ("user-journey-node-runner", 40_000_000),
-                    ]
+                    ], start=1)
                 ]
             }
 
@@ -306,6 +306,7 @@ def test_dimensionless_lambda_discovery_is_ranked_and_bounded() -> None:
         "anomaly-delivery-monitoring",
     ]
     assert len(result["offenders"]) == MAX_LAMBDA_OFFENDERS
+    assert "Label" not in session.cloudwatch.calls[0]["MetricDataQueries"][0]
     assert result["derived_log_groups"][0] == (
         "/aws/lambda/scheduled-batch-delivery"
     )

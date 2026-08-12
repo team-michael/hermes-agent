@@ -594,6 +594,16 @@ def _is_breaching(value: float, threshold: Any, operator: Any) -> bool:
     }.get(str(operator or ""), False)
 
 
+def _metrics_insights_profile_name(label: Any) -> Optional[str]:
+    value = str(label or "").strip()
+    ranked = re.fullmatch(r"\d+\s+-\s+(.+)", value)
+    if ranked:
+        value = ranked.group(1).strip()
+    if value == "--" or not PROFILE_NAME_PATTERN.fullmatch(value):
+        return None
+    return value
+
+
 def collect_profile_status_metrics(
     session: Any,
     alarm: Dict[str, Any],
@@ -643,7 +653,6 @@ def collect_profile_status_metrics(
             MetricDataQueries=[{
                 "Id": "profile_status",
                 "Expression": expression,
-                "Label": "${PROP('Dim.Profile')}",
                 "ReturnData": True,
                 "Period": period,
             }],
@@ -663,8 +672,8 @@ def collect_profile_status_metrics(
 
     rows = []
     for metric in response.get("MetricDataResults") or []:
-        profile = str(metric.get("Label") or "").strip()
-        if not PROFILE_NAME_PATTERN.fullmatch(profile):
+        profile = _metrics_insights_profile_name(metric.get("Label"))
+        if not profile:
             continue
         values = [
             float(value)

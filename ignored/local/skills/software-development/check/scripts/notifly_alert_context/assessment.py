@@ -950,7 +950,13 @@ def assess_helper_context(data: Dict[str, Any]) -> Dict[str, Any]:
                 'Host-health responses should name the profile and full parent/subagent sessions when available.',
             )
 
-    log_shaped = bool(logs or detected.get('log_groups') or data.get('metric_filters') or 'aws/logs' in namespace.lower())
+    dimensionless_lambda = bool(alarm_shape.get('dimensionless_lambda'))
+    log_shaped = bool(
+        logs
+        or data.get('metric_filters')
+        or 'aws/logs' in namespace.lower()
+        or (detected.get('log_groups') and not dimensionless_lambda)
+    )
     db_relevance = (
         rds.get('db_relevance')
         if isinstance(rds, dict)
@@ -973,7 +979,6 @@ def assess_helper_context(data: Dict[str, Any]) -> Dict[str, Any]:
         or re.search(r'(?i)(4xx|5xx|httpcode|http)', metric_name)
     )
     sqs_shaped = bool(detected.get('queue_names') or 'aws/sqs' in namespace.lower() or 'queuename' in dim_names)
-    dimensionless_lambda = bool(alarm_shape.get('dimensionless_lambda'))
     lambda_shaped = bool(
         dimensionless_lambda
         or detected.get('lambda_names')
@@ -1629,6 +1634,108 @@ def _compact_sqs_context(sqs_context: Any) -> Any:
     }
 
 
+def _compact_lambda_log_signatures(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    signatures = []
+    for item in (value.get('signatures') or [])[:10]:
+        if not isinstance(item, dict):
+            continue
+        signatures.append({
+            'signature': truncate(str(item.get('signature') or ''), 220),
+            'count_in_current_alarm_window': item.get(
+                'count_in_current_alarm_window'
+            ),
+            'sample_lines': [
+                truncate(str(line), 220)
+                for line in (item.get('sample_lines') or [])[:1]
+            ],
+        })
+    return {
+        'status': value.get('status'),
+        'window_start': value.get('window_start'),
+        'window_end': value.get('window_end'),
+        'log_groups': (value.get('log_groups') or [])[:5],
+        'signatures': signatures,
+        'db_evidence': [
+            truncate(str(line), 220)
+            for line in (value.get('db_evidence') or [])[:3]
+        ],
+        'query_status': value.get('query_status'),
+        'error': truncate(str(value.get('error') or ''), 220) or None,
+    }
+
+
+def _compact_rds_performance_insights(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    instances = []
+    for item in (value.get('instances') or [])[:4]:
+        if not isinstance(item, dict):
+            continue
+        top_sql = []
+        for sql in (item.get('top_sql') or [])[:1]:
+            if not isinstance(sql, dict):
+                continue
+            top_sql.append({
+                key: (
+                    truncate(str(sql.get(key) or ''), 220)
+                    if key == 'statement'
+                    else sql.get(key)
+                )
+                for key in (
+                    'sql_id',
+                    'statement',
+                    'table_refs',
+                    'focus_avg_load',
+                    'focus_max_load',
+                    'avg_load',
+                    'max_load',
+                )
+                if sql.get(key) is not None
+            })
+        instances.append({
+            'instance_id': item.get('instance_id'),
+            'role_hint': item.get('role_hint'),
+            'dbi_resource_id': item.get('dbi_resource_id'),
+            'top_sql': top_sql,
+            'error': truncate(str(item.get('error') or ''), 220) or None,
+        })
+    scope = value.get('detected_scope_ids') or {}
+    compact_scope = None
+    if isinstance(scope, dict):
+        compact_scope = {
+            'project_ids': (scope.get('project_ids') or [])[:5],
+            'current_top_projects_by_load': [
+                {
+                    key: item.get(key)
+                    for key in (
+                        'project_id',
+                        'focus_avg_load_sum',
+                        'focus_max_load',
+                        'focus_points',
+                    )
+                    if item.get(key) is not None
+                }
+                for item in (
+                    scope.get('current_top_projects_by_load') or []
+                )[:3]
+                if isinstance(item, dict)
+            ],
+        }
+    return {
+        'window_start': value.get('window_start'),
+        'window_end': value.get('window_end'),
+        'focus_window_start': value.get('focus_window_start'),
+        'focus_window_end': value.get('focus_window_end'),
+        'source': value.get('source'),
+        'target_source': value.get('target_source'),
+        'evidence_level': value.get('evidence_level'),
+        'instances': instances,
+        'detected_scope_ids': compact_scope,
+    }
+
+
 def _serialized_size(value: Any) -> int:
     return len(
         json.dumps(
@@ -1770,6 +1877,216 @@ def _minimal_dlq_budget_output(
     return minimal
 
 
+def _minimal_non_dlq_budget_output(
+    result: Dict[str, Any],
+    omitted: Sequence[str],
+) -> Dict[str, Any]:
+    discovery = result.get('lambda_discovery') or {}
+    signatures = result.get('lambda_log_signatures') or {}
+    rds = result.get('rds') or {}
+    pi_data = result.get('rds_performance_insights') or {}
+    hermes = result.get('hermes_observability') or {}
+    history = result.get('history') or {}
+
+    compact_discovery = {
+        'status': discovery.get('status'),
+        'window_start': discovery.get('window_start'),
+        'window_end': discovery.get('window_end'),
+        'offenders': [
+            {
+                key: row.get(key)
+                for key in (
+                    'function_name',
+                    'duration_sum_ms',
+                    'duration_avg_ms',
+                    'invocations',
+                    'errors',
+                    'throttles',
+                    'evidence_level',
+                )
+                if row.get(key) is not None
+            }
+            for row in (discovery.get('offenders') or [])[:5]
+            if isinstance(row, dict)
+        ],
+    }
+    compact_signatures = {
+        'status': signatures.get('status'),
+        'window_start': signatures.get('window_start'),
+        'window_end': signatures.get('window_end'),
+        'log_groups': (signatures.get('log_groups') or [])[:5],
+        'signatures': [
+            {
+                'signature': truncate(str(row.get('signature') or ''), 180),
+                'count_in_current_alarm_window': row.get(
+                    'count_in_current_alarm_window'
+                ),
+            }
+            for row in (signatures.get('signatures') or [])[:5]
+            if isinstance(row, dict)
+        ],
+        'db_evidence': [
+            truncate(str(line), 180)
+            for line in (signatures.get('db_evidence') or [])[:2]
+        ],
+        'error': signatures.get('error'),
+    }
+    compact_rds = {
+        'status': rds.get('status'),
+        'target_source': rds.get('target_source'),
+        'db_relevance': _bounded_value(
+            rds.get('db_relevance'),
+            max_depth=3,
+            max_items=5,
+            max_string=140,
+        ),
+        'cluster': {
+            'id': (rds.get('cluster') or {}).get('id'),
+            'status': (rds.get('cluster') or {}).get('status'),
+        } if isinstance(rds.get('cluster'), dict) else None,
+        'instances': [
+            {
+                key: row.get(key)
+                for key in ('id', 'role_hint', 'class', 'pi_enabled')
+                if row.get(key) is not None
+            }
+            for row in (rds.get('instances') or [])[:4]
+            if isinstance(row, dict)
+        ],
+    }
+    compact_pi = _compact_rds_performance_insights(pi_data)
+    compact_history = {
+        key: history.get(key)
+        for key in (
+            'alarm_count_7d',
+            'alarm_count_1d',
+            'alarm_count_10m',
+            'alarm_count_30d',
+            'latest_alarm_transition',
+            'rapid_recurrence',
+        )
+        if history.get(key) is not None
+    }
+    minimal = {
+        key: result.get(key)
+        for key in (
+            'can_answer_root_cause',
+            'next_action',
+            'input_integrity',
+            'missing_required_context',
+            'required_followups',
+            'omitted_followup_count',
+            'root_cause_evidence',
+            'alarm',
+            'alarm_shape',
+            'metric',
+            'current_error_facts',
+            'current_code_locations',
+        )
+    }
+    minimal.update({
+        'history': compact_history,
+        'lambda_discovery': compact_discovery,
+        'lambda_log_signatures': compact_signatures,
+        'rds': compact_rds,
+        'rds_performance_insights': compact_pi,
+        'hermes_observability': _bounded_value(
+            hermes,
+            max_depth=6,
+            max_items=3,
+            max_keys=20,
+            max_string=180,
+        ),
+        'logs': _bounded_value(
+            result.get('logs'),
+            max_depth=4,
+            max_items=2,
+            max_keys=12,
+            max_string=180,
+        ),
+        'scope_attribution': _bounded_value(
+            result.get('scope_attribution'),
+            max_depth=3,
+            max_items=3,
+            max_keys=12,
+            max_string=160,
+        ),
+        'omitted_sections': sorted(
+            set(omitted + ['nonessential_evidence', 'verbose_samples'])
+        ),
+    })
+    if _serialized_size(minimal) <= COMPACT_OUTPUT_MAX_BYTES:
+        return minimal
+
+    emergency = {
+        key: minimal.get(key)
+        for key in (
+            'can_answer_root_cause',
+            'next_action',
+            'input_integrity',
+            'missing_required_context',
+            'required_followups',
+            'omitted_followup_count',
+            'root_cause_evidence',
+            'alarm',
+            'alarm_shape',
+        )
+    }
+    emergency.update({
+        'lambda_discovery': {
+            **{key: compact_discovery.get(key) for key in ('status', 'window_start', 'window_end')},
+            'offenders': (compact_discovery.get('offenders') or [])[:1],
+        },
+        'lambda_log_signatures': {
+            **{key: compact_signatures.get(key) for key in ('status', 'window_start', 'window_end')},
+            'signatures': (compact_signatures.get('signatures') or [])[:3],
+            'db_evidence': (compact_signatures.get('db_evidence') or [])[:1],
+        },
+        'rds': {
+            'status': compact_rds.get('status'),
+            'target_source': compact_rds.get('target_source'),
+            'db_relevance': compact_rds.get('db_relevance'),
+            'instances': (compact_rds.get('instances') or [])[:2],
+        },
+        'rds_performance_insights': {
+            key: compact_pi.get(key)
+            for key in ('target_source', 'evidence_level', 'focus_window_start', 'focus_window_end')
+        } if isinstance(compact_pi, dict) else compact_pi,
+        'hermes_observability': {
+            'status': hermes.get('status'),
+            'breaching_profiles': (hermes.get('breaching_profiles') or [])[:3],
+            'pressure_incidents': _bounded_value(
+                (hermes.get('pressure_incidents') or [])[:1],
+                max_depth=5,
+                max_items=2,
+                max_string=160,
+            ),
+            'session_candidates': _bounded_value(
+                (hermes.get('session_candidates') or [])[:1],
+                max_depth=4,
+                max_items=2,
+                max_string=160,
+            ),
+            'report_facts': _bounded_value(
+                hermes.get('report_facts'),
+                max_depth=4,
+                max_items=2,
+                max_string=160,
+            ),
+        },
+        'omitted_sections': sorted(
+            set(omitted + ['nonessential_evidence', 'verbose_samples'])
+        ),
+    })
+    return _bounded_value(
+        emergency,
+        max_depth=7,
+        max_items=5,
+        max_keys=24,
+        max_string=160,
+    )
+
+
 def _fit_compact_budget(result: Dict[str, Any]) -> Dict[str, Any]:
     if _serialized_size(result) <= COMPACT_OUTPUT_MAX_BYTES:
         return result
@@ -1781,7 +2098,6 @@ def _fit_compact_budget(result: Dict[str, Any]) -> Dict[str, Any]:
         'http',
         'lambda',
         'sqs',
-        'rds_performance_insights',
         'metric_filters',
         'code',
         'projects',
@@ -1839,6 +2155,7 @@ def _fit_compact_budget(result: Dict[str, Any]) -> Dict[str, Any]:
         'lambda_discovery',
         'lambda_log_signatures',
         'rds',
+        'rds_performance_insights',
     ]
     if not result.get('dlq_disposition'):
         essential_keys.extend(['history', 'metric', 'logs'])
@@ -1852,15 +2169,15 @@ def _fit_compact_budget(result: Dict[str, Any]) -> Dict[str, Any]:
     bounded = _bounded_value(
         essential,
         max_depth=7,
-        max_items=MAX_DLQ_MARKER_QUEUES,
+        max_items=5,
         max_keys=30,
-        max_string=220,
+        max_string=180,
     )
     if _serialized_size(bounded) <= COMPACT_OUTPUT_MAX_BYTES:
         return bounded
     if result.get('dlq_disposition'):
         return _minimal_dlq_budget_output(result, omitted)
-    return bounded
+    return _minimal_non_dlq_budget_output(result, omitted)
 
 
 def compact_output(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -1891,7 +2208,7 @@ def compact_output(data: Dict[str, Any]) -> Dict[str, Any]:
             max_items=5,
         ),
         'lambda_log_signatures': _bounded_value(
-            data.get('lambda_log_signatures'),
+            _compact_lambda_log_signatures(data.get('lambda_log_signatures')),
             max_depth=5,
             max_items=10,
         ),
@@ -1961,7 +2278,7 @@ def compact_output(data: Dict[str, Any]) -> Dict[str, Any]:
         'sqs': _compact_sqs_context(data.get('sqs_context')),
         'lambda': _bounded_value(data.get('lambda_context')),
         'rds': _bounded_value(data.get('rds_context')),
-        'rds_performance_insights': _bounded_value(
+        'rds_performance_insights': _compact_rds_performance_insights(
             data.get('rds_performance_insights')
         ),
         'campaign_scope_hints': _bounded_value(
