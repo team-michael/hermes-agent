@@ -85,8 +85,10 @@ Use ordered discovery collectors instead of one all-purpose collector:
    Lambda log groups.
 3. `hermes_observability` resolves breaching profiles when the shared shape
    identifies a Hermes profile-health alarm.
-4. `metric_filters` and `logs_insights` run with explicit and discovered log
-   groups.
+4. `metric_filters` and the existing 7d/30d `logs_insights` summary continue
+   to use explicit or metric-filter-derived groups. A separate
+   `lambda_log_signatures` collector queries discovered Lambda groups only in
+   the current alarm window.
 5. `rds_context` combines the preliminary alarm-name/namespace classification
    with current log evidence, then resolves an explicit or production-fallback
    RDS target.
