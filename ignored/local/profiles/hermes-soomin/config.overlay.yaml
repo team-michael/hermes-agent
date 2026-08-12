@@ -9,15 +9,10 @@ terminal:
 display:
   tool_progress: all
 approvals:
-  mode: manual
+  mode: smart
   timeout: 60
   cron_mode: deny
-command_allowlist:
-- recursive delete
-- overwrite project env/config via redirection
-- script execution via heredoc
-- execute_code
-- script execution via -e/-c flag
+command_allowlist: '[]'
 security:
   redact_secrets: true
 _config_version: 33

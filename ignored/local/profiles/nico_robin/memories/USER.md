@@ -1,6 +1,7 @@
-Notifly GitHub: ConvCommits; clix-so-bot; no human reviewers unless named; codebase>bot; preserve PR goal.
+호칭: 경서님(Jaden); '경우' 금지.
+GitHub: ConvCommits; clix-so-bot; human reviewer는 지명 시만; codebase>bot; PR goal 유지.
 §
-Remote/API validation: verify live target/config/code/data; evidence-first all-case reports; rerun from scratch after updated code/TC. No manual rerun/requeue/resend/recovery/live sends without approval; verify exact recipients only. Deploy monitoring=logs/alarms/queues/metrics.
+Remote/API validation: live target/config/code/data 증거 우선; 통합 장애는 제품 수정·재배포/추측 전에 격리 API probe로 status/body 확보. 변경 코드/TC는 처음부터 재검증. 수동 rerun/requeue/resend/recovery/live send는 승인 필수; 수신자 정확히 검증. Deploy monitoring=logs/alarms/queues/metrics.
 §
 Notifly RCA: terse KR/current case; 원인은 live logs/data로 증명. 상관·로그부재=추론; observed≠inferred. 서버/데이터/시점 후 SDK 판단; signOut/deleteToken은 timestamp 필수; FCM404≠401.
 §

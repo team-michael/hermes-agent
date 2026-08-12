@@ -8,3 +8,5 @@ Notifly 2026-06 KST historical benchmark: paid-plan production projects 205; act
 BG profile has separate encrypted Google OAuth access for minyong@greyboxhq.com with GA analytics.readonly and Search Console webmasters.readonly; existing Workspace OAuth is unaffected. Verified GA4 properties: notifly 353051031, docs-notifly 373488755, notifly-blog 412745496. Verified GSC access: sc-domain:notifly.tech and www/docs/blog URL-prefix properties.
 §
 BG Slack 채널 히스토리는 네이티브 Slack 도구가 보이지 않아도 프로필 소유 `slack_history.py`와 Bot API로 조회 가능하며, 채널 접근 판단은 실제 `--check` 결과가 기준이다.
+§
+Notifly 전역 product-capability descriptor는 Kakao·LINE을 포함한 실제 전체 지원 채널을 열거하며, locale별 채널 노출 제한은 localized landing copy에 적용한다.

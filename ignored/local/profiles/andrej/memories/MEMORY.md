@@ -25,3 +25,5 @@ Stage api-service는 prod Redis 설정을 사용하므로 SSE smoke/load는 고�
 PR requester identity map is maintained in skill `github-pr-assignee-policy` at `references/slack-github-requester-map.md`. Unknown Slack IDs remain unassigned until confirmed; confirmed new pairs are added to that map.
 §
 연구노트 자동화 인스턴스는 모든 사용자가 공용 Ubuntu `ubuntu` 계정으로 접근하므로, OS UID·공용 Keyring을 개인별 보안 경계로 간주할 수 없다.
+§
+Notifly Alimtalk: `kakaoSenderInfo.channel_key`는 원래 없는 필드이며 설정 누락이 아니다. 카카오 API의 선택적 결과 폴링 `channel_key`를 발신프로필 속성으로 본 구현상 모델링 오류이고, `channel_id`와 대체 관계가 아니다.

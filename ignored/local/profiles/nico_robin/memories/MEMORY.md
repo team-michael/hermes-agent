@@ -24,6 +24,6 @@ Notifly CE: SDK-compatible clean-room self-host; AGPL; feeds Cloud Standard.
 §
 Notifly Sentinel: RCA campaign/UJ→deploy, 채널별. Pricing: Enterprise 고정비↑·단가↓; 예상 물량에서 Pro보다 고객 총액↓·당사 기여 유지; 표준단가≠할인.
 §
-Trackit/GTM: `NOTIFLY_TRACKIT_API_KEY`; load `trackit-open-api-query` + BDM playbook; writes need approval; merge/relink unverified. Kyungseo says dedupe complete. Sheets: no-history prospects `1jnX98bW-KP-cXFQ9VeWzO3g_N8JBTRKywxBGGEpRZ6g`; SMTP people DB `1v9z5DGpWn98lKaIEaTSzhlieQq10V0VPjVg8BHzfHn4`.
+Trackit: key env; load skill+BDM; writes need approval; merge/relink unverified, dedupe done. Inbound: Company exact-name find/create; Person name+Company→email/fill blanks; Lead per inquiry/submission-ID dedupe; Acquisition via Workflow, no Group write API.
 §
 Braze migration: official API first; browser Console only for proven required gaps; one read-only GET/resource; preserve raw JSON+metadata.
