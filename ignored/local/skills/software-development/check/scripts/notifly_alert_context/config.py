@@ -6,16 +6,34 @@ DEFAULT_AWS_REGION = 'ap-northeast-2'
 DEFAULT_REPO = Path('/home/ubuntu/.hermes/workspace/notifly-event')
 PROJECT_TABLE_NAME = 'project'
 
-MAX_LOG_QUERY_GROUPS = 4
+MAX_LOG_QUERY_GROUPS = 5
 MAX_LOG_EVENTS = 300
 MAX_LOG_SAMPLES_PER_SIGNATURE = 3
 MAX_CODE_CONTEXTS = 2
 CODE_CONTEXT_RADIUS = 20
 MAX_RDS_PI_INSTANCES = 4
 MAX_RDS_PI_SQL = 5
+MAX_LAMBDA_OFFENDERS = 5
+MAX_LAMBDA_LOG_SIGNATURES = 10
+MAX_DISCOVERY_WINDOW_SECONDS = 30 * 60
 MAX_CONTEXT_ITEMS = 6
 MAX_DLQ_MARKER_BYTES = 32_768
 MAX_DLQ_MARKER_QUEUES = 50
+DEFAULT_PRODUCTION_RDS_CLUSTER_ID = 'notifly-db-prod-cluster'
+
+DB_ALARM_NAME_TOKENS = frozenset({
+    'db', 'database', 'aurora', 'rds', 'sql', 'postgres', 'postgresql',
+    'mysql', 'writer', 'reader', 'replica', 'deadlock',
+})
+
+DB_LOG_PATTERNS = (
+    re.compile(r'(?i)\b(query|sql|deadlock|transaction|connection pool)\b'),
+    re.compile(r'(?i)\b(psycopg|postgres|sequelize|typeorm|prisma|jdbc)\b'),
+    re.compile(
+        r'(?i)\b(connection|query)\b.{0,40}'
+        r'\b(timeout|timed out|refused|reset)\b'
+    ),
+)
 
 DLQ_MARKER_EVENT_TYPES = {
     'DLQ_BACKLOG_DETECTED',
