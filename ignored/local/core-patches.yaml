@@ -8,11 +8,13 @@ paths:
 - gateway/run.py
 - gateway/slash_commands.py
 - hermes_cli/commands.py
+- hermes_cli/gateway.py
 - plugins/platforms/slack/adapter.py
 - tests/agent/test_tool_guardrails.py
 - tests/gateway/test_channel_directory.py
 - tests/gateway/test_restart_resume_pending.py
 - tests/gateway/test_slack_message_subscriptions.py
+- tests/hermes_cli/test_gateway.py
 - tests/tools/test_terminal_task_cwd.py
 - tools/terminal_tool.py
 test_commands:
@@ -32,5 +34,10 @@ test_commands:
   - tests/agent/test_tool_guardrails.py
 - - '{repo}/venv/bin/python'
   - tests/tools/test_terminal_task_cwd.py
+- - '{repo}/venv/bin/python'
+  - -m
+  - pytest
+  - -q
+  - tests/hermes_cli/test_gateway.py
 - - '{repo}/venv/bin/python'
   - ignored/local/skills/software-development/check/tests/test_assessment.py

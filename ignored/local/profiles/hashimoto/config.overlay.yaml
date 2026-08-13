@@ -79,6 +79,7 @@ slack:
     - Amazon Q Developer
     reactions: true
     final_reaction: processing_status
+    auto_mute_thread: true
     execution:
       max_iterations: 50
       max_tool_calls: 3

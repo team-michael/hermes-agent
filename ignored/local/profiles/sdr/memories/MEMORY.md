@@ -18,6 +18,6 @@ Notifly 고객 회신에서 캠페인 전략·타겟 설계·문안 작성·대�
 §
 People identity rule: Trackit English names must not be transliterated into Korean without a direct source.
 §
-Notifly 웰컴 과제의 기존 수령자 제외 조건은 전체 기간 `benefit_received` 이벤트 중 `benefit="welcome"`인 이벤트 발생 횟수 0회다. `sign_up`은 발송 트리거다.
-§
 지원은 세일즈 파트에 합류했으며, B2B 세일즈 관점의 자세한 설명과 방향성 있는 답변을 선호한다.
+§
+상엽의 지원사업 중간보고서는 최초 사업계획과 현재 실적을 구분하고, 표에는 실적을 간략히, 본문에는 근거·잔여과제를 상세히 쓰며 사업비 수치를 검산한다.

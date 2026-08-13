@@ -4,8 +4,8 @@ Notifly Drive deliverables: `business` folder `1BUaJE9Tp3yAF_BvSx2lrYnyhGJd30FAo
 §
 AI research: no invented or stale-as-current facts or fake URLs; mark unknowns/estimates, include counter-evidence, source/time/confidence, and spot-check critical claims.
 §
-User explores Notifly MMP+CRM inside the existing SDK/console, not a standalone MMP; excludes retail media without external advertiser-app attribution.
+User explores Notifly MMP+CRM within its SDK/console; excludes retail media without advertiser-app attribution.
 §
-User's name is 지원.
+User is 윤설 (Yoon Seol Kwon); Trackit Owner=`Yoon Seol Kwon`.
 §
 Product-list research: preserve exact vendor/product pairs; do not expand scope or substitute sibling/similar products.
