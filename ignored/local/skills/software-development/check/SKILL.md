@@ -1,7 +1,7 @@
 ---
 name: check
 description: Investigate Notifly Slack/Amazon Q/CloudWatch alerts from live data sources using the bundled deterministic helper, then return one concise Korean triage result.
-version: 1.5.0
+version: 1.5.1
 author: Hermes Agent
 license: MIT
 metadata:
@@ -59,7 +59,7 @@ Rules:
    - `current_error_facts`, `current_trigger_contexts`, `logs`
    - `logs` → `current_top_signatures` / `current_trigger_contexts` if `current_error_facts` is empty
    - datasource-specific evidence (`rds_performance_insights`, `sqs`, `lambda`, `http`)
-   - `hermes_observability` for `HermesServiceHealthy` host alarms
+   - `hermes_observability` for `HermesServiceHealthy` and `HermesProfileStatus` host alarms
    - `scope_attribution` / `projects`
    - `code`
 4. If `can_answer_root_cause: true`, answer immediately **only after** the concrete cause (error signature + throwing stack/function + mechanism) is established. Do not finalize with frequency/status metadata alone.
@@ -209,9 +209,19 @@ Verify the namespace first. A `ConsoleErrors` log-derived 4xx alarm is not autom
 
 ### Hermes Agent host health
 
-When `MetricName` is `HermesServiceHealthy`, use the helper's
+When `MetricName` is `HermesServiceHealthy` **or** `alarm_shape.hermes_profile_status`
+is true (including the `hermes-agent-profile-status` alarm), use the helper's
 `hermes_observability` result instead of stopping at the instance-level gauge:
 
+- For `hermes-agent-profile-status`, the first nested lines under `원인` must
+  always report these two operator-facing fields and nothing more is required
+  to satisfy the profile/session attribution request:
+  - `프로필: <breaching_profiles[].profile>`
+  - `세션: <report_facts.active_session>` when exact attribution exists.
+    Otherwise, when exactly one `session_candidates` entry exists for that
+    profile, render `세션 후보(미확정): <session_candidates[].session_link>`.
+    If neither exists, render `세션: 미확인`; never omit the field or promote a
+    time-overlap candidate to an exact cause.
 - Use `alarm_trigger` to distinguish an observed unhealthy gauge from a
   `TreatMissingData=breaching` transition with no observed breaching value.
 - Use `report_facts.parent_session` and `report_facts.active_session` verbatim
@@ -306,10 +316,12 @@ When a concrete signature is present, the `원인:` bullet must take one of thes
 
 Then add one plain-language sentence of mechanism, not before.
 
-For `HermesServiceHealthy`, the `원인` item may contain the nested session and
-pressure evidence required by the Hermes Agent host-health rules above. Keep
-the same five top-level bullets; nested evidence lines do not add new top-level
-fields.
+For `HermesServiceHealthy` or `HermesProfileStatus`, the `원인` item may contain
+nested profile/session and pressure evidence required by the Hermes Agent
+host-health rules above. For `hermes-agent-profile-status`, the nested
+`프로필` and `세션` (or `세션 후보(미확정)` / `세션: 미확인`) lines are mandatory.
+Keep the same five top-level bullets; nested evidence lines do not add new
+top-level fields.
 
 Add `- 액션 아이템:` only for `needs_fix` or `urgent`, and name a concrete
 code/SQL/Terraform target. Include an owner only when the relevant response
@@ -341,6 +353,9 @@ Do not modify skills or write one-off production scripts during the foreground a
 
 ## Known improvements
 
+- `v1.5.1`: `hermes-agent-profile-status` responses always render the breaching
+  profile and an exact session link, a clearly labeled unique session candidate,
+  or `세션: 미확인`; profile/session fields are never silently omitted.
 - `v1.5.0`: metric-math alarms are classified before enrichment, dimensionless
   Lambda offenders and current signatures are discovered with bounded queries,
   DB fallback PI retains correlation provenance, and Hermes profile alarms
