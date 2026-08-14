@@ -10,7 +10,7 @@ Vendor/MSP: 외부 안전·원인 중심·자연스러운 KR; non-rich=단일 co
 §
 CS/SaaS=source-only; 보안체크리스트는 기능·설정·합리적 수작업 가능하면 맞음, 핵심 허위/불가만 감점; 예외는 현재상태→사유→보완.
 §
-Docs/UX=humanized KR; facts≠inference; 잘린 선택지는 본문 설명, 선택 전 미실행; research=요약→사례→작업→링크; Notion=Mermaid.
+Docs/UX=자연스런 KR; facts≠inference; 잘린 선택지는 본문 설명, 선택 전 미실행; research=요약→사례→작업→링크; 세션 삭제는 요약·인덱싱 검증 후.
 §
 GFSA 외부심사: 내부 ID/PR/티켓/SHA/Slack 링크 제외; 기능·KR 진행률·근거만.
 §

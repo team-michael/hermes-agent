@@ -10,13 +10,13 @@ PR Assignee `TheClevers`; 인증≠commit author. 최소 변경·remote head·�
 §
 사용자는 Notifly MCP 연결 문서에서 ChatGPT 데스크톱·웹·Codex·Claude 설정을 구분하고 설치·인증·도구 갱신에 집중하길 원함. 변경 중엔 게시 App보다 live Custom MCP를 선호하며 연결 폼 스크린샷 1장이면 충분하다고 봄.
 §
-Popup 다국어 authoring은 앱·웹 모두 지원. Web Console locale key는 zh-CN/zh-TW이며 사용자 locale `zh`는 어느 쪽도 추정하지 않고 `zh` key 부재 시 default로 fallback. API 단일언어 캠페인은 Console에서 열려야 함.
+Locale: Console=`zh-CN`/`zh-TW`; 원문 보존. WireBarley `lang`에만 `zh→zh-CN`, `zh-Hant→zh-TW` 하드코딩; `$locale`·device 미적용, `lang` 제거 시 삭제. 장기=SDK 수집+$locale override. BCP47 유효성≠key 매칭. 출처는 분포 추정 후 고객 코드·payload로 확정.
 §
-User table: `users_`=encrypted SoT. Read는 `executeUserQuery`; shadow helper 복원 금지. Write transformer 정리는 별도 후속이며 `user_` DROP 전 user_-only 프로젝트 조사.
+User SoT=`users_*`(encrypted). Read=`executeUserQuery`; `user_*` shadow 복원 금지.
 §
 사용자는 API/MCP를 동일 parser·schema·실 렌더 경로로 검증하며 jq 생성 필드와 원 응답을 구분함. 보안은 credential≠tenant binding, 기존 취약점≠PR 확장으로 판단.
 §
-사용자는 위험 계약의 극소수 실경로 테스트를 선호함. schema CI는 merge 전 prod test tenant probe→전체 mismatch 실패→복구로 확인하며 mock·중복 assertion은 피함. tenant/global schema는 변경된 쪽만 독립 검사하고 둘 다 변경 시 두 check를 원함.
+사용자는 schema CI를 merge 전 prod test tenant probe→나머지 전체 mismatch 실패→복구의 실경로로 검증하길 원함. tenant/global은 변경된 쪽만 독립 trigger/check하고 둘 다 변경 시 두 check를 원하며, tenant 실검증 후 global 구현을 추가하는 순서를 선호함.
 §
 Brand Message: stale pending은 동일 ID pending→terminal 이력·request terminal과 SQS/DLQ·Poller 로그로 검증. #4201은 identity 전파이며 사후 pending 수정 아님. Poller는 `batchItemFailures` 반환만 merge됐고 prod ESM retry는 꺼져 있음. 순수 poll retry는 안전하나 SMS failover·N resend는 enqueue→checkpoint 틈의 중복 위험 때문에 멱등성 후 `ReportBatchItemFailures`를 켜야 함.
 §
