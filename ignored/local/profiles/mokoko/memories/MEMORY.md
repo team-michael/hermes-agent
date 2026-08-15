@@ -14,10 +14,12 @@ Locale: Console=`zh-CN`/`zh-TW`; 원문 보존. WireBarley `lang`에만 `zh→zh
 §
 User SoT=`users_*`(encrypted). Read=`executeUserQuery`; `user_*` shadow 복원 금지.
 §
-사용자는 API/MCP를 동일 parser·schema·실 렌더 경로로 검증하며 jq 생성 필드와 원 응답을 구분함. 보안은 credential≠tenant binding, 기존 취약점≠PR 확장으로 판단.
+장애는 stack만으로 수동 요청을 단정하지 않고 정상 UI·Cloudflare와 대조. 보안은 credential≠tenant binding, 기존 취약점≠PR 확장.
 §
-사용자는 schema CI를 merge 전 prod test tenant probe→나머지 전체 mismatch 실패→복구의 실경로로 검증하길 원함. tenant/global은 변경된 쪽만 독립 trigger/check하고 둘 다 변경 시 두 check를 원하며, tenant 실검증 후 global 구현을 추가하는 순서를 선호함.
+Schema CI: merge 전 prod test tenant probe→나머지 mismatch 실패→복구. tenant/global 독립 check, 둘 다 변경 시 둘 다; tenant 실검증 후 global 구현.
 §
-Brand Message: stale pending은 동일 ID pending→terminal 이력·request terminal과 SQS/DLQ·Poller 로그로 검증. #4201은 identity 전파이며 사후 pending 수정 아님. Poller는 `batchItemFailures` 반환만 merge됐고 prod ESM retry는 꺼져 있음. 순수 poll retry는 안전하나 SMS failover·N resend는 enqueue→checkpoint 틈의 중복 위험 때문에 멱등성 후 `ReportBatchItemFailures`를 켜야 함.
+Kakao Direct: Brand v2 result·Alimtalk responseAll은 본문 미반환. Event Export success `message_data`는 발송시점 전문 snapshot. Alimtalk는 기존 outbound `raw_request_body`를 Poller terminal에서 gzip+base64로 붙여 SQS·DDB 중복을 피하고 Kinesis·S3 증가만 허용; Brand는 template detail+수신자 변수로 재구성. Exporter는 압축/평문 지원. Poll retry는 안전, failover·N resend는 멱등성 후 partial retry.
 §
-유저 여정/API 계약 설명은 validation 성공 여부와 downstream 변환·저장 실패를 구분하고, helper 변경은 ‘로직 변화’와 ‘중첩 함수 이동·재사용’을 코드 레벨로 분리해 설명한다.
+유저여정/API는 validation↔downstream 실패, helper 로직↔함수 이동을 분리. localized map은 default 필수·없을 때만 legacy message; runner→Web Console 배포.
+§
+사용자는 이벤트 필드 추가 전 SQS·DDB·PG·Kinesis·S3 전달 경로와 중복 저장·용량 부하를 먼저 확인하길 원함.
