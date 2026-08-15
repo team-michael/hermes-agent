@@ -1156,6 +1156,12 @@ DEFAULT_CONFIG = {
         "modal_mode": "auto",
         "cwd": ".",  # Use current directory
         "timeout": 180,
+        # Applied to libpq clients launched by the local terminal. Result
+        # budgets are exported for bounded fetchmany() loops and enforced by
+        # the local database command guard for known unbounded patterns.
+        "db_statement_timeout_ms": 120000,
+        "db_max_result_rows": 100000,
+        "db_max_result_bytes": 134217728,
         # Bounded grace period (seconds) between SIGTERM and an escalated
         # SIGKILL when terminating a host process tree (browser daemons, etc.).
         # A daemon that stalls in its SIGTERM handler is force-killed after this
@@ -7558,6 +7564,9 @@ TERMINAL_CONFIG_ENV_MAP = {
     "modal_mode": "TERMINAL_MODAL_MODE",
     "cwd": "TERMINAL_CWD",
     "timeout": "TERMINAL_TIMEOUT",
+    "db_statement_timeout_ms": "TERMINAL_DB_STATEMENT_TIMEOUT_MS",
+    "db_max_result_rows": "TERMINAL_DB_MAX_RESULT_ROWS",
+    "db_max_result_bytes": "TERMINAL_DB_MAX_RESULT_BYTES",
     "lifetime_seconds": "TERMINAL_LIFETIME_SECONDS",
     "docker_image": "TERMINAL_DOCKER_IMAGE",
     "docker_forward_env": "TERMINAL_DOCKER_FORWARD_ENV",

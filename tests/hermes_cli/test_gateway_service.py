@@ -448,6 +448,10 @@ class TestGeneratedSystemdUnits:
         # KillMode=mixed is preserved so the gateway still reaps its own
         # tool-call children before systemd SIGKILLs the cgroup — #8202.
         assert "KillMode=mixed" in unit
+        assert "CPUQuota=150%" in unit
+        assert "MemoryHigh=3G" in unit
+        assert "MemoryMax=4G" in unit
+        assert "Delegate=false" in unit
 
     def test_user_unit_adds_cleanup_headroom_to_positive_drain_timeout(self, monkeypatch):
         monkeypatch.setattr(gateway_cli, "_get_restart_drain_timeout", lambda: 45)
@@ -567,6 +571,10 @@ class TestGeneratedSystemdUnits:
         # KillMode=mixed is preserved so the gateway still reaps its own
         # tool-call children before systemd SIGKILLs the cgroup — #8202.
         assert "KillMode=mixed" in unit
+        assert "CPUQuota=150%" in unit
+        assert "MemoryHigh=3G" in unit
+        assert "MemoryMax=4G" in unit
+        assert "Delegate=false" in unit
 
 
 class TestGatewayStopCleanup:

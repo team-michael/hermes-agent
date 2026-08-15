@@ -59,6 +59,22 @@ def test_thread_require_mention_env_bridge(monkeypatch):
     assert os.environ["SLACK_THREAD_REQUIRE_MENTION"] == "true"
 
 
+def test_success_reaction_env_bridge(monkeypatch):
+    monkeypatch.delenv("SLACK_SUCCESS_REACTION", raising=False)
+
+    _apply_yaml_config({}, {"success_reaction": "none"})
+
+    assert os.environ["SLACK_SUCCESS_REACTION"] == "none"
+
+
+def test_processing_reaction_env_bridge(monkeypatch):
+    monkeypatch.delenv("SLACK_PROCESSING_REACTION", raising=False)
+
+    _apply_yaml_config({}, {"processing_reaction": "popup-mokoko"})
+
+    assert os.environ["SLACK_PROCESSING_REACTION"] == "popup-mokoko"
+
+
 def test_thread_require_mention_parses_yaml_and_env(monkeypatch):
     monkeypatch.setenv("SLACK_THREAD_REQUIRE_MENTION", "true")
 

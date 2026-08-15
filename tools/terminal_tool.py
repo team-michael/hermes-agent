@@ -2394,6 +2394,21 @@ def terminal_tool(
                 "error": "Terminal environment unavailable (creation raced cleanup)",
             }, ensure_ascii=False)
 
+        # This is a non-bypassable operational boundary, not an approval hint.
+        # Inspect referenced scripts as well as inline commands so `python x.py`
+        # cannot hide an unbounded production fetch from the guard.
+        if env_type == "local":
+            from tools.db_safety import validate_local_db_command
+
+            db_block_reason = validate_local_db_command(command, workdir or cwd)
+            if db_block_reason:
+                return json.dumps({
+                    "output": "",
+                    "exit_code": 1,
+                    "error": db_block_reason,
+                    "status": "blocked",
+                }, ensure_ascii=False)
+
         # Hard-block: gateway lifecycle commands (systemctl/launchctl/hermes
         # restart|stop targeting hermes-gateway) must never run inside the
         # gateway process itself. The restart would SIGTERM the gateway, which

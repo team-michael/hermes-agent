@@ -371,6 +371,12 @@ class TestUpdateCommandPlatformGate:
     interfaces (ACP, API server, webhooks) must be blocked.
     """
 
+    @pytest.fixture(autouse=True)
+    def _isolate_hermes_home(self, tmp_path):
+        """Keep allowed-platform tests from writing update markers to a live profile."""
+        with patch("gateway.run._hermes_home", tmp_path):
+            yield
+
     @pytest.mark.asyncio
     async def test_blocks_programmatic_interface(self, monkeypatch):
         """``Platform.WEBHOOK`` is not a messaging platform and must be

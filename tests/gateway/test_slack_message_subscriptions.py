@@ -160,6 +160,31 @@ def test_subscription_attaches_validated_execution_limits() -> None:
     }
 
 
+def test_subscription_auto_mutes_thread_when_processing_starts() -> None:
+    with tempfile.TemporaryDirectory(dir=TMP_ROOT) as raw:
+        adapter = _adapter(
+            subscription=_subscription(auto_mute_thread=True),
+        )
+        adapter._muted_threads_path = Path(raw) / "slack_muted_threads.json"
+        adapter._muted_threads = set()
+        adapter._reactions_enabled = MagicMock(return_value=False)
+
+        asyncio.run(adapter._handle_slack_message(_event()))
+        message = adapter.handle_message.await_args.args[0]
+
+        assert not adapter.is_thread_muted(
+            CHANNEL_ID,
+            MESSAGE_TS,
+            team_id=TEAM_ID,
+        )
+        asyncio.run(adapter.on_processing_start(message))
+        assert adapter.is_thread_muted(
+            CHANNEL_ID,
+            MESSAGE_TS,
+            team_id=TEAM_ID,
+        )
+
+
 def test_subscription_ignores_invalid_execution_limits() -> None:
     adapter = _adapter(
         subscription=_subscription(

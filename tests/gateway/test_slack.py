@@ -4862,6 +4862,81 @@ class TestReactions:
         assert remove_calls[0].kwargs["name"] == "eyes"
 
     @pytest.mark.asyncio
+    async def test_success_reaction_can_be_omitted(self, adapter, monkeypatch):
+        """Success can remove :eyes: without leaving a final reaction."""
+        monkeypatch.setenv("SLACK_SUCCESS_REACTION", "none")
+        adapter._app.client.reactions_add = AsyncMock()
+        adapter._app.client.reactions_remove = AsyncMock()
+
+        from gateway.platforms.base import (
+            MessageEvent,
+            MessageType,
+            ProcessingOutcome,
+            SessionSource,
+        )
+        from gateway.config import Platform
+
+        source = SessionSource(
+            platform=Platform.SLACK,
+            chat_id="C123",
+            chat_type="dm",
+            user_id="U_USER",
+        )
+        adapter._reacting_message_ids.add("1234567890.000003")
+        msg_event = MessageEvent(
+            text="hello",
+            message_type=MessageType.TEXT,
+            source=source,
+            message_id="1234567890.000003",
+        )
+
+        await adapter.on_processing_complete(msg_event, ProcessingOutcome.SUCCESS)
+
+        adapter._app.client.reactions_add.assert_not_called()
+        adapter._app.client.reactions_remove.assert_called_once_with(
+            channel="C123", timestamp="1234567890.000003", name="eyes"
+        )
+
+    @pytest.mark.asyncio
+    async def test_processing_reaction_can_be_customized(self, adapter, monkeypatch):
+        monkeypatch.setenv("SLACK_PROCESSING_REACTION", ":popup-mokoko:")
+        monkeypatch.setenv("SLACK_SUCCESS_REACTION", "none")
+        adapter._app.client.reactions_add = AsyncMock()
+        adapter._app.client.reactions_remove = AsyncMock()
+
+        from gateway.platforms.base import (
+            MessageEvent,
+            MessageType,
+            ProcessingOutcome,
+            SessionSource,
+        )
+        from gateway.config import Platform
+
+        source = SessionSource(
+            platform=Platform.SLACK,
+            chat_id="C123",
+            chat_type="dm",
+            user_id="U_USER",
+        )
+        adapter._reacting_message_ids.add("1234567890.000004")
+        msg_event = MessageEvent(
+            text="hello",
+            message_type=MessageType.TEXT,
+            source=source,
+            message_id="1234567890.000004",
+        )
+
+        await adapter.on_processing_start(msg_event)
+        await adapter.on_processing_complete(msg_event, ProcessingOutcome.SUCCESS)
+
+        adapter._app.client.reactions_add.assert_called_once_with(
+            channel="C123", timestamp="1234567890.000004", name="popup-mokoko"
+        )
+        adapter._app.client.reactions_remove.assert_called_once_with(
+            channel="C123", timestamp="1234567890.000004", name="popup-mokoko"
+        )
+
+    @pytest.mark.asyncio
     async def test_reactions_skipped_for_non_dm_non_mention(self, adapter):
         """Non-DM, non-mention messages should not get reactions."""
         adapter._app.client.reactions_add = AsyncMock()

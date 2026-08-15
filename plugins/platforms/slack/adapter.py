@@ -3873,6 +3873,20 @@ class SlackAdapter(BasePlatformAdapter):
         return os.getenv("SLACK_REACTIONS", "true").lower() not in {"false", "0", "no"}
 
     @staticmethod
+    def _processing_reaction() -> str:
+        """Return the configured in-progress reaction."""
+        raw = (os.getenv("SLACK_PROCESSING_REACTION") or "eyes").strip()
+        return raw.strip(":") or "eyes"
+
+    @staticmethod
+    def _success_reaction() -> Optional[str]:
+        """Return the configured success reaction, or ``None`` to omit it."""
+        raw = (os.getenv("SLACK_SUCCESS_REACTION") or "white_check_mark").strip()
+        if raw.lower() in {"none", "never", "off", "false", "0", "no"}:
+            return None
+        return raw.strip(":") or "white_check_mark"
+
+    @staticmethod
     def _slack_reaction_key(
         team_id: str, channel_id: str, timestamp: str
     ) -> Tuple[str, str, str]:
@@ -4003,6 +4017,15 @@ class SlackAdapter(BasePlatformAdapter):
         return str(raw).strip().lower() not in {"false", "0", "no", "off"}
 
     @staticmethod
+    def _slack_subscription_auto_mutes_thread(
+        subscription: Optional[Dict[str, Any]],
+    ) -> bool:
+        if not subscription:
+            return False
+        raw = subscription.get("auto_mute_thread", False)
+        return str(raw).strip().lower() in {"true", "1", "yes", "on"}
+
+    @staticmethod
     def _slack_subscription_includes_context(
         subscription: Optional[Dict[str, Any]],
     ) -> bool:
@@ -4108,19 +4131,28 @@ class SlackAdapter(BasePlatformAdapter):
         }
 
     @classmethod
-    def _slack_processing_status_final_reaction(cls, response_text: str) -> str:
+    def _slack_processing_status_final_reaction(
+        cls, response_text: str
+    ) -> Optional[str]:
         status = cls._slack_response_processing_status(response_text)
         if cls._slack_response_has_resolved_processing_status(response_text):
-            return (
-                os.getenv("SLACK_SUCCESS_REACTION", "white_check_mark")
-                or "white_check_mark"
-            )
+            return cls._success_reaction()
         if status in {"urgent", "critical", "page", "escalate", "escalation"}:
             return "rotating_light"
         return "warning"
 
     async def on_processing_start(self, event: MessageEvent) -> None:
         """Add an in-progress reaction when message processing begins."""
+        metadata = getattr(event, "metadata", None) or {}
+        if metadata.get("slack_auto_mute_thread"):
+            channel_id = getattr(event.source, "chat_id", None)
+            thread_ts = (
+                getattr(event.source, "thread_id", None)
+                or getattr(event, "message_id", None)
+            )
+            team_id = str(getattr(event.source, "scope_id", "") or "")
+            if channel_id and thread_ts:
+                self.mute_thread(channel_id, thread_ts, team_id=team_id)
         if not self._reactions_enabled():
             return
         ts = getattr(event, "message_id", None)
@@ -4130,7 +4162,9 @@ class SlackAdapter(BasePlatformAdapter):
             return
         channel_id = getattr(event.source, "chat_id", None)
         if channel_id:
-            await self._add_reaction(channel_id, ts, "eyes", team_id)
+            await self._add_reaction(
+                channel_id, ts, self._processing_reaction(), team_id
+            )
 
     async def on_processing_complete(
         self, event: MessageEvent, outcome: ProcessingOutcome
@@ -4150,12 +4184,11 @@ class SlackAdapter(BasePlatformAdapter):
         subscription_cfg = self._subscription_reaction_configs.pop(
             self._slack_reaction_key(team_id, channel_id, ts), None
         )
-        await self._remove_reaction(channel_id, ts, "eyes", team_id)
+        await self._remove_reaction(
+            channel_id, ts, self._processing_reaction(), team_id
+        )
         if outcome == ProcessingOutcome.SUCCESS:
-            reaction = (
-                os.getenv("SLACK_SUCCESS_REACTION", "white_check_mark")
-                or "white_check_mark"
-            )
+            reaction = self._success_reaction()
             if subscription_cfg:
                 policy = str(
                     subscription_cfg.get("final_reaction")
@@ -4175,7 +4208,8 @@ class SlackAdapter(BasePlatformAdapter):
                     reaction = self._slack_processing_status_final_reaction(
                         response_text
                     )
-            await self._add_reaction(channel_id, ts, reaction, team_id)
+            if reaction:
+                await self._add_reaction(channel_id, ts, reaction, team_id)
         elif outcome == ProcessingOutcome.FAILURE:
             await self._add_reaction(channel_id, ts, "x", team_id)
 
@@ -6726,6 +6760,24 @@ class SlackAdapter(BasePlatformAdapter):
                 if _channel_prompt
                 else _identity_prompt
             )
+        # The adapter strips the bot's own mention from ``text`` before the
+        # model sees it.  Preserve the trusted routing fact ephemerally so a
+        # channel mention can never be mistaken for a DM title-only opener.
+        # Keep this scoped to explicit channel mentions: subscription-driven
+        # events may legitimately choose intentional silence.
+        if not is_dm and is_mentioned:
+            _mention_routing_prompt = (
+                "[Trusted Slack routing context] This is a public or private "
+                "Slack channel, not a DM. The gateway delivered this turn "
+                "because the user explicitly mentioned your bot. Answer the "
+                "user normally; do not apply any DM-only title-opener or "
+                "NO_REPLY rule to this turn."
+            )
+            _channel_prompt = (
+                f"{_channel_prompt}\n\n{_mention_routing_prompt}".strip()
+                if _channel_prompt
+                else _mention_routing_prompt
+            )
         _auto_skill = resolve_channel_skills(
             self.config.extra,
             channel_id,
@@ -6781,6 +6833,8 @@ class SlackAdapter(BasePlatformAdapter):
         }
         if execution_limits:
             event_metadata["execution_limits"] = execution_limits
+        if self._slack_subscription_auto_mutes_thread(message_subscription):
+            event_metadata["slack_auto_mute_thread"] = True
 
         msg_event = MessageEvent(
             text=(command_probe_text if is_command_text else text),
@@ -9520,6 +9574,12 @@ def _apply_yaml_config(yaml_cfg: dict, slack_cfg: dict) -> dict | None:
         os.environ["SLACK_REQUIRE_MENTION_CHANNELS"] = str(rmc)
     if "reactions" in slack_cfg and not os.getenv("SLACK_REACTIONS"):
         os.environ["SLACK_REACTIONS"] = str(slack_cfg["reactions"]).lower()
+    processing_reaction = slack_cfg.get("processing_reaction")
+    if processing_reaction is not None and not os.getenv("SLACK_PROCESSING_REACTION"):
+        os.environ["SLACK_PROCESSING_REACTION"] = str(processing_reaction)
+    success_reaction = slack_cfg.get("success_reaction")
+    if success_reaction is not None and not os.getenv("SLACK_SUCCESS_REACTION"):
+        os.environ["SLACK_SUCCESS_REACTION"] = str(success_reaction)
     rt = slack_cfg.get("reaction_triggers")
     if rt is not None and not os.getenv("SLACK_REACTION_TRIGGERS"):
         if isinstance(rt, (list, tuple, set)):

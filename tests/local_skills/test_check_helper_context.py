@@ -569,5 +569,74 @@ class QueueRecoveryDecisionTest(unittest.TestCase):
         )
 
 
+class LogSignatureAssuranceTest(unittest.TestCase):
+    def _log_data(self, current_top_signatures, current_error_details, current_trigger_contexts=None):
+        return {
+            "detected": {
+                "alarm_name": "web-console console error",
+                "log_groups": ["/aws/ecs/notifly-services-prod/web-console"],
+                "keywords": [],
+                "service_names": ["web-console"],
+                "lambda_names": [],
+                "project_ids": [],
+            },
+            "alarm_summary": {
+                "AlarmName": "web-console console error",
+                "Namespace": "ConsoleErrors",
+                "MetricName": "web-console console error",
+                "StateValue": "ALARM",
+                "Dimensions": [],
+            },
+            "alarm_history": {
+                "latest_alarm_transition": {"timestamp": "2026-08-07T08:41:22Z"},
+            },
+            "metric_datapoints": {"datapoint_count": 1},
+            "logs_insights": {
+                "current_alarm_window": {
+                    "start": "2026-08-07T08:40:00Z",
+                    "end": "2026-08-07T08:41:00Z",
+                },
+                "current_top_signatures": current_top_signatures,
+                "current_error_details": current_error_details,
+                "current_trigger_contexts": current_trigger_contexts or [],
+            },
+            "lambda_context": None,
+            "sqs_context": None,
+            "rds_context": None,
+            "rds_performance_insights": None,
+            "scope_attribution": {"service_indicators": ["web-console"]},
+            "repo_code_hits": [{"path": "services/server/web-console/src/middleware/auth.ts", "token_preview": "user not found"}],
+        }
+
+    def test_empty_current_signature_blocks_root_cause_answer(self) -> None:
+        data = self._log_data([], [])
+        assessment = assess_helper_context(data)
+        self.assertFalse(assessment["can_answer_root_cause"])
+        keys = {m["key"] for m in assessment["missing_required_context"]}
+        self.assertIn("current_alarm_signature", keys)
+
+    def test_present_current_signature_allows_root_cause_answer(self) -> None:
+        data = self._log_data(
+            [
+                {
+                    "signature": "Error: user not found",
+                    "count_in_current_alarm_window": 1,
+                    "sample_lines": ["Error: user not found"],
+                }
+            ],
+            [
+                {
+                    "timestamp": "2026-08-07T08:40:12.000Z",
+                    "log_group": "/aws/ecs/notifly-services-prod/web-console",
+                    "likely_error": "Error: user not found",
+                    "project_ids": [],
+                }
+            ],
+        )
+        assessment = assess_helper_context(data)
+        self.assertTrue(assessment["can_answer_root_cause"])
+        self.assertIn("current_alarm_error_detail", assessment["root_cause_evidence"])
+
+
 if __name__ == "__main__":
     unittest.main()

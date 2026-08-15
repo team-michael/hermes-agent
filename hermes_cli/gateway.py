@@ -610,8 +610,9 @@ def find_gateway_pids(
             _append_unique_pid(pids, get_running_pid(), _exclude)
         except Exception:
             pass
-    for pid in _get_service_pids():
-        _append_unique_pid(pids, pid, _exclude)
+    if all_profiles:
+        for pid in _get_service_pids():
+            _append_unique_pid(pids, pid, _exclude)
     try:
         include_restart_managers = not supports_systemd_services()
     except Exception:
@@ -2829,6 +2830,14 @@ Restart=always
 RestartSec=5
 RestartForceExitStatus={GATEWAY_SERVICE_RESTART_EXIT_CODE}
 RestartPreventExitStatus={GATEWAY_FATAL_CONFIG_EXIT_CODE}
+# Keep each gateway and every local terminal subprocess it launches inside a
+# bounded, non-delegated cgroup.  Local subprocesses inherit these limits.
+CPUAccounting=true
+CPUQuota=150%
+MemoryAccounting=true
+MemoryHigh=3G
+MemoryMax=4G
+Delegate=false
 KillMode=mixed
 KillSignal=SIGTERM
 ExecReload=/bin/kill -USR1 $MAINPID
@@ -2867,6 +2876,14 @@ Restart=always
 RestartSec=5
 RestartForceExitStatus={GATEWAY_SERVICE_RESTART_EXIT_CODE}
 RestartPreventExitStatus={GATEWAY_FATAL_CONFIG_EXIT_CODE}
+# Keep each gateway and every local terminal subprocess it launches inside a
+# bounded, non-delegated cgroup.  Local subprocesses inherit these limits.
+CPUAccounting=true
+CPUQuota=150%
+MemoryAccounting=true
+MemoryHigh=3G
+MemoryMax=4G
+Delegate=false
 KillMode=mixed
 KillSignal=SIGTERM
 ExecReload=/bin/kill -USR1 $MAINPID

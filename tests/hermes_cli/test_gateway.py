@@ -1056,6 +1056,16 @@ def test_find_gateway_pids_falls_back_to_pid_file_when_process_scan_fails(monkey
     assert gateway.find_gateway_pids() == [321]
 
 
+def test_find_gateway_pids_excludes_other_profile_service_pids(monkeypatch):
+    monkeypatch.setattr(gateway, "_get_service_pids", lambda: {701, 702})
+    monkeypatch.setattr("gateway.status.get_running_pid", lambda: None)
+    monkeypatch.setattr(gateway, "supports_systemd_services", lambda: True)
+    monkeypatch.setattr(gateway, "_scan_gateway_pids", lambda *args, **kwargs: [])
+
+    assert gateway.find_gateway_pids() == []
+    assert gateway.find_gateway_pids(all_profiles=True) == [701, 702]
+
+
 def test_find_gateway_pids_includes_restart_managers_without_systemd(monkeypatch):
     calls = []
 
